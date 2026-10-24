@@ -8,9 +8,9 @@ Specs: `specs/toolchain-support/spec.md`, `specs/provider-panic-handling/spec.md
 
 ## 2. Go 1.27 floor (requirements "Every module requires Go 1.27 or later", "A panicking provider yields an invocation error")
 
-- [ ] 2.1 RED: add `invoke_test.go: TestInvoke_ProviderPanic` (6 rows) and `TestInvoke_ProviderPanicNil_GODEBUGOverride` (design Test Strategy); verify `go test -race -count=1 -run 'TestInvoke_ProviderPanic' .` fails only in `lazy_nil` and `transient_nil` (error is nil), while the other rows and the override test pass on arrival (recorded: pre-bump behavior already matches them).
-- [ ] 2.2 RED: add `toolchain_test.go: TestToolchain_GoDirective` (26 rows) in the root package; verify `go test -count=1 -run TestToolchain_GoDirective .` fails with `go 1.18` as the actual directive, and `make test` shows no other failures.
-- [ ] 2.3 GREEN: run `go mod edit -go=1.27` in all 25 modules and `go work edit -go=1.27` (design D1); verify the 2.1 and 2.2 tests pass, `make test` is green, `go test -race -count=5 -run HealthCheck .` passes, per-module `go vet ./... && go test -race ./...` passes, and `grep -rn '^toolchain' --include=go.mod . go.work` prints nothing.
+- [ ] 2.1 RED: add `invoke_test.go: TestInvoke_ProviderPanic` (6 rows) and `TestInvoke_ProviderPanicNil_GODEBUGOverride` (design Test Strategy); verify `GOWORK=off go test -race -count=1 -run 'TestInvoke_ProviderPanic' .` fails only in `lazy_nil` and `transient_nil` (error is nil), while the other rows and the override test pass on arrival (recorded: pre-bump behavior already matches them); in workspace mode the nil rows already pass, because `go.work` is `go 1.26.0` since #12 (design Context).
+- [ ] 2.2 RED: add `toolchain_test.go: TestToolchain_GoDirective` (26 rows) in the root package; verify `go test -count=1 -run TestToolchain_GoDirective .` fails on every row whose actual directive is not `go 1.27` (today `1.18`, `1.24`, `1.25` or `1.26.0`; design Context), and `make test` shows no other failures.
+- [ ] 2.3 GREEN: run `go mod edit -go=1.27` in all 25 modules and `go work edit -go=1.27` (design D1); verify the 2.1 and 2.2 tests pass both in workspace mode and with `GOWORK=off`, `make test` is green, `go test -race -count=5 -run HealthCheck .` passes, per-module `go vet ./... && go test -race ./...` passes, and `grep -rn '^toolchain' --include=go.mod . go.work` prints nothing.
 - [ ] 2.4 REFACTOR: run `go mod tidy` in each of the 25 modules; verify the diff is only the `go` lines and added `go.sum` entries (design D1), and `make test` passes.
 - [ ] 2.5 REFACTOR: in `.golangci.yml` add `run.go: "1.27"` and `linters.settings.modernize.disable: [atomictypes]`, with the design D4 reason as a comment; verify `golangci-lint config verify` passes and `golangci-lint run --enable-only modernize ./...` reports only `rangeint`, `reflecttypefor`, `mapsloop`, `slicescontains` and `waitgroupgo` findings.
 - [ ] 2.6 REFACTOR *Substitute Algorithm*: run `go fix -slicescontains ./...` after reviewing `-diff` (it rewrites the `contains` body; design D2); verify `make test` passes and lint shows no `slicescontains` finding.
@@ -30,8 +30,8 @@ Specs: `specs/toolchain-support/spec.md`, `specs/provider-panic-handling/spec.md
 
 ## 4. CI (design D5)
 
-- [ ] 4.1 Set the `.github/workflows/test.yml` matrix to `["1.27", "stable"]`; verify `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/test.yml` reports no errors and `release.yml` still uses `go-version-file: 'go.work'`.
-- [ ] 4.2 In `.github/workflows/lint.yml`, give `actions/setup-go` `go-version-file: go.mod` and `golangci-lint-action` `version: v2.15.0`; verify actionlint reports no errors on `lint.yml`, and with a local golangci-lint whose `golangci-lint version` reports 2.15.0, `make lint` reports 0 issues.
+- [ ] 4.1 Confirm the CI Go versions set in #12: the `.github/workflows/test.yml` matrix is `["1.27", "stable"]`, and `lint.yml`, `doc.yml`, `security.yml` and `release.yml` use `go-version-file: go.work` (no edit expected; fix any drift); verify `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml` reports no errors.
+- [ ] 4.2 In `.github/workflows/lint.yml`, give `golangci-lint-action` `version: v2.15.0` (keep `actions/setup-go` on `go-version-file: go.work`); verify actionlint reports no errors on `lint.yml`, and with a local golangci-lint whose `golangci-lint version` reports 2.15.0, `make lint` reports 0 issues.
 
 ## 5. Integration checks
 

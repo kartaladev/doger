@@ -16,7 +16,7 @@ The planned changes need Go 1.25 at minimum; none needs a 1.27-only feature (sta
 - Keep the unexported helpers `contains`, `reverseSlice` and `coalesce`, but implement them with `slices.Contains`, `slices.Reverse` and `cmp.Or`. Existing tests stay unchanged. `keys`, `flatten`, `filter`, `mAp` and `orderedUniq` stay as they are, because no standard-library function is exactly equivalent.
 - Rewrite the two goroutine fan-outs in `scope.go` with `sync.WaitGroup.Go`, dropping the per-iteration capture workarounds.
 - Apply the behavior-preserving modernizers that the enabled `modernize` linter reports after the bump, one analyzer per step with `go fix`: `slicescontains`, `mapsloop`, `reflecttypefor`, `rangeint`, `waitgroupgo` (tests) and `any`. Disable `atomictypes`, because its fixes rewrite test fixture field types and assertion expressions. `make lint` ends at 0 issues.
-- Update CI to Go 1.27: the `test.yml` matrix, `lint.yml` (Go version from `go.mod`, pinned golangci-lint), and `.golangci.yml` (`run.go`). Update the Go-version statements in README and the docs.
+- Finish CI for Go 1.27: pin golangci-lint in `lint.yml` and set `run.go` in `.golangci.yml`. The `test.yml` matrix (`1.27`, `stable`) and Go setup from `go.work` in every workflow already landed in #12. Update the Go-version statements in README and the docs.
 - No exported identifier, signature or option changes.
 
 ## Capabilities
@@ -32,7 +32,7 @@ None.
 
 ## Impact
 
-- `go.mod` ×25 (plus new `go.sum` entries from `go mod tidy`), `go.work`, `.github/workflows/{test,lint}.yml`, `.golangci.yml`.
+- `go.mod` ×25 (plus new `go.sum` entries from `go mod tidy`), `go.work`, `.github/workflows/lint.yml`, `.golangci.yml`.
 - `utils.go`, `scope.go`, `errors.go`, `service_*.go`, `stacktrace/stacktrace.go`, and test files touched by the modernizers. Each analyzer is its own behavior-preserving step, with `make test` and `make lint` run after it.
 - New tests: `TestInvoke_ProviderPanic`, `TestInvoke_ProviderPanicNil_GODEBUGOverride`, and the root-package toolchain check `TestToolchain_GoDirective`.
 - README, `docs/docs/{getting-started,about,faq}.md`, `docs/docs/comparison/*`, `docs/src/pages/index.tsx`, `docs/plugins/structured-data/index.ts` and `docs/static/llms.txt` (Go version statements).

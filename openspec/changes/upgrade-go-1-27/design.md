@@ -5,10 +5,10 @@
 See proposal.md for the motivation, and `specs/toolchain-support/spec.md` and `specs/provider-panic-handling/spec.md` for the required behavior. This is the state after `fix-stacktrace-frame-filter` and `rename-module-doger`.
 
 **Go version declarations**
-- All 25 `go.mod` files and `go.work` declare `go 1.18`. None has a `toolchain` line.
-- CI: `.github/workflows/test.yml` tests a matrix from `1.18` to `1.26` plus `stable`.
-  - `lint.yml` runs `actions/setup-go@v7` with no Go version and `golangci-lint-action@v9` with no pinned linter version.
-  - `release.yml` reads `go-version-file: 'go.work'`. `doc.yml` and `security.yml` read `go.mod`.
+- Since #12 (framework and vulnerability bumps), the directives differ: the root `go.mod` and 15 other modules declare `go 1.18`; `http/chi`, `examples/http/chi` and `examples/web-application` declare `go 1.24`; the two fiber modules `go 1.25`; the two gin and two echo modules `go 1.26.0`; `go.work` declares `go 1.26.0`. None has a `toolchain` line.
+- CI, also since #12: `.github/workflows/test.yml` tests `["1.27", "stable"]`.
+  - `lint.yml`, `doc.yml`, `security.yml` and `release.yml` set up Go with `go-version-file: go.work`.
+  - `lint.yml` still runs `golangci-lint-action@v9` with no pinned linter version.
 - `.golangci.yml` (version 2) pins no Go version and **enables the `modernize` linter**. The baseline lint run reports 0 issues.
 - These statements say Go 1.18 about this library:
   - `README.md`: the badge, the tagline, and the "uses Go 1.18+ generics" sentence;
@@ -51,6 +51,7 @@ See proposal.md for the motivation, and `specs/toolchain-support/spec.md` and `s
 **`interface{}`.** 16 code occurrences, all in `examples/*`. There are 3 comment occurrences: `invoke.go:14,21` and `invoke_test.go:69`.
 
 **Directive-sensitive semantics.** Raising the `go` directive changes the language semantics of this module's code. In workspace mode, the `go.work` line sets the GODEBUG defaults of this repository's own test binaries.
+- Because `go.work` is already `go 1.26.0` (#12), workspace-mode tests (`make test`, CI) already run with `panicnil=0`. Only module mode (`GOWORK=off`, root `go.mod` at `go 1.18`) still shows the pre-bump `panic(nil)` result. Verified with a probe test: workspace mode recovers `runtime error: panic called with nil argument`, `GOWORK=off` recovers `<nil>`. The provider-panic RED step therefore runs with `GOWORK=off`.
 - **Loop variables become per-iteration (1.22).** This is a language change to this module's code, decided by its own directive.
 - **`panicnil` (1.21).** `panic(nil)` in a provider reaches `handleProviderPanic` as `*runtime.PanicNilError`. Verified in a trial: before the bump, `err=<nil>`; after it, `err="runtime error: panic called with nil argument"`, with `errors.As` true. With `GODEBUG=panicnil=1` the result is `<nil>` again.
   - GODEBUG defaults follow the main module. Requiring this module raises a consumer's `go` line to at least 1.27, so consumers get `panicnil=0` by default as well. That is why it is in a spec.
@@ -75,7 +76,7 @@ See proposal.md for the motivation, and `specs/toolchain-support/spec.md` and `s
 
 **D1. Bump the directives with `go mod edit -go=1.27` in every module, and `go work edit -go=1.27`.**
 - No `toolchain` line is added. The trial confirmed that neither command nor `go mod tidy` adds one.
-- `go mod tidy` then adds `go.sum` entries: in the trial, 24 modules gained 81 lines in total (e.g. `go.uber.org/goleak v1.2.1/go.mod h1:…` in `http/gin/go.sum`). Those additions are expected and committed.
+- `go mod tidy` then adds `go.sum` entries. The trial ran on the tree before #12 (24 modules gained 81 lines, e.g. `go.uber.org/goleak v1.2.1/go.mod h1:…` in `http/gin/go.sum`), so expect different counts now. Additions are expected and committed; removals or version changes are not.
 - *Alternative:* `go 1.27.0` with a `toolchain` pin. Rejected: churn without benefit for a library.
 
 **D2. Helpers: *Substitute Algorithm* inside the existing unexported helpers.**
@@ -106,9 +107,9 @@ See proposal.md for the motivation, and `specs/toolchain-support/spec.md` and `s
 - *Alternative:* disable every new finding and modernize later. Rejected: it leaves the floor bump without its payoff, and the lint config drifting from the code.
 
 **D5. CI.**
-- `test.yml` matrix: `["1.27", "stable"]`.
-- `lint.yml`: `actions/setup-go` gets `go-version-file: go.mod`, and `golangci-lint-action` gets `version: v2.15.0`. golangci-lint refuses targets newer than the Go it was built with. The `v2.15.0` release binary was built with `go1.27.0` (`go version golangci-lint-2.15.0-linux-amd64/golangci-lint` prints `go1.27.0`), and local 2.15.0 lints the bumped tree.
-- `release.yml`, `doc.yml` and `security.yml` already follow `go.work`/`go.mod`.
+- `test.yml` matrix: `["1.27", "stable"]`. Already in place since #12; this change only verifies it.
+- `lint.yml`: `actions/setup-go` keeps `go-version-file: go.work` (set in #12; `go.work` is always at least every module's version), and `golangci-lint-action` gets `version: v2.15.0`. golangci-lint refuses targets newer than the Go it was built with. The `v2.15.0` release binary was built with `go1.27.0` (`go version golangci-lint-2.15.0-linux-amd64/golangci-lint` prints `go1.27.0`), and local 2.15.0 lints the bumped tree.
+- `release.yml`, `doc.yml` and `security.yml` already follow `go.work` (since #12), so they pick up 1.27 from the `go.work` bump.
 - CodeQL's Go 1.27 support is unconfirmed. Check it on the first CI run.
 
 **D6. Docs.** Every statement that gives this library's minimum Go version moves to 1.27. Statements that only say generics arrived in Go 1.18 are reworded to "Go generics" plus "requires Go 1.27+" where they give a version.
