@@ -79,12 +79,7 @@ func callerFrame(
 			break
 		}
 		if !skipFrame(selfPkgPath, goroot, name, file) {
-			return Frame{
-				PC:       pc,
-				File:     removeGoPath(file),
-				Function: shortFuncName(name),
-				Line:     line,
-			}, true
+			return newFrame(pc, file, name, line), true
 		}
 	}
 
@@ -120,18 +115,21 @@ func NewFrameFromPC(pc uintptr) (Frame, bool) {
 		return Frame{}, false
 	}
 
-	function := fun.Name()
 	file, line := fun.FileLine(pc)
 
-	file = removeGoPath(file)
-	function = shortFuncName(function)
+	return newFrame(pc, file, fun.Name(), line), true
+}
 
+// newFrame builds the reported Frame from a raw file path and a fully
+// qualified function name: the path is made GOPATH-relative and the name
+// is shortened.
+func newFrame(pc uintptr, file, function string, line int) Frame {
 	return Frame{
 		PC:       pc,
-		File:     file,
-		Function: function,
+		File:     removeGoPath(file),
+		Function: shortFuncName(function),
 		Line:     line,
-	}, true
+	}
 }
 
 // Frame represents a single stack frame with debugging information.
