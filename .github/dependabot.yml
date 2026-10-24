@@ -5,9 +5,28 @@ updates:
     schedule:
       interval: monthly
 
+  # Go modules. The repository root holds go.work, so an update run at "/"
+  # covers the whole workspace and touches every module. Keep the framework
+  # dependencies out of that run: they live only in the http/* adapters and
+  # examples/*, which get their own per-directory runs below. Otherwise each
+  # framework bump arrives twice (repo-wide and per module).
+  #
+  # Dependabot never edits go.work. If an update raises a module's go
+  # directive above the one in go.work, every go command in the workspace
+  # fails (lint and CodeQL go red). Fix such a PR by raising go.work in it
+  # (`go work edit -go=<version>`), or replace it with a manual update.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: github.com/gin-gonic/gin
+      - dependency-name: github.com/labstack/echo/v4
+      - dependency-name: github.com/go-chi/chi/v5
+      - dependency-name: github.com/gofiber/fiber/v2
+
   - package-ecosystem: gomod
     directories:
-      - /
       - /http/**
       - /examples/**
     schedule:
