@@ -102,3 +102,60 @@ func TestSkipFrame_EmptyGOROOT(t *testing.T) {
 		})
 	}
 }
+
+func TestCallerFrame_SearchDepth(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		skippable int
+		found     bool
+	}{
+		{name: "9_skippable_then_reportable", skippable: 9, found: true},
+		{name: "10_skippable_then_reportable", skippable: 10, found: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			// Index 0 stands for callerFrame itself; indexes below
+			// tt.skippable are own-package frames, the next one is the
+			// reportable consumer frame, and the stack ends after it.
+			caller := func(skip int) (uintptr, string, int, bool) {
+				switch {
+				case skip < tt.skippable:
+					return uintptr(skip + 1), "/home/u/src/doger/stacktrace/stacktrace.go", 1, true
+				case skip == tt.skippable:
+					return uintptr(skip + 1), "/home/u/app/main.go", 7, true
+				default:
+					return 0, "", 0, false
+				}
+			}
+			funcName := func(pc uintptr) (string, bool) {
+				if int(pc) <= tt.skippable {
+					return selfPkgPath + ".NewFrameFromCaller", true
+				}
+				return "main.main", true
+			}
+
+			var (
+				frame Frame
+				found bool
+			)
+			is.NotPanics(func() {
+				frame, found = callerFrame(caller, funcName, 10)
+			})
+			is.Equal(tt.found, found)
+			if tt.found {
+				is.Equal("/home/u/app/main.go", frame.File)
+				is.Equal("main", frame.Function)
+				is.Equal(7, frame.Line)
+			} else {
+				is.Equal(Frame{}, frame)
+			}
+		})
+	}
+}

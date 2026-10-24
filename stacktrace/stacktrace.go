@@ -57,28 +57,49 @@ func skipFrame(selfPkg, goroot, function, file string) bool {
 // This function is used internally by the DI container to track service
 // invocation locations for debugging and explanation purposes.
 func NewFrameFromCaller() (Frame, bool) {
+	return callerFrame(runtime.Caller, funcNameForPC, 10)
+}
+
+// callerFrame returns the first of the first depth frames reported by caller
+// that skipFrame does not skip. Index 0 of caller is callerFrame itself.
+func callerFrame(
+	caller func(skip int) (pc uintptr, file string, line int, ok bool),
+	funcName func(pc uintptr) (string, bool),
+	depth int,
+) (Frame, bool) {
 	// find the first frame that is not in this package
-	for i := 0; i < 10; i++ {
-		pc, file, line, ok := runtime.Caller(i)
+	for i := 0; i < depth; i++ {
+		pc, file, line, ok := caller(i)
 		if !ok {
 			break
 		}
 
-		f := runtime.FuncForPC(pc)
-		if f == nil {
+		name, ok := funcName(pc)
+		if !ok {
 			break
 		}
-		if !skipFrame(selfPkgPath, goroot, f.Name(), file) {
+		if !skipFrame(selfPkgPath, goroot, name, file) {
 			return Frame{
 				PC:       pc,
 				File:     removeGoPath(file),
-				Function: shortFuncName(f.Name()),
+				Function: shortFuncName(name),
 				Line:     line,
 			}, true
 		}
 	}
 
 	return Frame{}, false
+}
+
+// funcNameForPC returns the fully qualified name of the function containing
+// pc, or false when pc does not resolve to a function.
+func funcNameForPC(pc uintptr) (string, bool) {
+	f := runtime.FuncForPC(pc)
+	if f == nil {
+		return "", false
+	}
+
+	return f.Name(), true
 }
 
 // NewFrameFromPC creates a new Frame from a program counter (PC) value.
