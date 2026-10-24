@@ -22,7 +22,7 @@ Bug-fix change: group 1 opens with regression tests that reproduce the defect on
 
 - [x] 3.1 RED: add `stacktrace/stacktrace_internal_test.go: TestCallerFrame_SearchDepth` with rows `9_skippable_then_reportable` (found=true) and `10_skippable_then_reportable` (found=false) from scenario "Search depth boundary", using a fake `caller` and `funcName` as described in design D5; verify `go test -race -count=1 -run TestCallerFrame_SearchDepth ./stacktrace/` fails to compile naming only the undefined `callerFrame`
 - [x] 3.2 GREEN: *Extract Function* + *Introduce Parameter*: move the loop of `NewFrameFromCaller` into `callerFrame(caller, funcName, depth)` and call it as `callerFrame(runtime.Caller, funcNameForPC, 10)` (design D4, D5); verify `TestCallerFrame_SearchDepth` passes, `go test -race -count=1 -run 'TestStacktrace$' ./stacktrace/` still reports `example1` at line 12, and `make test` is green
-- [ ] 3.3 REFACTOR: none needed beyond 3.2, which is itself the extraction; confirm no GOPATH or short-name handling is duplicated between `callerFrame` and `NewFrameFromPC`, and apply *Extract Function* for shared frame construction only if it is; verify `make test` and `make lint` pass
+- [x] 3.3 REFACTOR: none needed beyond 3.2, which is itself the extraction; confirm no GOPATH or short-name handling is duplicated between `callerFrame` and `NewFrameFromPC`, and apply *Extract Function* for shared frame construction only if it is; verify `make test` and `make lint` pass
 
 ## 4. Characterization: unresolvable PC, symbol-prefix guard, provider frames
 
