@@ -1,4 +1,4 @@
-schema: tdd-gherkin
+schema: doger-spec-driven
 
 # Project context: constraints an agent cannot infer from the code.
 context: |

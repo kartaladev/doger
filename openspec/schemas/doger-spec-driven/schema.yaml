@@ -1,4 +1,4 @@
-name: tdd-gherkin
+name: doger-spec-driven
 version: 1
 description: Go library workflow - proposal → Gherkin specs with exhaustive case matrix → design → TDD (red/green/refactor) tasks
 artifacts:

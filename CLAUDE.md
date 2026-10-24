@@ -20,7 +20,7 @@ Go library: fork of `github.com/samber/do/v2` (generics-based dependency injecti
 4. **Hot-path coverage.** There is no coverage-percentage target, but every hot path must be covered by tests. That means the public API, resolution/invocation, lifecycle (health check, shutdown), scope traversal, and concurrency-sensitive code.
 5. **Defects need proof.** Never claim a bug, error, or defect without a failing test that reproduces it. A fix starts with that failing regression test. If you can't reproduce it, say so instead of asserting it.
 6. **Library principle.** Use sensible, opinionated defaults that work with zero configuration, and give consumers full control: every opinionated choice can be overridden (options, interfaces, hooks) without forking. Avoid breaking exported APIs; flag any break explicitly.
-7. **Specs.** Plan changes with OpenSpec (`/opsx:*` skills). The project schema `openspec/schemas/tdd-gherkin` requires Gherkin scenarios with concrete `Examples`, an exhaustive case checklist (defaults, overrides, zero values, boundaries, errors, lifecycle, concurrency, panics, compatibility), and RED/GREEN/REFACTOR task groups. Project context and rules are in `openspec/config.yaml`.
+7. **Specs.** Plan changes with OpenSpec (`/opsx:*` skills). The project schema `openspec/schemas/doger-spec-driven` requires Gherkin scenarios with concrete `Examples`, an exhaustive case checklist (defaults, overrides, zero values, boundaries, errors, lifecycle, concurrency, panics, compatibility), and RED/GREEN/REFACTOR task groups. Project context and rules are in `openspec/config.yaml`.
 
 ## Test conventions
 
