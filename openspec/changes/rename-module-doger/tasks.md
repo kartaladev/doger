@@ -39,7 +39,7 @@ This change is a pure mechanical refactor (`skip_specs: true`): no behavior chan
 Attribution rule for this group: never remove credit to the original/upstream owner (Samuel Berthe, `samber/do`) or to third-party sources. Only module-identity references change.
 
 - [ ] 6.1 Add a fork notice near the top of `README.md` ("doger is a fork of [samber/do](https://github.com/samber/do) by Samuel Berthe"). Then update `README.md`: module path, `go get` / import snippets, package qualifier (`doger.`), and pkg.go.dev / repository badges and links. Keep upstream-history links. Verify: every remaining `samber/do` match in `README.md` is on the allow-list from 1.3.
-- [ ] 6.2 Update `docs/docusaurus.config.ts`: title, `editUrl`, pkg.go.dev and repository links. Keep the v1-tree and upstream-history links. Update the 26 docs pages under `docs/docs` and `docs/src` for import paths and qualifiers in code snippets. Verify: the docs build (`npm run build` in `docs/`) succeeds, and the remaining `samber/do` matches are allow-listed.
+- [ ] 6.2 Update `docs/docusaurus.config.ts`: title, `editUrl` (`.../tree/main/docs/`), pkg.go.dev and repository links. Keep the v1-tree and upstream-history links. Update the 26 docs pages under `docs/docs` and `docs/src` for import paths and qualifiers in code snippets. Verify: the docs build (`npm run build` in `docs/`) succeeds, and the remaining `samber/do` matches are allow-listed.
 - [ ] 6.3 Add `Copyright (c) 2026 kartaladev` to `LICENSE` directly below the unchanged `Copyright (c) 2022 Samuel Berthe` line. The MIT text is untouched. Verify: `head -5 LICENSE` shows both lines, and `git diff LICENSE` is a one-line addition.
 
 ## 7. Example tests document the new API

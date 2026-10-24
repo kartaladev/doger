@@ -66,7 +66,7 @@ Sub-module paths mirror their directories: `.../doger/http/chi`, `.../doger/exam
 - *Alternative:* a blind `sed` over every file. Rejected: it would also rewrite upstream links in comments and strings that must stay.
 
 **D4. Docs and metadata.**
-- In `docs/docusaurus.config.ts`, `README.md` and the `bench` imports, update the module path, pkg.go.dev links, repository URL, `editUrl` and site title.
+- In `docs/docusaurus.config.ts`, `README.md` and the `bench` imports, update the module path, pkg.go.dev links, repository URL, `editUrl` (to `https://github.com/kartaladev/doger/tree/main/docs/`; the default branch is `main`) and site title.
 - Keep upstream history links (v1 tree, upstream issues).
 - **Attribution is never removed.**
   - In `LICENSE`, keep `Copyright (c) 2022 Samuel Berthe` and the MIT text unchanged, and add `Copyright (c) 2026 kartaladev` directly below it. MIT requires keeping the original notice.
