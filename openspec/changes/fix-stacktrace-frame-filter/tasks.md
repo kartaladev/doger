@@ -13,10 +13,10 @@ Bug-fix change: group 1 opens with regression tests that reproduce the defect on
 
 ## 2. GOROOT frames are identified by path prefix
 
-- [ ] 2.1 RED (regression): run scenario "Caller frame in a -trimpath build" against the group 1 code; verify `env -u GOROOT go test -race -trimpath -count=1 -run 'TestStacktrace$' ./stacktrace/` fails with found `false`, function `""` and line `0` (Defect 3)
-- [ ] 2.2 RED: add `TestSkipFrame_GOROOTPrefix` (3 rows) and `TestSkipFrame_EmptyGOROOT` (2 rows) to `stacktrace/stacktrace_internal_test.go` from scenarios "Frames in GOROOT are skipped by path prefix" and "Empty GOROOT does not skip every frame" (subtest name = `name` column); verify `go test -race -count=1 -run 'TestSkipFrame_GOROOTPrefix|TestSkipFrame_EmptyGOROOT' ./stacktrace/` fails on assertions in exactly `goroot_sibling_gopath` and `goroot_empty_consumer` (Defect 4 and 3 under the substring rule), with the other 3 rows passing on arrival (record this; they pin unchanged behavior)
-- [ ] 2.3 GREEN: change the GOROOT rule in `skipFrame` to `goroot != "" && strings.HasPrefix(file, goroot+"/")`, and pass `NewFrameFromCaller`'s raw `runtime.Caller` file (before `removeGoPath`) to `skipFrame` (design D3); verify the 2.1 and 2.2 commands pass and `make test` is green
-- [ ] 2.4 REFACTOR: none needed, because the GOROOT rule is one expression inside `skipFrame` and the reported `File` still goes through `removeGoPath` unchanged; verify `make test` and `make lint` pass
+- [x] 2.1 RED (regression): run scenario "Caller frame in a -trimpath build" against the group 1 code; verify `env -u GOROOT go test -race -trimpath -count=1 -run 'TestStacktrace$' ./stacktrace/` fails with found `false`, function `""` and line `0` (Defect 3)
+- [x] 2.2 RED: add `TestSkipFrame_GOROOTPrefix` (3 rows) and `TestSkipFrame_EmptyGOROOT` (2 rows) to `stacktrace/stacktrace_internal_test.go` from scenarios "Frames in GOROOT are skipped by path prefix" and "Empty GOROOT does not skip every frame" (subtest name = `name` column); verify `go test -race -count=1 -run 'TestSkipFrame_GOROOTPrefix|TestSkipFrame_EmptyGOROOT' ./stacktrace/` fails on assertions in exactly `goroot_sibling_gopath` and `goroot_empty_consumer` (Defect 4 and 3 under the substring rule), with the other 3 rows passing on arrival (record this; they pin unchanged behavior)
+- [x] 2.3 GREEN: change the GOROOT rule in `skipFrame` to `goroot != "" && strings.HasPrefix(file, goroot+"/")`, and pass `NewFrameFromCaller`'s raw `runtime.Caller` file (before `removeGoPath`) to `skipFrame` (design D3); verify the 2.1 and 2.2 commands pass and `make test` is green
+- [x] 2.4 REFACTOR: none needed, because the GOROOT rule is one expression inside `skipFrame` and the reported `File` still goes through `removeGoPath` unchanged; verify `make test` and `make lint` pass
 
 ## 3. Search depth boundary
 

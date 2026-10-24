@@ -46,3 +46,59 @@ func TestSkipFrame_Layouts(t *testing.T) {
 		})
 	}
 }
+
+func TestSkipFrame_GOROOTPrefix(t *testing.T) {
+	t.Parallel()
+
+	const (
+		selfPkg = "github.com/samber/do/v2/stacktrace"
+		goroot  = "/usr/local/go"
+	)
+
+	tests := []struct {
+		name     string
+		function string
+		file     string
+		skipped  bool
+	}{
+		{name: "goroot_runtime_goexit", function: "runtime.goexit", file: "/usr/local/go/src/runtime/asm_arm64.s", skipped: true},
+		{name: "goroot_testing_trunner", function: "testing.tRunner", file: "/usr/local/go/src/testing/testing.go", skipped: true},
+		{name: "goroot_sibling_gopath", function: "main.main", file: "/usr/local/gopath/src/app/main.go", skipped: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			is.Equal(tt.skipped, skipFrame(selfPkg, goroot, tt.function, tt.file))
+		})
+	}
+}
+
+func TestSkipFrame_EmptyGOROOT(t *testing.T) {
+	t.Parallel()
+
+	const selfPkg = "github.com/samber/do/v2/stacktrace"
+
+	tests := []struct {
+		name     string
+		function string
+		file     string
+		skipped  bool
+	}{
+		{name: "goroot_empty_consumer", function: "main.main", file: "example.com/app/main.go", skipped: false},
+		{name: "goroot_empty_own_frame", function: "github.com/samber/do/v2/stacktrace.NewFrameFromCaller", file: "github.com/samber/do/v2@v2.1.0/stacktrace/stacktrace.go", skipped: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			is.Equal(tt.skipped, skipFrame(selfPkg, "", tt.function, tt.file))
+		})
+	}
+}
