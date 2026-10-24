@@ -70,3 +70,18 @@ func TestShortFuncName(t *testing.T) {
 	is.Equal("ServiceLazy[...].getInstance", shortFuncName("github.com/samber/do/v2.(*ServiceLazy[...]).getInstance"))
 	is.Equal("ServiceLazy[*int].getInstance", shortFuncName("github.com/samber/do/v2.(*ServiceLazy[*int]).getInstance"))
 }
+
+func TestNewFrameFromPC_ZeroPC(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	var (
+		frame Frame
+		ok    bool
+	)
+	is.NotPanics(func() {
+		frame, ok = NewFrameFromPC(0)
+	})
+	is.False(ok)
+	is.Equal(Frame{}, frame)
+}

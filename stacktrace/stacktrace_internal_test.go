@@ -1,9 +1,13 @@
 package stacktrace
 
 import (
+	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSkipFrame_Layouts(t *testing.T) {
@@ -158,4 +162,16 @@ func TestCallerFrame_SearchDepth(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSelfPkgPath_MatchesSymbolPrefix guards the own-package rule of
+// skipFrame: the linker escapes dots in the last import-path element of
+// symbol names, so selfPkgPath only matches while that element has none.
+func TestSelfPkgPath_MatchesSymbolPrefix(t *testing.T) {
+	t.Parallel()
+	must := require.New(t)
+
+	f := runtime.FuncForPC(reflect.ValueOf(NewFrameFromCaller).Pointer())
+	must.NotNil(f)
+	must.True(strings.HasPrefix(f.Name(), selfPkgPath+"."), "symbol %q, package path %q", f.Name(), selfPkgPath)
 }
