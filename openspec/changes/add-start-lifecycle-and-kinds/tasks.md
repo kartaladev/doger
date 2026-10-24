@@ -1,131 +1,122 @@
 # Tasks
 
-Prerequisites: `fix-stacktrace-frame-filter`, `rename-module-doger` and `upgrade-go-1-27` are archived. The module is `github.com/kartaladev/doger`, the package is `doger`, the Go floor is 1.27, and `make test` is green before starting.
+Prerequisites: `fix-stacktrace-frame-filter`, `rename-module-doger` and `upgrade-go-1-27` are archived. The module is `github.com/kartaladev/doger`, the package is `doger`, the Go floor is 1.27, and `make test` is green before starting. Read design.md (D1–D12 and the Test Strategy table) before each group: tasks reference it for detail. Group 1 is a bug fix and starts with failing regression tests.
 
 ## 0. Baseline
 
-- [ ] 0.1 Record the benchmark baseline: `go test -run '^$' -bench . -benchmem -count 10 ./bench/ > <scratch>/bench-before.txt`. Verify: the file exists and `make test` passes.
+- [ ] 0.1 Record the benchmark baseline with `go test -run '^$' -bench . -benchmem -count 10 ./bench/ > <scratch>/bench-before.txt`; verify the file exists and `make test` passes.
 
-## 1. Registration index
+## 1. Run-once root Shutdown (bug fix)
 
-- [ ] 1.1 RED: add `TestRegistrationIndex_Order` (scenario "Registration index": a=0, b=1 in child scope, c=2, override keeps a=0) and `TestRegistrationIndex_ConcurrentUnique` (100 goroutines register distinct names; all indexes unique) in `options_test.go`. Verify: `go test -race -run 'TestRegistrationIndex' .` fails on the missing `getRegistrationIndex`.
-- [ ] 1.2 GREEN: add `nextRegIndex atomic.Uint64` to `RootScope`; add `regIndex` and `getRegistrationIndex()` to the four wrappers and to `serviceWrapper`/`serviceWrapperAny`; assign the index in `provide`; reuse the existing index in `override` when the name already exists; copy it in `clone`. Verify: the tests above pass and `make test` is green.
-- [ ] 1.3 REFACTOR: *Extract Function* `assignRegistrationIndex(scope, name)` shared by `provide`/`override`. Verify: `make test` and `make lint` pass.
+- [ ] 1.1 RED: in `root_scope_test.go` add regression tests `TestRootScope_ConcurrentShutdown` (rows `default_opts`, `health_check_parallelism_2`; scenario "Concurrent root Shutdown runs once"), `TestRootScope_RepeatedShutdown` ("Later root Shutdown returns the first report") and `TestRootScope_ShutdownWaiterDeadline` ("Waiting Shutdown caller honours its context", synctest); verify `go test -race -count=5 -run 'TestRootScope_(ConcurrentShutdown|RepeatedShutdown|ShutdownWaiterDeadline)' .` fails on current code: spurious `ErrServiceNotFound` entries plus a race report on `healthCheckPool`, an empty second report, and a waiter that returns before its deadline.
+- [ ] 1.2 GREEN: add `lifecycleMu`, `closePhase`, `closeDone`, `closeReport` to `RootScope` and implement design D6 Shutdown steps 1–3 and 6–7 (winner/waiter split, `cloneShutdownReport`, `shutdownAsWinner` holding the deferred `finishClose` so `pointClosed` runs after it, pool stopped only by the winner; no Start handling yet); verify the 1.1 command passes and `make test` is green.
+- [ ] 1.3 REFACTOR: *Extract Function* `shutdownAsWinner` and `waitForClose` out of `RootScope.ShutdownWithContext`; verify `make test` and `make lint` pass.
+- [ ] 1.4 Document run-once root Shutdown (copied report for later callers, waiter deadline, root `*Scope` bypass) in the godoc of `RootScope.Shutdown`/`ShutdownWithContext` and in `docs/docs/service-lifecycle/shutdowner.md`; verify `go doc RootScope.ShutdownWithContext` shows it and `npm run build` in `docs/` passes.
 
-## 2. ProvideOption and variadic registration signatures
+## 2. Registration index
 
-- [ ] 2.1 RED: add `TestProvideOptions_Registration` (all 6 rows of "Registration with and without options"), `TestProvideOptions_SignatureHasVariadic` ("Function values of the old signature no longer compile", asserted via `reflect.TypeOf(...).IsVariadic()` for all 18 helpers) and the non-kind rows of `TestProvideOptions_Constructors` (`AsStarter`, `DependsOn[T]`, `DependsOnNamed`). Verify: `go test -race -run 'TestProvideOptions_(Registration|SignatureHasVariadic|Constructors)' .` fails on the missing symbols.
-- [ ] 2.2 GREEN: add `options.go` with `serviceOptions`, `type ProvideOption func(*serviceOptions)`, `AsStarter`, `DependsOn[T]` and `DependsOnNamed`. Add `opts ...ProvideOption` to `Provide*`, `Override*`, `Lazy*`, `Eager*` and `Transient*`. Thread the options through `provide`/`override` into a new `opts` field on each wrapper (`getOptions()`, aliases return empty). Skip nil options. Verify: the tests above pass and `make test` is green, with existing tests unchanged.
-- [ ] 2.3 REFACTOR: *Introduce Parameter Object*. Collapse `provide`/`override` option application into `buildServiceOptions(opts []ProvideOption) *serviceOptions`. Update godoc on every changed function, including an "Options" paragraph. Verify: `make test` and `make lint` pass, and `go doc doger.Provide` shows the variadic parameter.
+- [ ] 2.1 RED: in `options_test.go` add `TestRegistrationIndex_Order` (rows: same-scope override keeps a=0, child-scope override gets a new index, clone continues the counter; mechanism of scenario "Registration order survives override and clone") and `TestRegistrationIndex_ConcurrentUnique` (100 goroutines, distinct indexes); verify `go test -race -run TestRegistrationIndex .` fails to compile only on the missing `getRegistrationIndex`.
+- [ ] 2.2 GREEN: implement design D1/D3 (`nextRegIndex` on `RootScope`; `regIndex` and `getRegistrationIndex()` on the four wrappers and both wrapper interfaces; assign in `provide`/`override`, keep it on same-scope override, copy in `clone`, continue the counter in `CloneWithOpts`); verify the 2.1 command passes and `make test` is green.
+- [ ] 2.3 REFACTOR: *Extract Function* `assignRegistrationIndex(scope, name)` shared by `provide`/`override`; verify `make test` and `make lint` pass. No docs: the index is internal.
 
-## 3. Option validation, combination, clone, override and alias
+## 3. ProvideOption and variadic registration signatures
 
-- [ ] 3.1 RED: add `TestProvideOptions_Repeated` (non-kind rows: duplicate `DependsOnNamed` collapsed, `AsStarter` twice), `TestProvideOptions_Invalid` (rows: `cfg` concrete without Start + `AsStarter`, `srv` transient + `AsStarter`, `life` interface + `AsStarter` succeeds, `req` transient + `DependsOnNamed` succeeds, `srv` eager value + `AsStarter` succeeds) and `TestProvideOptions_CloneOverrideAlias` (all 5 rows). Verify: `go test -race -run 'TestProvideOptions_(Repeated|Invalid|CloneOverrideAlias)' .` fails on assertions or missing panics.
-- [ ] 3.2 GREEN: implement `validateServiceOptions(name, reflectType, serviceType, opts)`, called from `provide`/`override`, with the exact spec panic messages. Collapse duplicate dependencies. Copy `opts` in each wrapper's `clone`. Verify: the tests above pass and `make test` is green.
-- [ ] 3.3 REFACTOR: *Extract Function* for each validation rule (`validateStarterOpt`, `validateTransientOpts`) so the kind rule can be added in group 12 without branching. Verify: `make test` and `make lint` pass.
+- [ ] 3.1 RED: add `TestProvideOptions_Registration` rows 1–4 and 6 of "Registration with and without options" (row 5 needs `AsRunnable`, see 15.1), `TestProvideOptions_SignatureHasVariadic` (18 rows of "Registration functions keep their parameters and add a variadic option list") and the `AsStarter`/`DependsOn`/`DependsOnNamed` rows of `TestProvideOptions_Constructors` ("Each constructor yields an option recognized by registration"); verify `go test -race -run 'TestProvideOptions_(Registration|SignatureHasVariadic|Constructors)' .` fails to compile only on `ProvideOption`, `AsStarter`, `DependsOn`, `DependsOnNamed` and `getOptions`.
+- [ ] 3.2 GREEN: add `options.go` (design D2: `serviceOptions`, `ProvideOption`, `AsStarter`, `DependsOn[T]`, `DependsOnNamed`), add `opts ...ProvideOption` to the 18 functions, thread options through `provide`/`override` into each wrapper's `opts` (`getOptions()`, aliases nil), skip nil options; verify the 3.1 command passes and `make test` is green with existing tests unchanged.
+- [ ] 3.3 REFACTOR: *Introduce Parameter Object* `buildServiceOptions(opts []ProvideOption) *serviceOptions` shared by `provide`/`override`; verify `make test` and `make lint` pass.
+- [ ] 3.4 Document options: an "Options" godoc paragraph on all 18 changed functions, and a new page under `docs/docs/upgrading/` for this release with the variadic break, the closure workaround and the run-once root Shutdown behavior change, and link that page from `docs/docs/migrating/migrating-from-samber-do.md`; verify `go doc Provide` shows the variadic parameter and `npm run build` in `docs/` passes.
 
-## 4. Static declared dependencies (DependsOn)
+## 4. Option validation, combination, clone, override and alias
 
-- [ ] 4.1 RED: in `dependency_test.go`, add:
-  - `TestDependsOn_BuildOrder` (3 rows of "Declared dependency built before the dependent")
-  - `TestDependsOn_EagerTarget`
-  - `TestDependsOn_AncestorScope`
-  - `TestDependsOn_ConcurrentSingleBuild`
-  - `TestDependsOn_Errors` (5 rows of "Missing or circular declared dependency")
-  - `TestEager_NoOptionsNeverErrors` (compatibility)
+- [ ] 4.1 RED: add `TestProvideOptions_Repeated` (non-kind rows of "Repeated options"), `TestProvideOptions_Invalid` (non-kind rows cfg/AsStarter, srv/transient, life/AsStarter, req, srv/eager of "Invalid opt-in combinations") and `TestProvideOptions_CloneOverrideAlias` (5 rows of "Clone, override and alias"); verify `go test -race -run 'TestProvideOptions_(Repeated|Invalid|CloneOverrideAlias)' .` fails on missing panics, uncollapsed duplicates and the Clone row; the Override and As rows pass on arrival after 3.2, so show they can fail by temporarily copying the old wrapper's options in `override` and returning the target's options from aliases.
+- [ ] 4.2 GREEN: implement `validateServiceOptions` (design D2: exact spec panic messages, run before `serviceSet`, interface types deferred), collapse duplicate dependencies, copy `opts` in each wrapper's `clone`; verify the 4.1 command passes and `make test` is green.
+- [ ] 4.3 REFACTOR: *Extract Function* per rule (`validateStarterOpt`, `validateTransientOpts`) so group 13 adds `validateKindOpt` without branching; verify `make test` and `make lint` pass.
+- [ ] 4.4 Document the registration-time panics in the godoc of `AsStarter` and `DependsOnNamed`; verify `go doc AsStarter` shows them and `make lint` passes.
 
-  Verify: `go test -race -run 'TestDependsOn|TestEager_NoOptionsNeverErrors' .` fails because dependencies are not built first and no edges are recorded.
-- [ ] 4.2 GREEN: before calling the provider in `serviceLazy.build` and `serviceTransient.getInstance`, invoke each declared name through `invokeAnyByName` on the received virtual scope. In `serviceEager.getInstance`, resolve the names once with a `sync.Once` that stores the error. Verify: the tests above pass and `make test` is green.
-- [ ] 4.3 REFACTOR: *Extract Function* `resolveDeclaredDependencies(i Injector, opts *serviceOptions) error`, shared by the three wrappers. Add `ExampleDependsOn`. Verify: `make test`, `make lint` and `go test -run ExampleDependsOn .` pass.
+## 5. Static declared dependencies (DependsOn)
 
-## 5. Dynamic declared dependencies and shutdown order
+- [ ] 5.1 RED: in `dependency_test.go` add `TestDependsOn_BuildOrder` (3 rows of "Declared dependency built before the dependent"), `TestDependsOn_EagerTarget` ("Declared dependency on an eager service"), `TestDependsOn_EagerDependent` (3 rows of "Declared dependency of an eager service"), `TestDependsOn_AncestorScope`, `TestDependsOn_ConcurrentSingleBuild`, `TestDependsOn_Errors` (5 rows of "Missing or circular declared dependency") and `TestEager_NoOptionsNeverErrors`; verify `go test -race -run 'TestDependsOn|TestEager_NoOptionsNeverErrors' .` fails because dependencies are not built first and no edges are recorded; `TestEager_NoOptionsNeverErrors` passes on arrival (it pins current behavior), so show it can fail by temporarily returning an error from `serviceEager.getInstance`.
+- [ ] 5.2 GREEN: implement design D4 (lazy `build` and transient `getInstance` invoke declared names on their virtual scope before the provider; eager uses `depsMu`/`depsResolved`, set only on success, consulted only when it has dependencies; clone resets it); verify the 5.1 command passes and `make test` is green.
+- [ ] 5.3 REFACTOR: *Extract Function* `resolveDeclaredDependencies(i Injector, opts *serviceOptions) error` shared by the three wrappers; verify `make test` and `make lint` pass.
+- [ ] 5.4 Add `ExampleDependsOn` and the static part of a new "Declared dependencies" page (`docs/docs/service-registration/declared-dependencies.md`); verify `go test -run ExampleDependsOn .` and `npm run build` in `docs/` pass.
 
-- [ ] 5.1 RED: add `TestDeclareDependency` (7 rows of "Declaring edges dynamically", plus `nil_injector_uses_default_root`), `TestDeclareDependency_Concurrent` and `TestDeclaredEdges_ShutdownOrder` (2 rows of "Scheduler is shut down before the jobs it drives"). Verify: `go test -race -run 'TestDeclareDependency|TestDeclaredEdges_ShutdownOrder' .` fails on the missing `DeclareDependency`.
-- [ ] 5.2 GREEN: add `DAG.reachable(from, to ServiceDescription) bool` and a locked `addDependencyChecked` that rejects cycles and self-edges. Implement `DeclareDependency` in `dependency.go` with wrapped `ErrServiceNotFound`/`ErrCircularDependency`. Verify: the tests above pass and `make test` is green, including the existing `dag_test.go`.
-- [ ] 5.3 REFACTOR: *Extract Function* `dag.transitiveDependencies(desc)` (DFS shared by `reachable` and group 7's ordering). Add `ExampleDeclareDependency`. Verify: `make test` and `make lint` pass.
+## 6. Dynamic declared dependencies and shutdown order
 
-## 6. Starter interfaces, detection and one-shot Start
+- [ ] 6.1 RED: add `TestDeclareDependency` (11 rows of "Declaring edges dynamically"), `TestDeclareDependency_Concurrent` ("Concurrent declarations are race-free") and `TestDeclaredEdges_ShutdownOrder` (2 rows of "Scheduler is shut down before the jobs it drives"); verify `go test -race -run 'TestDeclareDependency|TestDeclaredEdges_ShutdownOrder' .` fails to compile only on the missing `DeclareDependency` (once it compiles, the `DependsOnNamed` shutdown row passes on arrival from 5.2; show it can fail by temporarily skipping `resolveDeclaredDependencies`).
+- [ ] 6.2 GREEN: implement design D5 in `dependency.go` (`declareMu`, `dependent` from `i`, `dependency` from the dependent's scope, `reachable` over DAG plus static `dependsOn` edges, self-edges as cycles, wrapped `ErrServiceNotFound`/`ErrCircularDependency`, lock order scope then DAG); verify the 6.1 command passes and `make test` is green, including `dag_test.go`.
+- [ ] 6.3 REFACTOR: *Extract Function* `dependencyNeighbors(desc)` (the DFS neighbour function reused by group 8's cycle check and ordering); verify `make test` and `make lint` pass.
+- [ ] 6.4 Add `ExampleDeclareDependency` and the dynamic part of the "Declared dependencies" page (same-scope-or-ancestor rule, start/shutdown but not construction); verify `go test -run ExampleDeclareDependency .` and `npm run build` in `docs/` pass.
 
-- [ ] 6.1 RED: in `root_start_test.go`, add:
-  - `TestStart_Variants` (4 rows)
-  - `TestStart_Detection` (7 rows of "Which registrations are started")
-  - `TestStart_DisableAutoDetection` (2 rows)
-  - `TestStart_Empty`
-  - `TestStart_OneShot` (4 rows of "Repeated and late Start calls")
-  - `TestStart_LateRegistrationNotStarted`
+## 7. Starter interfaces, detection and one-shot Start
 
-  Verify: `go test -race -run 'TestStart_(Variants|Detection|DisableAutoDetection|Empty|OneShot|LateRegistrationNotStarted)' .` fails on the missing `Start`, `Starter*`, `ErrAlreadyStarted` and `ErrStartAfterShutdown`.
-- [ ] 6.2 GREEN:
-  - Add the four `Starter*` interfaces to `di_lifecycle.go`, plus the sentinels to `errors.go` and the two toggles to `InjectorOpts` (and `copy()`).
-  - Add `lifecycleMu`/`state` to `RootScope`, and `Start`/`StartWithContext` in `root_start.go`.
-  - Discovery: breadth-first scope snapshot, skipping transients and aliases, auto-detecting by registered type or `AsStarter`, sorted by `(depth, regIndex)`.
-  - Build each candidate, then start each Starter with `startInstance` (type switch with `recover`). Order by `(depth, regIndex)` for now.
-  - Root `ShutdownWithContext` does a check-and-set to `stateShutdown` under `lifecycleMu`. The lock is held only for the transition (D6).
+- [ ] 7.1 RED: in `root_start_test.go` add `TestStart_Variants` (4 rows), `TestStart_Detection` (8 rows of "Which registrations are started"), `TestStart_DisableAutoDetection` (2 rows of "Auto-detection toggle"), `TestStart_Empty`, `TestStart_OneShot` (5 rows of "Repeated and late Start calls"), `TestStart_Clone` (2 rows of "Clone of a started container") and `TestStart_LateRegistrationNotStarted`; verify `go test -race -run 'TestStart_(Variants|Detection|DisableAutoDetection|Empty|OneShot|Clone|LateRegistrationNotStarted)' .` fails to compile only on `Start`, `StartWithContext`, the `Starter*` interfaces, `ErrAlreadyStarted`, `ErrStartAfterShutdown` and `DisableStarterAutoDetection`.
+- [ ] 7.2 GREEN: add the `Starter*` interfaces, both sentinels and both toggles (in `copy()` too), the D6 start phase on the group-1 `lifecycleMu` (`beginStart` with `ErrStartAfterShutdown` precedence, `runStart` holding the deferred `finishStart` so `pointAfterStart` runs after it), and D7 steps 2, 3 and 6 in `root_start.go` ordered by `(depth, regIndex)` only; verify the 7.1 command passes and `make test` is green.
+- [ ] 7.3 REFACTOR: *Extract Function* `discoverCandidates`, `buildCandidates` and `startStarters` (the type switch mirrors `shutdown`, so no polymorphism); verify `make test` and `make lint` pass.
+- [ ] 7.4 Add `ExampleRootScope_Start` and `ExampleAsStarter`, godoc for `Starter*`/`Start` (registered-type detection vs instance-based `Shutdowner*`, the `*exec.Cmd` caveat), and the page `docs/docs/service-lifecycle/starter.md` ("Starting the container"); verify `go test -run 'Example(RootScope_Start|AsStarter)' .` and `npm run build` in `docs/` pass.
 
-  Verify: the tests above pass and `make test` is green.
-- [ ] 6.3 REFACTOR: *Extract Function* `discoverCandidates`, `buildCandidates` and `startStarters`. *Replace Conditional with Polymorphism* is not needed: a type switch mirrors the existing `shutdown`. Add `ExampleRootScope_Start`. Verify: `make test`, `make lint` and `go test -run ExampleRootScope_Start .` pass.
+## 8. Dependency-ordered start, deterministic ties and cycle check
 
-## 7. Dependency-ordered start and deterministic ties
+- [ ] 8.1 RED: add `TestStart_DependencyOrder`, `TestStart_ScopeTraversal`, `TestStart_TieBreak` plus `TestStart_TieBreak_Stable` (100 repeats), `TestStart_RegistrationOrder` (4 rows of "Registration order survives override and clone") and `TestStart_RejectsDeclaredCycle` ("Start rejects a cycle closed by a dynamic edge"); verify `go test -race -run 'TestStart_(DependencyOrder|ScopeTraversal|TieBreak|RegistrationOrder|RejectsDeclaredCycle)' .` fails on the DependencyOrder order and the missing cycle error; ScopeTraversal, TieBreak and RegistrationOrder pass on arrival from 7.2, so show they fail when sorting temporarily by `regIndex` only (first two) or when override temporarily drops the index (third).
+- [ ] 8.2 GREEN: implement design D8 (Kahn order over transitive Starter dependencies via `dependencyNeighbors`, `(depth, regIndex)` ties, defensive fallback) and the D7 step 5 cycle check, both after the `StageBeforeStart` point (still empty); verify the 8.1 command passes and `make test` is green.
+- [ ] 8.3 REFACTOR: *Extract Function* `orderByDependencies(candidates []candidate) []candidate` (generic over candidates for group 13) and *Move Function* the ordering code into `ordering.go`; verify `make test` and `make lint` pass.
+- [ ] 8.4 Document start ordering, ties and the cycle check in `docs/docs/service-lifecycle/starter.md`; verify `npm run build` in `docs/` passes.
 
-- [ ] 7.1 RED: add `TestStart_DependencyOrder` ("Dependency-ordered build and start"), `TestStart_ScopeTraversal` ("Child scopes are started after their ancestors"), `TestStart_TieBreak` and `TestStart_TieBreak_Stable` (100 repeats), all from "Ties broken by scope depth then registration order". Verify: `go test -race -run 'TestStart_(DependencyOrder|ScopeTraversal|TieBreak)' .` fails on the order assertions.
-- [ ] 7.2 GREEN: implement the Kahn topological order over transitive Starter dependencies (`transitiveDependencies`), with `(depth, regIndex)` as tie-break and the defensive fallback. Compute the order after the `StageBeforeStart` point (still a no-op here). Verify: the tests above pass and `make test` is green.
-- [ ] 7.3 REFACTOR: *Extract Function* `orderByDependencies(candidates []candidate) []candidate`, generic over candidates so group 12 reuses it for kind components. Verify: `make test` and `make lint` pass.
+## 9. Start errors and panics
 
-## 8. Start errors, panics and shutdown after failure
+- [ ] 9.1 RED: add `TestStart_StarterFailure` (3 rows of "A Starter failure stops the remaining Starters"), `TestStart_BuildFailure` (2 rows of "A build failure stops Start before any Starter"), `TestStart_AsStarterInstanceWithoutStart` and `TestStart_ShutdownAfterFailure`; verify `go test -race -run 'TestStart_(StarterFailure|BuildFailure|AsStarterInstanceWithoutStart|ShutdownAfterFailure)' .` fails on the error-wrapping and message assertions and on the unrecovered panic rows; `ShutdownAfterFailure` passes on arrival (existing shutdown), so show it fails with `serviceLazy.shutdown` temporarily returning early.
+- [ ] 9.2 GREEN: wrap build and start failures with the D7/D11 formats, recover in `startInstance`, return the spec error for a deferred `AsStarter` instance without a `Start` variant, stop at the first failure; verify the 9.1 command passes and `make test` is green.
+- [ ] 9.3 REFACTOR: *Extract Function* `wrapStartError(scope, name, err)` and `recoverAsError(r any) error`; verify `make test` and `make lint` pass.
+- [ ] 9.4 Document failure semantics (no rollback, caller-owned `Shutdown`, services must tolerate Shutdown without Start) in the `Start` godoc and the starter docs page; verify `go doc RootScope.Start` and `npm run build` in `docs/` pass.
 
-- [ ] 8.1 RED: add `TestStart_FirstFailure` (4 rows of "First failure stops the pipeline"), `TestStart_ShutdownAfterFailure` and `TestStart_AsStarterInstanceWithoutStart`. Verify: `go test -race -run 'TestStart_(FirstFailure|ShutdownAfterFailure|AsStarterInstanceWithoutStart)' .` fails on error wrapping and message assertions.
-- [ ] 8.2 GREEN: wrap build and start failures with the D11 formats. Convert recovered panics to errors. Return the spec error for an `AsStarter` instance with no `Start` variant. Stop at the first failure. Verify: the tests above pass and `make test` is green.
-- [ ] 8.3 REFACTOR: *Extract Function* `wrapStartError(scope, name, err)` / `recoverAsError(...)`. Verify: `make test` and `make lint` pass.
+## 10. Context handling
 
-## 9. Context handling
+- [ ] 10.1 RED: add `TestStart_Context` (3 rows of "Cancellation and deadline", inside `synctest.Test`), `TestStart_NilContext` and `TestStart_ContextEndsWithStart`; verify `go test -race -run 'TestStart_(Context|NilContext|ContextEndsWithStart)' .` fails because "b" starts after cancellation, the nil context panics, and the kept context is not cancelled.
+- [ ] 10.2 GREEN: implement the D6 Start context (`context.WithCancelCause`, nil to `Background`, abort checks before each candidate, handler call and Starter and after the last step, abort-error wrapping, `startCancel(nil)` in `finishStart`, and `finishStart` turning a nil result into the abort error when `closePhase != closeOpen`); verify the 10.1 command passes and `make test` is green.
+- [ ] 10.3 REFACTOR: *Extract Function* `checkAbort(startCtx) error` used at every loop head; verify `make test` and `make lint` pass.
+- [ ] 10.4 Document the Start context contract (derived, cancelled when Start returns, do not retain it) in the `StartWithContext` godoc and the starter docs page; verify `go doc RootScope.StartWithContext` and `npm run build` in `docs/` pass.
 
-- [ ] 9.1 RED: add `TestStart_Context` (3 rows of "Cancellation and deadline", inside `synctest.Test`) and `TestStart_NilContext`. Verify: `go test -race -run 'TestStart_(Context|NilContext)' .` fails, either because `b` is started after cancellation or because the nil context panics.
-- [ ] 9.2 GREEN: check `ctx.Err()` before building and before each Starter, and wrap it. Pass `ctx` to the context-aware variants. Treat a nil context as `context.Background()`. Verify: the tests above pass and `make test` is green.
-- [ ] 9.3 REFACTOR: none needed. The checks are single-line guards at the two loop heads. Verify: `make test` and `make lint` pass.
+## 11. Shutdown cancels and waits for a running Start
 
-## 10. Concurrency and Start/Shutdown serialization
+- [ ] 11.1 RED: add `TestStart_ShutdownCancels` (the three Starter rows of "Shutdown cancels a running Start"; the Runner row is 15.1), `TestStart_PanicReleasesShutdown`, `TestStart_Concurrent` and `TestStart_ConcurrentInvoke`; verify `go test -race -count=20 -run 'TestStart_(ShutdownCancels|PanicReleasesShutdown|Concurrent|ConcurrentInvoke)' .` fails on ShutdownCancels (no cancel, no wait); the other three pass on arrival from 7.2, so show they fail with the CAS in `beginStart` removed (Concurrent), `serviceLazy.mu` dropped (ConcurrentInvoke) and `startDone` closed outside the defer once 11.2 waits (PanicReleasesShutdown).
+- [ ] 11.2 GREEN: implement D6 Shutdown step 4 (capture `inFlight`, `startCancel` and `startDone` in `beginClose`; `startCancel(ErrStartAfterShutdown)`; wait for `startDone` or `ctx.Done()`), never holding `lifecycleMu` across pipeline code; verify the 11.1 command passes with `-race -count=20`, goleak is clean, and `make test` is green.
+- [ ] 11.3 REFACTOR: *Extract Function* `waitForStart(ctx)`, then confirm with a gopls call-hierarchy review of every `lifecycleMu.Lock` site that no lock is held across user code; verify `make test` and `make lint` pass.
+- [ ] 11.4 Document the Start/Shutdown interplay (cancellation cause, deadline, late Starter not rolled back, never call `Shutdown()` synchronously from Start-time code, re-entrant `Start` returns `ErrAlreadyStarted`, root `*Scope` bypass) in the `Start`/`Shutdown` godoc and the starter docs page; verify `npm run build` in `docs/` passes.
 
-- [ ] 10.1 RED: add `TestStart_Concurrent` ("Concurrent Start calls"), `TestStart_ConcurrentInvoke` ("Concurrent Start and Invoke") and `TestStart_ShutdownWaits` ("Shutdown waits for a running Start", inside `synctest.Test`). Verify: `go test -race -count=20 -run 'TestStart_(Concurrent|ConcurrentInvoke|ShutdownWaits)' .` fails or reports a race before the fix, for example if Shutdown proceeds while Start is running.
-- [ ] 10.2 GREEN: implement the D6 state machine: short check-and-set transitions under `lifecycleMu`, `startDone` closed when the pipeline ends, and root Shutdown waiting on `startDone` or its own `ctx.Done()`. Never hold the lock while Starters, handlers or hooks run. Verify: the tests above pass with `-race -count=20`, goleak is clean, and `make test` is green.
-- [ ] 10.3 REFACTOR: confirm, with a `gopls` call-hierarchy review of the `lifecycleMu.Lock` sites, that no lock is held across pipeline code. Document in the `StartWithContext` godoc that calling `Shutdown` from inside Start deadlocks without a deadline, and that re-entrant `Start` returns `ErrAlreadyStarted`. Verify: `make test` and `make lint` pass.
+## 12. Per-service start hooks
 
-## 11. Per-service start hooks
+- [ ] 12.1 RED: add `TestStart_Hooks` ("Hooks around each Starter"); verify `go test -race -run TestStart_Hooks .` fails to compile only on `HookBeforeStart`, `HookAfterStart`, `AddBeforeStartHook` and `AddAfterStartHook`.
+- [ ] 12.2 GREEN: add the `InjectorOpts` fields (initialized in `NewWithOpts`, copied in `copy()`), `onBeforeStart`/`onAfterStart` and the `RootScope.Add*StartHook` methods, called around `startInstance` with the method's unwrapped error; verify the 12.1 command passes and `make test` is green.
+- [ ] 12.3 REFACTOR: none needed, the helpers mirror `onBeforeShutdown`/`onAfterShutdown`; verify `make test` and `make lint` pass.
+- [ ] 12.4 Document the start hooks in `docs/docs/container/options.md` and their godoc; verify `npm run build` in `docs/` passes.
 
-- [ ] 11.1 RED: add `TestStart_Hooks` ("Hooks around each Starter"). Verify: `go test -race -run TestStart_Hooks .` fails on the missing `HookBeforeStart`, `HookAfterStart` and `AddBeforeStartHook`.
-- [ ] 11.2 GREEN: add the `InjectorOpts` fields (initialized in `NewWithOpts`, copied in `copy()`), the `onBeforeStart`/`onAfterStart` helpers and the `RootScope.Add*StartHook` methods. Call them around `startInstance`. Verify: the test passes and `make test` is green.
-- [ ] 11.3 REFACTOR: none needed; this mirrors the shutdown hook helpers. Update the docs "Hooks" page with the start hooks. Verify: `make test` and `make lint` pass.
+## 13. Component kinds
 
-## 12. Component kinds
+- [ ] 13.1 RED: in `kind_test.go` add `TestKind_OptIn`, `TestKind_DistinctIdentity`, `TestKind_InterfaceRegistration` (2 rows), `TestKind_InvalidValues` (4 rows), `TestKind_Stage` (2 rows), `TestKind_ReplaceHandler`, `TestKind_NoHandler`, `TestKind_ComponentOrder`, `TestKind_HandlerFailure` (3 rows), plus the `scheduled` rows of `TestProvideOptions_Constructors`, `TestProvideOptions_Repeated` and `TestProvideOptions_Invalid` (tjob, plain, life); verify `go test -race -run 'TestKind_|TestProvideOptions_' .` fails to compile only on `NewKind`, `Kind`, `Component`, `Stage`, `StageBeforeStart` and `StageAfterStart`.
+- [ ] 13.2 GREEN: add `kind.go` (design D9: `kindID`, zero-Kind/invalid-stage/nil-handler panics, `With`, `Handle`, erased entries under `kindsMu`), `validateKindOpt` (D2, deferred for interface types), the D7 step 3 instance check, kind-bound candidates, and stage runs at D7 steps 4 and 7 ordered with `orderByDependencies`; verify the 13.1 command passes and `make test` is green.
+- [ ] 13.3 REFACTOR: *Extract Function* `runStage(ctx, stage)`; verify `make test` and `make lint` pass.
+- [ ] 13.4 Add `ExampleNewKind` (scheduled-job kind whose handler declares edges) and the page `docs/docs/service-lifecycle/component-kinds.md` (custom kinds, stages, interface-typed opt-in); verify `go test -run ExampleNewKind .` and `npm run build` in `docs/` pass.
 
-- [ ] 12.1 RED: in `kind_test.go`, add:
-  - `TestKind_OptIn`, `TestKind_DistinctIdentity`
-  - `TestKind_Stage` (2 rows), `TestKind_ReplaceHandler`, `TestKind_NilHandlerPanics`, `TestKind_NoHandler`
-  - `TestKind_ComponentOrder`, `TestKind_HandlerFailure` (2 rows)
-  - the kind rows of `TestProvideOptions_Constructors`, `TestProvideOptions_Repeated` (duplicate kind panics) and `TestProvideOptions_Invalid` (transient + kind, kind not assignable)
+## 14. Handlers declaring dependencies
 
-  Verify: `go test -race -run 'TestKind_|TestProvideOptions_' .` fails on the missing `NewKind`, `Kind`, `Component` and `Stage`.
-- [ ] 12.2 GREEN: add `kind.go` with `kindID`, `Kind[T,M]` (`NewKind`, `Name`, `With`, `Handle`), `Component`, `Stage` and the erased handler entries on `RootScope` (`kindsMu`). Add the kind validation rules to `validateServiceOptions`. Make kind-bound services discovery candidates. Run the stage handlers at the D7 points, ordering components with `orderByDependencies`. Wrap errors and panics. Verify: the tests above pass and `make test` is green.
-- [ ] 12.3 REFACTOR: *Extract Function* `runStage(ctx, stage)`. *Move Function*: move the shared ordering into `ordering.go`. Add `ExampleNewKind` (scheduled-job kind) and `ExampleKind_Handle`. Verify: `make test`, `make lint` and `go test -run 'Example(NewKind|Kind_Handle)' .` pass.
+- [ ] 14.1 RED: add `TestKind_DeclareDependencyInHandler` ("Scheduler handler orders start and shutdown"); verify `go test -race -run TestKind_DeclareDependencyInHandler .` runs; it passes on arrival (8.2 already orders after `StageBeforeStart`, 6.2 records edges), so show it fails when the start order is temporarily computed before `StageBeforeStart`.
+- [ ] 14.2 GREEN: no production change needed beyond 8.2 and 13.2; verify the 14.1 command passes and `make test` is green.
+- [ ] 14.3 REFACTOR: none needed, this only pins pipeline order; verify `make test` and `make lint` pass.
 
-## 13. Handlers declaring dependencies
+## 15. Built-in Runnable kind
 
-- [ ] 13.1 RED: add `TestKind_DeclareDependencyInHandler` ("Scheduler handler orders start and shutdown"). Verify: `go test -race -run TestKind_DeclareDependencyInHandler .` fails if the start order is computed before `StageBeforeStart` or if shutdown ignores the edge.
-- [ ] 13.2 GREEN: make sure the Starter order is computed after `StageBeforeStart` handlers (D7/D8). Verify: the test passes and `make test` is green.
-- [ ] 13.3 REFACTOR: none needed; this only confirms pipeline order. Verify: `make test` and `make lint` pass.
+- [ ] 15.1 RED: add `TestRunnable_RunsAfterStarters`, `TestRunnable_Failure`, `TestRunnable_AutoDetection` (5 rows of "Runner auto-detection"), `TestRunnable_ReplaceHandler`, `TestRunnable_ReassignedVariable`, the Runner row of `TestStart_ShutdownCancels`, and the runnable rows of `TestProvideOptions_Registration` (row 5), `_Constructors`, `_Repeated` and `_Invalid` (job, cfg); verify `go test -race -run 'TestRunnable_|TestStart_ShutdownCancels|TestProvideOptions_' .` fails to compile only on `Runner`, `Runnable`, `AsRunnable` and `EnableRunnerAutoDetection`.
+- [ ] 15.2 GREEN: implement design D10 (`runnableKind`, exported `Runnable` copy, `AsRunnable`, default inline `StageAfterStart` handler registered in `NewWithOpts`, `EnableRunnerAutoDetection` implicit binding without duplicates and excluding transients and aliases); verify the 15.1 command passes, goleak is clean, and `make test` is green.
+- [ ] 15.3 REFACTOR: none needed, `Runnable` reuses `Kind` unchanged; verify `make test` and `make lint` pass.
+- [ ] 15.4 Add `ExampleAsRunnable` and `ExampleKind_Handle` (replacing the Runnable handler), godoc for `Runner` (one-shot) and `Runnable` (do not reassign), and the Runnable section of the component-kinds page; verify `go test -run 'Example(AsRunnable|Kind_Handle)' .` and `npm run build` in `docs/` pass.
 
-## 14. Built-in Runnable kind
+## 16. Integration checks
 
-- [ ] 14.1 RED: add `TestRunnable_RunsAfterStarters`, `TestRunnable_Failure`, `TestRunnable_AutoDetection` (2 rows plus `excludes_transient_and_alias`) and `TestRunnable_ReplaceHandler`, plus the `AsRunnable` row of `TestProvideOptions_Constructors`. Verify: `go test -race -run 'TestRunnable_' .` fails on the missing `Runner`, `Runnable` and `AsRunnable`.
-- [ ] 14.2 GREEN: add `Runner`, `Runnable`, `AsRunnable` and the default `StageAfterStart` handler, registered in `NewWithOpts`. `EnableRunnerAutoDetection` adds implicit `Runnable` bindings during discovery, excluding transients and aliases. Verify: the tests above pass, goleak is clean, and `make test` is green.
-- [ ] 14.3 REFACTOR: none needed beyond reusing `Kind`. Add `ExampleAsRunnable`. Write the docs pages "Starting the container", "Component kinds" and "Declared dependencies". Verify: `make test`, `make lint`, `go test -run ExampleAsRunnable .` and the docs build (`npm run build` in `docs/`) pass.
-
-## 15. Integration checks
-
-- [ ] 15.1 Compare benchmarks: rerun the group-0 command into `bench-after.txt`, then `benchstat bench-before.txt bench-after.txt`. Verify: the invoke and provide benchmarks show `~` (no significant change). Otherwise stop and investigate.
-- [ ] 15.2 Run the full suite: `make test` (race + goleak), `make lint`, and `go vet ./... && go test -race ./...` in every workspace module. Verify: all pass.
-- [ ] 15.3 Check traceability: every scenario in `specs/**/spec.md` has a passing test named as in design.md's Test Strategy. Verify: a `go test -race -run '<all names>' -v .` listing shows each one PASS.
+- [ ] 16.1 Compare benchmarks: rerun the 0.1 command into `<scratch>/bench-after.txt` and run `benchstat bench-before.txt bench-after.txt`; verify the invoke and provide benchmarks show `~` (otherwise stop and investigate).
+- [ ] 16.2 Run the full suite: `make test`, `make lint`, and `go vet ./... && go test -race ./...` in every `go.work` module; verify all pass.
+- [ ] 16.3 Check traceability against design.md's Test Strategy table; verify `go test -race -run '<every test name in the table>' -v .` lists each test and subtest as PASS.
+- [ ] 16.4 Validate the plan; verify `openspec validate add-start-lifecycle-and-kinds --strict` passes.
 
 ## Workflow follow-up
 
-- Archive this change after review, then start `add-container-lifecycle-hooks` and `add-collection-invocation`, which build on it.
+- Archive this change after review, then start `add-container-lifecycle-hooks` and `add-collection-invocation`, which build on it (the hooks change on the D6 phase names and points).
 - Revisit the design Open Questions (clone of replaced handlers, exported `StartError`, and how `ExplainService` should show declared edges) when a consumer needs them.

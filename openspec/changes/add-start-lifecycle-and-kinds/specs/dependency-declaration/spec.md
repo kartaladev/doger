@@ -2,12 +2,12 @@
 
 ## Purpose
 
-Lets a consumer or a component-kind handler declare a dependency between services that do not invoke each other, so construction, start and shutdown all follow one deterministic dependency order.
+Lets a consumer or a component-kind handler declare a dependency between services that do not invoke each other, so construction, start and shutdown follow one deterministic dependency order.
 
 ## ADDED Requirements
 
 ### Requirement: Static declared dependencies are built first
-When a registration carries `DependsOn[T]()` or `DependsOnNamed(name)`, the container SHALL build each declared dependency, in declaration order, before calling the dependent's provider. It SHALL record a dependency edge for each, exactly as if the provider had invoked it. This SHALL hold for `Invoke` and for `Start`.
+When a registration carries `DependsOn[T]()` or `DependsOnNamed(name)`, the container SHALL build each declared dependency, in declaration order, before calling the dependent's provider (for an eager value: before its first invocation returns). It SHALL record a dependency edge for each, exactly as if the provider had invoked it. This SHALL hold for `Invoke` and for `Start`.
 
 #### Scenario: Declared dependency built before the dependent
 ```gherkin
@@ -16,13 +16,13 @@ And lazy "db" and lazy "cache"
 And lazy "worker" registered with <options> whose provider invokes nothing
 When the consumer invokes "worker"
 Then the provider call order is <order>
-And ExplainService("worker") lists dependencies <deps>
+And ExplainNamedService(root, "worker") lists dependencies <deps>
 
 Examples:
-  | options                                      | order                 | deps          |
-  | DependsOnNamed("db")                         | db, worker            | db            |
-  | DependsOnNamed("cache"), DependsOnNamed("db") | cache, db, worker    | cache, db     |
-  | none                                         | worker                | none          |
+  | options                                       | order             | deps      |
+  | DependsOnNamed("db")                          | db, worker        | db        |
+  | DependsOnNamed("cache"), DependsOnNamed("db") | cache, db, worker | cache, db |
+  | none                                          | worker            | none      |
 ```
 
 #### Scenario: Declared dependency on an eager service
@@ -30,8 +30,23 @@ Examples:
 Given a root scope with eager value "cfg"
 And lazy "worker" registered with DependsOnNamed("cfg")
 When the consumer invokes "worker"
-Then ExplainService("worker") lists dependency "cfg"
-And ExplainService("cfg") lists dependent "worker"
+Then ExplainNamedService(root, "worker") lists dependency "cfg"
+And ExplainNamedService(root, "cfg") lists dependent "worker"
+```
+
+#### Scenario: Declared dependency of an eager service
+```gherkin
+Given a root scope with eager value "srv" registered with DependsOnNamed("db")
+And <setup>
+When the consumer invokes "srv" <times>
+Then the invocations return <results>
+And ExplainNamedService(root, "srv") lists dependencies <deps>
+
+Examples:
+  | setup                                                    | times                               | results                         | deps |
+  | lazy "db" registered before the first invocation         | twice                               | nil, nil                        | db   |
+  | lazy "db" registered only between the two invocations    | twice                               | ErrServiceNotFound, then nil    | db   |
+  | nothing else                                             | once                                | ErrServiceNotFound              | none |
 ```
 
 #### Scenario: Declared dependency resolved through scope ancestry
@@ -53,8 +68,9 @@ And the "worker" provider was called exactly 1 time
 ```
 
 <!-- cases: N/A 2 overrides: declaring is itself the override of implicit (invocation-only) ordering -->
-<!-- cases: 3 zero values: DependsOnNamed("") is covered by "Declared dependency errors" -->
+<!-- cases: 3 zero values: DependsOnNamed("") is covered by "Missing or circular declared dependency" -->
 <!-- cases: N/A 4 boundaries: 0, 1 and many dependencies are covered by the Examples rows -->
+<!-- cases: 7 lifecycle: an eager dependent retries a failed resolution on the next invocation ("Declared dependency of an eager service", second row) -->
 <!-- cases: N/A 9 panics: a declared dependency whose provider panics surfaces as the existing provider-panic error; no new path -->
 <!-- cases: 10 compatibility: the "none" row pins unchanged behavior for registrations without DependsOn -->
 
@@ -70,39 +86,45 @@ And the error message contains "<message>"
 And the provider of "<invoked>" was not called
 
 Examples:
-  | setup                                                                 | invoked | error                 | message                         |
-  | lazy "worker" DependsOnNamed("db")                                    | worker  | ErrServiceNotFound    | `db`                            |
-  | lazy "worker" DependsOnNamed("")                                      | worker  | ErrServiceNotFound    | ``                              |
-  | lazy "a" DependsOnNamed("b"); lazy "b" DependsOnNamed("a")            | a       | ErrCircularDependency | `a` -> `b` -> `a`               |
-  | lazy "a" DependsOnNamed("a")                                          | a       | ErrCircularDependency | `a` -> `a`                      |
-  | lazy "a" DependsOnNamed("b"); lazy "b" whose provider invokes "a"     | a       | ErrCircularDependency | `a` -> `b` -> `a`               |
+  | setup                                                             | invoked | error                 | message           |
+  | lazy "worker" DependsOnNamed("db")                                | worker  | ErrServiceNotFound    | `db`              |
+  | lazy "worker" DependsOnNamed("")                                  | worker  | ErrServiceNotFound    | ``                |
+  | lazy "a" DependsOnNamed("b"); lazy "b" DependsOnNamed("a")        | a       | ErrCircularDependency | `a` -> `b` -> `a` |
+  | lazy "a" DependsOnNamed("a")                                      | a       | ErrCircularDependency | `a` -> `a`        |
+  | lazy "a" DependsOnNamed("b"); lazy "b" whose provider invokes "a" | a       | ErrCircularDependency | `a` -> `b` -> `a` |
 ```
 
 <!-- cases: N/A 2 overrides: errors cannot be suppressed -->
-<!-- cases: N/A 7 lifecycle: covered via Start in container-start ("Start fails on a declared-dependency error") -->
+<!-- cases: 7 lifecycle: through Start, covered in container-start ("A build failure stops Start before any Starter", DependsOnNamed("missing") row) -->
 <!-- cases: N/A 8 concurrency: error paths share the build path covered above -->
 <!-- cases: N/A 9 panics: errors are returned, not raised -->
 <!-- cases: N/A 10 compatibility: new API -->
 
 ### Requirement: Dynamic dependency declaration
-`DeclareDependency(i, dependent, dependency)` SHALL record an edge `dependent -> dependency` between two services visible from `i`, without building either. It SHALL return an error matching `ErrServiceNotFound` if either name is not visible, and `ErrCircularDependency` if `dependency` already depends, directly or transitively, on `dependent`. Declaring an existing edge again SHALL succeed and change nothing.
+`DeclareDependency(i, dependent, dependency)` SHALL record `dependent -> dependency` without building either, resolving `dependent` from `i` and `dependency` from the dependent's scope or its ancestors. An unresolved name SHALL give `ErrServiceNotFound`. If `dependency` already reaches `dependent` through recorded or static `DependsOn` edges, it SHALL give `ErrCircularDependency`. Repeating an edge changes nothing. Such edges order start and shutdown, not construction.
 
 #### Scenario: Declaring edges dynamically
 ```gherkin
-Given a root scope with lazy "scheduler", lazy "job-a" and lazy "job-b"
-And the existing edge "job-b" -> "scheduler"
-When the consumer calls DeclareDependency(root, "<dependent>", "<dependency>")
+Given a root scope with lazy "scheduler", lazy "job-a", lazy "job-b" and lazy "job-s" registered with DependsOnNamed("scheduler"), none built
+And the edge "job-b" -> "scheduler" recorded by invoking "job-b", whose provider invokes "scheduler"
+And a child scope "tenant" with lazy "tenant-job"
+And <given>
+When the consumer calls DeclareDependency(<injector>, "<dependent>", "<dependency>")
 Then the result is <result>
 
 Examples:
-  | dependent | dependency | result                       |
-  | scheduler | job-a      | nil, edge recorded           |
-  | scheduler | job-a      | nil (second call), no change |
-  | scheduler | missing    | ErrServiceNotFound           |
-  | missing   | job-a      | ErrServiceNotFound           |
-  | ""        | job-a      | ErrServiceNotFound           |
-  | scheduler | job-b      | ErrCircularDependency        |
-  | job-a     | job-a      | ErrCircularDependency        |
+  | given                                       | injector | dependent  | dependency | result                                                 |
+  | nothing else                                | root     | scheduler  | job-a      | nil, ExplainNamedService lists job-a under scheduler   |
+  | the edge scheduler -> job-a already declared | root    | scheduler  | job-a      | nil, scheduler still has exactly 1 dependency job-a    |
+  | nothing else                                | root     | scheduler  | missing    | ErrServiceNotFound                                     |
+  | nothing else                                | root     | missing    | job-a      | ErrServiceNotFound                                     |
+  | nothing else                                | root     | ""         | job-a      | ErrServiceNotFound                                     |
+  | nothing else                                | root     | scheduler  | job-b      | ErrCircularDependency                                  |
+  | nothing else                                | root     | job-a      | job-a      | ErrCircularDependency                                  |
+  | nothing else                                | root     | scheduler  | job-s      | ErrCircularDependency (static DependsOn, not built)    |
+  | nothing else                                | tenant   | scheduler  | tenant-job | ErrServiceNotFound (not visible from scheduler's scope) |
+  | nothing else                                | tenant   | tenant-job | scheduler  | nil, edge "tenant/tenant-job" -> "[root]/scheduler"    |
+  | DefaultRootScope replaced by this root and restored in t.Cleanup | nil | scheduler | job-a | nil, edge recorded in DefaultRootScope            |
 ```
 
 #### Scenario: Concurrent declarations are race-free
@@ -110,11 +132,23 @@ Examples:
 Given a root scope with lazy "scheduler" and 50 lazy services "job-0" to "job-49"
 When 50 goroutines each call DeclareDependency(root, "scheduler", "job-<n>")
 Then all 50 calls return nil
-And ExplainService("scheduler") lists 50 dependencies
+And ExplainNamedService(root, "scheduler") lists 50 dependencies
+```
+
+#### Scenario: Start rejects a cycle closed by a dynamic edge
+```gherkin
+Given a root scope with lazy Starter "scheduler" registered first
+And lazy Starter "job" registered second, whose provider invokes "scheduler"
+And DeclareDependency(root, "scheduler", "job") returned nil before Start, because nothing was built yet
+When the consumer calls Start()
+Then errors.Is(err, ErrCircularDependency) is true
+And the error message contains "`scheduler`" and "`job`"
+And no Starter was started
 ```
 
 <!-- cases: N/A 2 overrides: no option -->
-<!-- cases: 3 zero values: a nil injector uses the default root scope, as every package-level function does; covered by a table row in design.md test strategy -->
+<!-- cases: 3 zero values: an empty name and a nil injector (default root scope) are rows of "Declaring edges dynamically" -->
+<!-- cases: 7 lifecycle: cross-scope visibility rows; cycles closed only after build are rejected by Start ("Start rejects a cycle closed by a dynamic edge") -->
 <!-- cases: N/A 9 panics: no panic paths; all failures are returned errors -->
 <!-- cases: N/A 10 compatibility: new API -->
 
@@ -137,11 +171,12 @@ Examples:
 <!-- cases: N/A 2 overrides: ordering is defined by edges only -->
 <!-- cases: N/A 3 zero values, 4 boundaries: the no-edge case is the existing parallel-shutdown behavior -->
 <!-- cases: N/A 5 errors: shutdown errors are reported as today -->
+<!-- cases: 7 lifecycle: edges always point to the same scope or an ancestor ("Dynamic dependency declaration"), so the children-first shutdown never contradicts them -->
 <!-- cases: N/A 9 panics: unchanged -->
 <!-- cases: 10 compatibility: services without declared edges shut down exactly as before -->
 
 ### Requirement: Deterministic ordering ties
-Wherever this change orders services that have no dependency path between them (discovery, start, kind handling), the container SHALL order them by scope depth (root first), then registration index.
+Wherever this change orders services that have no dependency path between them (discovery, start, kind handling), the container SHALL order them by scope depth (root first), then registration order.
 
 #### Scenario: Ties broken by scope depth then registration order
 ```gherkin

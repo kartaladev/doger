@@ -1,45 +1,46 @@
 # Tasks
 
-Tooling and refactor change (`skip_specs: true`). Groups are behavior-preserving steps, with no RED/GREEN, guarded by the existing suite. The exceptions are the explicit test deletions in group 3 (design D2) and one characterization test in group 2. Run `make test` and `make lint` after every step. If a step turns the suite red, revert that step and investigate. Do not patch forward.
+Specs: `specs/toolchain-support/spec.md`, `specs/provider-panic-handling/spec.md`. Group 2 is RED → GREEN → REFACTOR: the directive bump is the GREEN step for both specs, and its REFACTOR is the lint configuration plus one modernizer per step (design D4). Group 3 holds behavior-preserving refactorings verified by the unchanged suite. No existing test is deleted. Commands run from the repository root unless a task names a module. Read design.md before each group: the checkbox lines carry only the summary.
 
-## 1. Baseline and directive bump
+## 1. Baseline
 
-- [ ] 1.1 Record the baseline: the per-module test inventory (`go test -list '.*' ./...`, attributed by package directory, saved outside the repo), plus green `make test`, `make lint`, and per-module `go vet ./... && go test -race ./...`. Verify: everything passes. If it doesn't, stop and report; do not fix anything here.
-- [ ] 1.2 Bump every module with `go mod edit -go=1.27` (all 25 `go.mod` files), and the workspace with `go work edit -go=1.27`. Verify: `grep -rn '^go ' --include=go.mod . && grep -n '^go ' go.work` shows only `go 1.27`, and no `toolchain` line was added.
-- [ ] 1.3 Run the full suite with the bump and no other edit (design risks: per-iteration loop variables, `panicnil`, `asynctimerchan`). Verify: `make test` passes, the health-check timeout tests pass with `go test -race -count=5 -run 'HealthCheck' .`, and per-module vet and race tests pass. If anything fails, stop and report it with output.
-- [ ] 1.4 Run `go mod tidy` in each module. Verify: no diff beyond the `go` line.
+- [ ] 1.1 Record the baseline: save the per-module test inventory (`go test -list '.*' ./...`, attributed by directory) outside the repo; verify `make test`, `make lint` (0 issues), and per-module `go vet ./... && go test -race ./...` all pass, and stop and report if not.
 
-## 2. Characterize directive-sensitive behavior
+## 2. Go 1.27 floor (requirements "Every module requires Go 1.27 or later", "A panicking provider yields an invocation error")
 
-- [ ] 2.1 Add `invoke_test.go: TestHandleProviderPanic_PanicNil`. A provider that calls `panic(nil)` makes `handleProviderPanic` return a non-nil error that matches `*runtime.PanicNilError` via `errors.As`. This is a characterization test of behavior in this repo's own builds after the bump, so it is expected to pass when added. Verify: `go test -race -count=1 -run TestHandleProviderPanic_PanicNil .` passes.
+- [ ] 2.1 RED: add `invoke_test.go: TestInvoke_ProviderPanic` (6 rows) and `TestInvoke_ProviderPanicNil_GODEBUGOverride` (design Test Strategy); verify `go test -race -count=1 -run 'TestInvoke_ProviderPanic' .` fails only in `lazy_nil` and `transient_nil` (error is nil), while the other rows and the override test pass on arrival (recorded: pre-bump behavior already matches them).
+- [ ] 2.2 RED: add `toolchain_test.go: TestToolchain_GoDirective` (26 rows) in the root package; verify `go test -count=1 -run TestToolchain_GoDirective .` fails with `go 1.18` as the actual directive, and `make test` shows no other failures.
+- [ ] 2.3 GREEN: run `go mod edit -go=1.27` in all 25 modules and `go work edit -go=1.27` (design D1); verify the 2.1 and 2.2 tests pass, `make test` is green, `go test -race -count=5 -run HealthCheck .` passes, per-module `go vet ./... && go test -race ./...` passes, and `grep -rn '^toolchain' --include=go.mod . go.work` prints nothing.
+- [ ] 2.4 REFACTOR: run `go mod tidy` in each of the 25 modules; verify the diff is only the `go` lines and added `go.sum` entries (design D1), and `make test` passes.
+- [ ] 2.5 REFACTOR: in `.golangci.yml` add `run.go: "1.27"` and `linters.settings.modernize.disable: [atomictypes]`, with the design D4 reason as a comment; verify `golangci-lint config verify` passes and `golangci-lint run --enable-only modernize ./...` reports only `rangeint`, `reflecttypefor`, `mapsloop`, `slicescontains` and `waitgroupgo` findings.
+- [ ] 2.6 REFACTOR *Substitute Algorithm*: run `go fix -slicescontains ./...` after reviewing `-diff` (it rewrites the `contains` body; design D2); verify `make test` passes and lint shows no `slicescontains` finding.
+- [ ] 2.7 REFACTOR: run `go fix -mapsloop ./...` after reviewing `-diff` (`errors.go`, `scope.go`); verify `make test` passes and lint shows no `mapsloop` finding.
+- [ ] 2.8 REFACTOR: run `go fix -reflecttypefor ./...` after reviewing `-diff`; verify `make test` passes and lint shows no `reflecttypefor` finding.
+- [ ] 2.9 REFACTOR: run `go fix -rangeint ./...` after reviewing `-diff`; verify `make test` passes and lint shows no `rangeint` finding.
+- [ ] 2.10 REFACTOR: run `go fix -waitgroupgo ./...` after reviewing `-diff` (3 sites in `scope_test.go`); verify `go test -race -count=3 -run Shutdown .` and `make test` pass and lint shows no `waitgroupgo` finding.
+- [ ] 2.11 REFACTOR: run `go fix -any ./...` in every workspace module and hand-edit the 3 `interface{}` comments (`invoke.go:14,21`, `invoke_test.go:69`); verify `grep -rn 'interface{}' --include='*.go' .` prints nothing, every module still passes `go vet ./...`, and `make lint` reports 0 issues.
+- [ ] 2.12 Docs: update every Go-version statement listed in design Context and D6 (README, getting-started, about, faq, comparison tables, `index.tsx`, structured-data, `llms.txt`) to Go 1.27; verify `grep -rn '1\.18' README.md docs/docs docs/src docs/static/llms.txt docs/plugins` shows only the `samber/lo` and `samber/mo` lines, and `cd docs && npm ci && npm run lint && npm run build` passes.
+- [ ] 2.13 Docs: add a "Go 1.27 and panic(nil)" section to `docs/docs/migrating/migrating-from-samber-do.md` (created by `rename-module-doger`) covering the Go 1.27 floor and the `panic(nil)` change with its `GODEBUG=panicnil=1` / `//go:debug panicnil=1` workaround; verify the page mentions `panicnil` and `cd docs && npm run build` passes.
 
-## 3. Inline exactly-equivalent helpers (design D2)
+## 3. Helper bodies and shutdown fan-outs (behavior-preserving refactorings)
 
-- [ ] 3.1 *Inline Function*: replace `contains(s.invokerChain, name)` in `virtual_scope.go:115` with `slices.Contains`. Verify: `make test` passes and the circular-dependency assertions pass (`go test -race -run 'TestInvokeAnyByName|TestInvokeByName$' .`, which covers `invoke_test.go:53-61`).
-- [ ] 3.2 *Inline Function*: replace `reverseSlice(ancestors)` in `di_explain.go:480` with `slices.Reverse`. Verify: `go test -race -run 'Explain' .` and `make test` pass.
-- [ ] 3.3 *Inline Function*: replace `coalesce(...)` in `invoke.go:234` with `cmp.Or`. Verify: `go test -race -run 'InvokeStruct' .` and `make test` pass.
-- [ ] 3.4 *Remove Dead Code*: delete `contains`, `reverseSlice` and `coalesce` from `utils.go`, together with their dedicated tests in `utils_test.go`. This is the explicit test-deletion exception in design D2. Verify: `gopls` diagnostics are clean; the inventory diff shows only those helper tests removed; `make test` and `make lint` pass.
+- [ ] 3.1 *Substitute Algorithm*: make `reverseSlice` call `slices.Reverse(s)` and `coalesce` return `cmp.Or(v...)` (design D2), leaving call sites and `utils_test.go` unchanged; verify `go test -race -run 'TestUtils|Explain|InvokeStruct' .`, `make test` and `make lint` pass.
+- [ ] 3.2 *Substitute Algorithm*: rewrite the fan-out in `(*Scope).shutdownChildrenInParallel` to `wg.Go`, capturing the per-iteration variables (design D3); verify `go test -race -count=3 -run Shutdown .`, `make test` (goleak clean) and `make lint` pass.
+- [ ] 3.3 *Substitute Algorithm*: rewrite the fan-out in `(*Scope).shutdownServicesWithoutDependenciesInParallel` to `wg.Go` the same way; verify the same commands as 3.2 pass.
 
-## 4. Goroutine fan-outs and `any` (design D3, D4)
+## 4. CI (design D5)
 
-- [ ] 4.1 *Substitute Algorithm* (structure only): rewrite `scope.go:403-415` (children shutdown) to `sync.WaitGroup.Go`, capturing the per-iteration loop variables instead of passing parameters. Verify: the shutdown tests pass with `go test -race -count=3 -run 'Shutdown' .`, goleak is clean, and `make test` passes.
-- [ ] 4.2 Same rewrite for `scope.go:488-510` (`shutdownServicesWithoutDependenciesInParallel`). Verify: same commands as 4.1.
-- [ ] 4.3 `gofmt -r 'interface{} -> any' -w` over the non-test Go files of every module, then over the test files. Verify: `grep -rn 'interface{}' --include='*.go' .` returns nothing; `make test` and `make lint` pass.
-- [ ] 4.4 Run the gopls modernize analyzers and review the proposed fixes. Apply only fixes inside design D4's scope, and list any rejected ones in the PR description. Verify: `make test` and `make lint` pass.
+- [ ] 4.1 Set the `.github/workflows/test.yml` matrix to `["1.27", "stable"]`; verify `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/test.yml` reports no errors and `release.yml` still uses `go-version-file: 'go.work'`.
+- [ ] 4.2 In `.github/workflows/lint.yml`, give `actions/setup-go` `go-version-file: go.mod` and `golangci-lint-action` `version: v2.15.0`; verify actionlint reports no errors on `lint.yml`, and with a local golangci-lint whose `golangci-lint version` reports 2.15.0, `make lint` reports 0 issues.
 
-## 5. CI, lint and docs (design D5, D6)
+## 5. Integration checks
 
-- [ ] 5.1 Change the `.github/workflows/test.yml` matrix to `["1.27", "stable"]`. Verify: the YAML parses (`python3 -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1]))' .github/workflows/test.yml`), and `release.yml` still uses `go-version-file: 'go.work'`.
-- [ ] 5.2 Add `run.go: "1.27"` to `.golangci.yml`. Verify: `make lint` reports 0 issues.
-- [ ] 5.3 Update the Go version badge and the "Go 1.18+" tagline in `README.md` to 1.27, and the "Compatible with Go 1.18 or later" line in `docs/docs/getting-started.md`. Leave the lines about sibling projects (`samber/lo`, `samber/mo`) as they are, because they describe other libraries. Verify: `grep -n '1\.18' README.md docs/docs/getting-started.md` shows only those sibling-project lines.
-
-## 6. Integration checks
-
-- [ ] 6.1 Inventory diff against the 1.1 baseline. Verify: the only differences are the helper tests deleted in 3.4 and the test added in 2.1.
-- [ ] 6.2 Full green run: `make test`, `make lint`, and per-module `go vet ./... && go test -race ./...`. Verify: everything passes, with no goleak reports.
-- [ ] 6.3 Confirm the features the next changes depend on are available. Do this in a throwaway file outside the repo (not committed): a module at `go 1.27` that imports `testing/synctest` and declares one generic method must compile with `go vet`. Verify: it compiles. Delete the throwaway.
+- [ ] 5.1 Inventory diff against the 1.1 baseline; verify that the only differences are the four tests added in 2.1 and 2.2, with no deletions.
+- [ ] 5.2 Full green run; verify `make test`, `make lint` (0 issues), per-module `go vet ./... && go test -race ./...`, and a clean `go mod tidy` in every module all pass, with no goleak reports.
 
 ## Workflow follow-up
 
+- Check that CodeQL handles Go 1.27 on the first `security.yml` run after merge (design D5).
+- Bump the pinned golangci-lint `version:` together with future Go releases (design Risks).
 - Archive this change after review, then start `add-start-lifecycle-and-kinds`.
 - Consider extending `make test` to cover every workspace module (separate tooling change, also noted in `rename-module-doger`).

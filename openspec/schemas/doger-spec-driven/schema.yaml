@@ -70,13 +70,19 @@ artifacts:
       - Scenarios that can be tested or explicitly validated
 
       Avoid in specs:
-      - Internal class/function names
+      - Unexported identifiers, file names and internal data structures
       - Library or framework choices
       - Step-by-step implementation details
       - Detailed execution plans (those belong in design.md or tasks.md)
 
       Quick test: if the implementation can change without changing externally
       visible behavior, it likely does not belong in the spec.
+
+      This is a library, so its public API IS the externally visible behavior:
+      exported identifiers (functions, types, interfaces, options), exported
+      error sentinels and their `errors.Is`/`errors.As` behavior, error and
+      panic message text consumers can observe, and the module/package path
+      all belong in specs. Unexported names do not.
 
       Create one spec file per capability listed in the proposal's Capabilities section.
       `<capability-path>` is the spec directory relative to `specs/` (for example,
@@ -125,8 +131,17 @@ artifacts:
       - When the same behavior varies by input, write the steps with
         `<placeholders>` and add an `Examples:` table inside the same fenced
         block, one row per case. Prefer a table over copy-pasted scenarios.
-      - Each scenario must map 1:1 to a Go test or table-test row; name it so
-        the test name is obvious (e.g. `TestInvoke/lazy_service_not_found`).
+      - Each scenario maps to exactly one Go test function (or one subtest),
+        and each `Examples:` row maps to one table row run as a named subtest.
+        Name the scenario so the test name is obvious (e.g. scenario "Invoke
+        resolves a registered lazy service" -> `TestInvoke_LazyByName`, with
+        rows as subtests `TestInvoke_LazyByName/missing`).
+      - The ```gherkin fence is for readability and highlighting; nothing
+        executes it. Do not add `Feature:`/`Scenario:` keywords inside the
+        fence - the `#### Scenario:` header is the scenario name.
+      - Scenarios must be deterministic: no reliance on map iteration order,
+        wall-clock timing or goroutine scheduling unless the scenario pins it
+        down (e.g. with a channel handshake, a fake clock, or "within 1s").
 
       Case coverage (MANDATORY - the planner must design every case, not just
       the happy path). For each requirement, walk this checklist and write a
@@ -232,10 +247,13 @@ artifacts:
     instruction: |
       Create the design document that explains HOW to implement the change.
 
-      When to include design.md (create only if any apply):
-      - Cross-cutting change (multiple services/modules) or new architectural pattern
+      design.md is REQUIRED in this schema (tasks depend on it, and it owns
+      the Test Strategy). Scale it to the change: a small fix needs only
+      short Context, Decisions, Public API & Defaults and Test Strategy
+      sections. Go deeper when any of these apply:
+      - Cross-cutting change (multiple packages/modules) or new architectural pattern
       - New external dependency or significant data model changes
-      - Security, performance, or migration complexity
+      - Security, performance, concurrency, or migration complexity
       - Ambiguity that benefits from technical decisions before coding
 
       Sections:
@@ -248,10 +266,14 @@ artifacts:
         options, interfaces, hooks, config structs). Defaults must be safe
         and usable with zero configuration; consumers must be able to override
         every opinionated choice without forking. Note any breaking change.
-      - **Test Strategy**: Map each spec scenario to its Go test (file + test
-        name or table row). Identify the hot paths and confirm each one is
-        covered. Name the test kind used per area: table-driven unit tests,
-        Example tests (docs), race tests (`go test -race`), goleak checks,
+      - **Test Strategy**: Map EVERY spec scenario to its Go test (file + test
+        name or table row) - cross-check the `#### Scenario:` headers against
+        the table so none is missing. Identify the hot paths and confirm each
+        one is covered. For a `skip_specs: true` change (no scenarios), list
+        instead the behavior-preservation checks that prove nothing changed:
+        the unchanged existing suite, builds/tests of every workspace module,
+        lint, and any targeted test the change adds. Name the test kind used
+        per area: table-driven unit tests, Example tests (docs), race tests (`go test -race`), goleak checks,
         fuzz tests for parsers/untrusted input, benchmarks when performance is
         a requirement. There is no coverage percentage target, but every hot
         path MUST be covered.
@@ -299,6 +321,10 @@ artifacts:
       Guidelines:
       - Group related tracked tasks under ## numbered headings
       - Each tracked task MUST be a checkbox: `- [ ] X.Y Task description`
+      - Keep each tracked task on ONE line, including its verification.
+        `openspec instructions apply` shows only the checkbox line; indented
+        sub-bullets under it are dropped from the apply view. Put long detail
+        (file lists, steps) in design.md and reference it from the task.
       - Tasks should be small enough to complete in one session
       - Order tasks by dependency (what must be done first?)
       - Track implementation and verification work that can be completed before
@@ -324,8 +350,11 @@ artifacts:
         three tracked steps in this order:
         1. **RED**: write the failing test(s) for the group's scenarios /
            Examples rows. Verify: `go test -race -run <TestName> ./<pkg>` FAILS
-           for the expected reason (assertion failure or missing symbol), not
-           a typo or unrelated compile error.
+           for the expected reason - an assertion failure, or a compile error
+           naming only the not-yet-written symbol(s) - not a typo or an
+           unrelated compile error. If a test passes on arrival (the behavior
+           already exists), record that in the task and show the assertion can
+           fail (e.g. by temporarily breaking the code, not committed).
         2. **GREEN**: write the simplest code that makes those tests pass.
            Verify: the same command passes and `make test` stays green.
         3. **REFACTOR**: improve structure without changing behavior, in
@@ -338,7 +367,17 @@ artifacts:
       - Bug-fix changes: the first group's RED task is a regression test that
         reproduces the reported defect and FAILS on the current code. No fix
         task may come before that failing test exists.
+      - Documentation tasks for the group's work (an `Example*` test, godoc,
+        docs pages) come after its REFACTOR step, in the same group.
       - Pure scaffolding/tooling groups (no behavior) may skip RED/GREEN.
+      - Behavior-preserving changes (`skip_specs: true`: rename, toolchain
+        upgrade, pure refactor) have no RED/GREEN. Each group is one or more
+        named refactorings verified by the existing suite: `make test` green
+        before the first step and after every step. Mechanical edits that the
+        same automated rename/move makes to tests (package clause, import
+        path, qualifier) are part of that refactoring; any other edit to a
+        test's inputs or assertions means behavior changed - stop and re-plan
+        the change with specs.
 
       Example:
       ```
@@ -354,8 +393,8 @@ artifacts:
 
       - [ ] 2.1 RED: add `TestInvoke_LazyConcurrentSingleBuild` (100 goroutines, call counter); verify it fails under `-race`
       - [ ] 2.2 GREEN: guard build with sync.Once-equivalent; verify the test passes with `-race` and goleak reports no leaks
-      - [ ] 2.3 REFACTOR: none needed - lock scope already minimal; verify `make test` passes
-      - [ ] 2.4 Add `ExampleInvoke` documenting the default and override; verify `go test -run Example .` passes
+      - [ ] 2.3 REFACTOR: none needed - lock scope already minimal; verify `make test` and `make lint` pass
+      - [ ] 2.4 Add `ExampleInvoke` documenting the default and override; verify `go test -run ExampleInvoke .` passes
       ```
 
       When applicable, append workflow follow-up as plain bullets, for example:
@@ -387,8 +426,18 @@ apply:
     - Strict TDD: never write production code for a task until its RED test
       exists and you have SEEN it fail for the expected reason. Show the
       failing output, then the passing output, before checking a box.
-    - REFACTOR steps change structure only - if a test needs changing, it is
-      not a refactor. Keep each refactoring small and run tests after each.
+    - REFACTOR steps change structure only - if a test's inputs or assertions
+      need changing, it is not a refactor (mechanical edits made by the same
+      automated rename/move, such as import paths, are fine). Keep each
+      refactoring small and run tests after each.
     - If you believe you found a defect outside the task list, do not just
       claim it: write a failing test that proves it, then report it.
-    - Never mark a task done while `make test` (go test -race ./...) fails.
+    - Never mark a task done while `make test` (go test -race ./...) fails,
+      except a RED task. There, the only allowed failures are the task's new
+      test(s): an assertion failure in them, or the package failing to compile
+      solely because of the not-yet-written symbol(s) they reference. Every
+      other test must stay green, except tests a bug-fix change lists in its
+      Defect section as already failing on the baseline (they are the
+      regression proof and stay red until that change's GREEN step).
+    - Only the checkbox line of each task is listed in the apply output; read
+      tasks.md and design.md for the full detail before starting a group.

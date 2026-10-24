@@ -16,7 +16,7 @@ Go library: fork of `github.com/samber/do/v2` (generics-based dependency injecti
 3. **Strict TDD: red → green → refactor.**
    - RED: write the test first and run it. It must fail for the expected reason, not because of a typo or an unrelated compile error.
    - GREEN: write the simplest production code that passes.
-   - REFACTOR: change structure only, never behavior. Work in small named steps from Fowler's catalog (Extract Function, Inline Function, Rename, Move Function, Replace Conditional with Polymorphism, Introduce Parameter Object…). Run tests after each step. If a test has to change, it isn't a refactor.
+   - REFACTOR: change structure only, never behavior. Work in small named steps from Fowler's catalog (Extract Function, Inline Function, Rename, Move Function, Replace Conditional with Polymorphism, Introduce Parameter Object…). Run tests after each step. If a test's inputs or assertions have to change, it isn't a refactor (mechanical edits from the same automated rename or move, such as import paths, are fine).
 4. **Hot-path coverage.** There is no coverage-percentage target, but every hot path must be covered by tests. That means the public API, resolution/invocation, lifecycle (health check, shutdown), scope traversal, and concurrency-sensitive code.
 5. **Defects need proof.** Never claim a bug, error, or defect without a failing test that reproduces it. A fix starts with that failing regression test. If you can't reproduce it, say so instead of asserting it.
 6. **Library principle.** Use sensible, opinionated defaults that work with zero configuration, and give consumers full control: every opinionated choice can be overridden (options, interfaces, hooks) without forking. Avoid breaking exported APIs; flag any break explicitly.

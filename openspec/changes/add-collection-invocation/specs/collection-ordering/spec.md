@@ -7,7 +7,7 @@ Defines a deterministic, overridable order for slice collections returned by `In
 ## ADDED Requirements
 
 ### Requirement: Default collection order is ancestors first, then registration order
-Without any `Ordered` member or `WithOrder` option, `InvokeAll[T]` SHALL order members by scope depth from the root scope down to the invoking scope, and within one scope by registration order.
+Without any `Ordered` member or `WithOrder` option, `InvokeAll[T]` SHALL order members by scope depth from the root scope down to the invoking scope, then within one scope by registration order, then by service name. The order SHALL be identical across calls and in clones.
 
 #### Scenario: Default order across scopes
 ```gherkin
@@ -39,8 +39,20 @@ When "b" is overridden with a new provider and the consumer calls InvokeAll for 
 Then the result order is "a", "b", "c"
 ```
 
+#### Scenario: Default order in a clone
+```gherkin
+Given a root scope with lazy services "a" and "b" registered in that order, both implementing "EventHandler"
+And the consumer clones the root scope with Clone()
+And a lazy service "c" implementing "EventHandler" is registered in the clone
+When the consumer calls InvokeAll for type "EventHandler" on the clone 20 times
+Then every result has the order "a", "b", "c"
+```
+
+<!-- cases: N/A 2 overrides: Ordered and WithOrder are covered by their own requirements -->
 <!-- cases: N/A 3 zero values: an empty collection has no order; covered by collection-invocation -->
 <!-- cases: N/A 5 errors: default ordering cannot fail -->
+<!-- cases: N/A 6 duplicates: equal registration indexes cannot occur within one container (start-lifecycle D3 copies the counter on clone); the name tie-break is defensive and design-only -->
+<!-- cases: N/A 8 concurrency: covered by "Concurrent collection callers" in collection-invocation -->
 <!-- cases: N/A 9 panics: no panicking path without Ordered -->
 
 ### Requirement: Ordered members sort ascending and stably
@@ -54,13 +66,13 @@ When the consumer calls InvokeAll for type "EventHandler"
 Then the result order is <order>
 
 Examples:
-  | values                    | order                |
-  | -, -, -, -                | "a", "b", "c", "d"   |
-  | 3, 1, 2, 0                | "d", "b", "c", "a"   |
-  | 1, -, -1, -               | "c", "b", "d", "a"   |
-  | 5, 5, 5, 5                | "a", "b", "c", "d"   |
-  | -2147483648, 2147483647, 0, - | "a", "c", "d", "b" |
-  | 0, -, 0, -                | "a", "b", "c", "d"   |
+  | values                        | order                |
+  | -, -, -, -                    | "a", "b", "c", "d"   |
+  | 3, 1, 2, 0                    | "d", "b", "c", "a"   |
+  | 1, -, -1, -                   | "c", "b", "d", "a"   |
+  | 5, 5, 5, 5                    | "a", "b", "c", "d"   |
+  | -2147483648, 2147483647, 0, - | "a", "c", "d", "b"   |
+  | 0, -, 0, -                    | "a", "b", "c", "d"   |
 ```
 
 #### Scenario: Order is read from each transient instance
@@ -80,9 +92,12 @@ Examples:
 <!-- cases: N/A 2 overrides: WithOrder is covered by its own requirement -->
 <!-- cases: N/A 5 errors: covered by "Order() panic is reported" -->
 <!-- cases: N/A 6 duplicates: equal values are covered by the stable-sort rows -->
+<!-- cases: N/A 7 lifecycle: covered by "Ordering never affects lifecycle order" -->
+<!-- cases: N/A 8 concurrency: Order() is called on the calling goroutine -->
+<!-- cases: N/A 10 compatibility: new API -->
 
-### Requirement: WithOrder overrides Ordered
-The `WithOrder(n)` registration option SHALL set the member's order value to `n`. It takes precedence over the instance's `Order()`, which SHALL then not be called. It SHALL apply to lazy, eager and transient registrations alike, and when given more than once the last one wins.
+### Requirement: WithOrder is a registration option for every registration style
+`WithOrder(n int)` SHALL be a `ProvideOption` accepted by every `Provide*` and `Override*` function and every `Package` helper (`Lazy*`, `Eager*`, `Transient*`). It SHALL set the member's order value to `n`, take precedence over the instance's `Order()`, which SHALL then not be called, and when given more than once the last one SHALL win.
 
 #### Scenario: Precedence
 ```gherkin
@@ -94,26 +109,41 @@ When the consumer calls InvokeAll for type "EventHandler"
 Then the result order is <order>
 
 Examples:
-  | aOption                       | bOption           | order            |
-  | without options               | without options   | "b", "c", "a"    |
-  | with WithOrder(-1)            | without options   | "a", "b", "c"    |
-  | without options               | with WithOrder(20)| "c", "a", "b"    |
-  | with WithOrder(0)             | with WithOrder(0) | "a", "b", "c"    |
-  | with WithOrder(5), WithOrder(-5) | without options | "a", "b", "c"   |
+  | aOption                          | bOption            | order            |
+  | without options                  | without options    | "b", "c", "a"    |
+  | with WithOrder(-1)               | without options    | "a", "b", "c"    |
+  | without options                  | with WithOrder(20) | "c", "a", "b"    |
+  | with WithOrder(0)                | with WithOrder(0)  | "a", "b", "c"    |
+  | with WithOrder(5), WithOrder(-5) | without options    | "a", "b", "c"    |
 ```
 
-#### Scenario: WithOrder on each registration style
+#### Scenario: WithOrder on every registration helper
 ```gherkin
 Given a root scope with a lazy service "first" implementing "EventHandler" registered without options
-And a "<style>" service "second" implementing "EventHandler" registered with WithOrder(-1)
+And a service "second" implementing "EventHandler" registered through <helper> with WithOrder(-1)
 When the consumer calls InvokeAll for type "EventHandler"
 Then the result order is "second", "first"
 
 Examples:
-  | style     |
-  | lazy      |
-  | eager     |
-  | transient |
+  | helper                  |
+  | Provide                 |
+  | ProvideNamed            |
+  | ProvideValue            |
+  | ProvideNamedValue       |
+  | ProvideTransient        |
+  | ProvideNamedTransient   |
+  | Override                |
+  | OverrideNamed           |
+  | OverrideValue           |
+  | OverrideNamedValue      |
+  | OverrideTransient       |
+  | OverrideNamedTransient  |
+  | Package(Lazy)           |
+  | Package(LazyNamed)      |
+  | Package(Eager)          |
+  | Package(EagerNamed)     |
+  | Package(Transient)      |
+  | Package(TransientNamed) |
 ```
 
 #### Scenario: Order() is not called when WithOrder is set
@@ -134,6 +164,7 @@ And no error occurs
 ```
 
 <!-- cases: N/A 3 zero values: WithOrder(0) is covered by the precedence rows -->
+<!-- cases: N/A 4 boundaries: int extremes are covered by "Ordered values"; WithOrder stores the same int -->
 <!-- cases: N/A 7 lifecycle: covered by "Ordering never affects lifecycle order" -->
 <!-- cases: N/A 8 concurrency: the option is fixed at registration -->
 <!-- cases: N/A 9 panics: WithOrder itself cannot panic -->
@@ -195,12 +226,12 @@ Then "a" is started before "b"
 <!-- cases: N/A 8 concurrency, 9 panics: covered by collection-invocation and the Order() panic requirement -->
 
 ### Requirement: Name-keyed collections are unordered
-`InvokeAllNamed[T]` SHALL NOT call `Order()` on members, because a map has no order.
+`InvokeAllMap[T]` SHALL NOT call `Order()` on members, because a map has no order.
 
-#### Scenario: Order() not called for named collections
+#### Scenario: Order() not called for map collections
 ```gherkin
 Given a root scope with a lazy service "bad" implementing "EventHandler" and "Ordered" whose Order() panics with error ErrOrderBroken
-When the consumer calls InvokeAllNamed for type "EventHandler"
+When the consumer calls InvokeAllMap for type "EventHandler"
 Then the error is nil
 And the map has key "bad"
 ```

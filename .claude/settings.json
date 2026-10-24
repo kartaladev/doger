@@ -1,4 +1,12 @@
 {
+  "extraKnownMarketplaces": {
+    "samber": {
+      "source": {
+        "source": "github",
+        "repo": "samber/cc"
+      }
+    }
+  },
   "enabledPlugins": {
     "gopls-lsp@claude-plugins-official": true,
     "cc-skills-golang@samber": true
