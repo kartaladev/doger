@@ -137,6 +137,9 @@ func TestServiceAlias_getInstanceAny(t *testing.T) {
 	is.NotNil(providerFrame2)
 	is.NotNil(invocationFrames2)
 	is.Len(invocationFrames2, 1) // Should have one invocation frame now
+	if len(invocationFrames2) == 1 {
+		is.Contains(invocationFrames2[0].File, "service_alias.go") // Invocation frame points to the alias implementation
+	}
 }
 
 func TestServiceAlias_getInstance(t *testing.T) {
