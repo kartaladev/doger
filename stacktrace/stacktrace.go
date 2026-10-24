@@ -2,6 +2,7 @@ package stacktrace
 
 import (
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 )
@@ -24,7 +25,25 @@ var (
 	// env var on every call, and it cannot change during the process lifetime.
 	//nolint:staticcheck
 	goroot = runtime.GOROOT()
+
+	// selfPkgPath is the import path of this package, derived at runtime so
+	// that frame classification does not depend on the module path.
+	selfPkgPath = reflect.TypeOf(pkgMarker{}).PkgPath()
 )
+
+// pkgMarker is an empty type used to derive this package's import path.
+type pkgMarker struct{}
+
+// skipFrame reports whether a frame must be skipped when looking for the
+// caller: frames in GOROOT, and frames of the package selfPkg except those
+// declared in _test.go files. function is the fully qualified function name.
+func skipFrame(selfPkg, goroot, function, file string) bool {
+	if strings.Contains(file, goroot) {
+		return true
+	}
+
+	return strings.HasPrefix(function, selfPkg+".") && !strings.HasSuffix(file, "_test.go")
+}
 
 // NewFrameFromCaller creates a new Frame from the current call stack.
 // This function walks up the call stack to find the first frame that is not
@@ -54,22 +73,11 @@ func NewFrameFromCaller() (Frame, bool) {
 		if f == nil {
 			break
 		}
-		function := shortFuncName(f.Name())
-
-		isGoPkg := strings.Contains(file, goroot)                          // skip frames in GOROOT
-		isDoPkg := strings.Contains(file, packageName)                     // skip frames in this package
-		isDoStacktracePkg := strings.Contains(file, packageNameStacktrace) // skip frames in this package
-		isExamplePkg := strings.Contains(
-			file,
-			packageNameExamples,
-		) // do not skip frames in this package examples
-		isTestPkg := strings.Contains(file, "_test.go") // do not skip frames in tests
-
-		if !isGoPkg && (!isDoPkg || !isDoStacktracePkg || isExamplePkg || isTestPkg) {
+		if !skipFrame(selfPkgPath, goroot, f.Name(), file) {
 			return Frame{
 				PC:       pc,
 				File:     file,
-				Function: function,
+				Function: shortFuncName(f.Name()),
 				Line:     line,
 			}, true
 		}
