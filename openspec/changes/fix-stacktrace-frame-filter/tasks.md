@@ -26,17 +26,17 @@ Bug-fix change: group 1 opens with regression tests that reproduce the defect on
 
 ## 4. Characterization: unresolvable PC, symbol-prefix guard, provider frames
 
-- [ ] 4.1 Characterization: add `stacktrace/stacktrace_test.go: TestNewFrameFromPC_ZeroPC` for scenario "Unresolvable program counter" (`NewFrameFromPC(0)` returns the zero `Frame` and `false`, wrapped in `assert.NotPanics`); verify `go test -race -count=1 -run TestNewFrameFromPC_ZeroPC ./stacktrace/` passes on arrival (record this, then temporarily assert `true`, see it fail, and revert; a real failure means a separate defect, so stop and report)
-- [ ] 4.2 Characterization: add `stacktrace/stacktrace_internal_test.go: TestSelfPkgPath_MatchesSymbolPrefix` asserting the `runtime.FuncForPC` name of a known package function starts with `selfPkgPath + "."` (design Risks: symbol escaping); verify it passes, fails when `selfPkgPath` is temporarily replaced with `github.com/samber/do/v2/stacktracex`, and revert the probe
-- [ ] 4.3 Characterization: confirm the unmodified `TestInferServiceProviderStacktrace` still asserts the eager (`newServiceEager`, `service_eager.go`) and alias (`newServiceAlias`, `service_alias.go`) provider frames; verify `go test -race -count=1 -run TestInferServiceProviderStacktrace .` passes
+- [x] 4.1 Characterization: add `stacktrace/stacktrace_test.go: TestNewFrameFromPC_ZeroPC` for scenario "Unresolvable program counter" (`NewFrameFromPC(0)` returns the zero `Frame` and `false`, wrapped in `assert.NotPanics`); verify `go test -race -count=1 -run TestNewFrameFromPC_ZeroPC ./stacktrace/` passes on arrival (record this, then temporarily assert `true`, see it fail, and revert; a real failure means a separate defect, so stop and report)
+- [x] 4.2 Characterization: add `stacktrace/stacktrace_internal_test.go: TestSelfPkgPath_MatchesSymbolPrefix` asserting the `runtime.FuncForPC` name of a known package function starts with `selfPkgPath + "."` (design Risks: symbol escaping); verify it passes, fails when `selfPkgPath` is temporarily replaced with `github.com/samber/do/v2/stacktracex`, and revert the probe
+- [x] 4.3 Characterization: confirm the unmodified `TestInferServiceProviderStacktrace` still asserts the eager (`newServiceEager`, `service_eager.go`) and alias (`newServiceAlias`, `service_alias.go`) provider frames; verify `go test -race -count=1 -run TestInferServiceProviderStacktrace .` passes
 
 ## 5. Integration checks
 
-- [ ] 5.1 Full suite under race and goleak: verify `make test` reports all packages `ok`, including `.`, `./stacktrace`, `./tests` and `./http`, with no goleak reports
-- [ ] 5.2 Explain output end to end: verify `go test -race -count=1 -run 'TestExplain' .` passes (including `TestExplainService_ProviderFrame`) and `git diff --exit-code di_explain_test.go` shows `di_explain_test.go` unmodified
-- [ ] 5.3 Lint: verify `make lint` reports 0 issues
-- [ ] 5.4 Checkout independence (spec rows `own_checkout_do`, `own_checkout_my_fork`): copy the repository into scratch directories named `do` and `my-fork` and verify `go test -race -count=1 . ./stacktrace/` passes in each, then delete the copies
-- [ ] 5.5 Vendored consumer (spec row `own_vendored`): in a scratch module with `require github.com/samber/do/v2 v2.0.0`, `replace` pointing at this checkout and `GOWORK=off`, run `go mod vendor`, then `go run -mod=vendor .` printing `do.ExplainService[*DB](i)` after `do.ProvideValue(i, &DB{})`; verify the `Invoked:` line contains `vendor/github.com/samber/do/v2/service_eager.go:newServiceEager` (it named `stacktrace.go:NewFrameFromCaller` before the fix), then delete the scratch module
+- [x] 5.1 Full suite under race and goleak: verify `make test` reports all packages `ok`, including `.`, `./stacktrace`, `./tests` and `./http`, with no goleak reports
+- [x] 5.2 Explain output end to end: verify `go test -race -count=1 -run 'TestExplain' .` passes (including `TestExplainService_ProviderFrame`) and `git diff --exit-code di_explain_test.go` shows `di_explain_test.go` unmodified
+- [x] 5.3 Lint: verify `make lint` reports 0 issues
+- [x] 5.4 Checkout independence (spec rows `own_checkout_do`, `own_checkout_my_fork`): copy the repository into scratch directories named `do` and `my-fork` and verify `go test -race -count=1 . ./stacktrace/` passes in each, then delete the copies
+- [x] 5.5 Vendored consumer (spec row `own_vendored`): in a scratch module with `require github.com/samber/do/v2 v2.0.0`, `replace` pointing at this checkout and `GOWORK=off`, run `go mod vendor`, then `go run -mod=vendor .` printing `do.ExplainService[*DB](i)` after `do.ProvideValue(i, &DB{})`; verify the `Invoked:` line contains `vendor/github.com/samber/do/v2/service_eager.go:newServiceEager` (it named `stacktrace.go:NewFrameFromCaller` before the fix), then delete the scratch module
 
 ## Workflow follow-up
 
