@@ -1,0 +1,49 @@
+schema: doger-spec-driven
+
+# Project context: constraints an agent cannot infer from the code.
+context: |
+  This is a Go library (fork of github.com/samber/do/v2, a generics-based DI toolkit).
+  Consumers are other Go programs; the public API is the product.
+  Library principle: opinionated, safe defaults that work with zero configuration,
+  while consumers keep full control (every opinionated choice is overridable
+  without forking - via options, interfaces, or hooks).
+  Go work MUST use the samber/cc-skills-golang skills (start with golang-how-to)
+  during planning and implementation, and gopls for code navigation.
+  Development is strict TDD: red -> green -> refactor (Fowler-style refactorings).
+  No coverage percentage target, but every hot path MUST be covered by tests.
+  Any claimed error or defect MUST be proven by a reproducible failing test.
+  Test command: `make test` (go test -race ./...); lint: `make lint`.
+  `make test` covers only the root module (packages ., ./stacktrace, ./http,
+  ./bench, ./tests). The go.work workspace also holds separate modules under
+  ./http/* and ./examples/*; a change that touches module paths, the Go
+  version or shared APIs must also build and test those modules explicitly.
+  TestMain runs goleak, so a leaked goroutine fails the suite; wrap tests
+  that could hang in testWithTimeout (main_test.go).
+
+rules:
+  proposal:
+    - Fill the "Defaults & Control" section for every new or changed behavior
+    - For bug fixes, include a minimal reproduction; do not propose a fix for an unreproduced defect
+  specs:
+    - Every scenario is a fenced gherkin block with concrete values and, where inputs vary, an Examples table
+    - "Walk the full case-coverage checklist for every requirement; record each skipped item as `<!-- cases: N/A ... -->`"
+  design:
+    - Include "Public API & Defaults" and a "Test Strategy" mapping every scenario to a Go test and every hot path to a test
+    - "For a skip_specs change, the Test Strategy lists the behavior-preservation checks instead (existing suite, every workspace module, lint)"
+    - Flag every breaking change to an exported API explicitly, with the migration for consumers
+  tasks:
+    - Every behavior group is RED -> GREEN -> REFACTOR, with the RED test seen failing before production code
+    - "A skip_specs change has no RED/GREEN: each group is named refactorings verified by `make test` green before and after every step"
+    - Bug-fix changes start with a failing regression test
+    - Keep each checkbox task on one line with its own verification; the apply view drops indented sub-bullets
+
+operations:
+  apply:
+    guidance:
+      - Show the failing test output (RED) and the passing output (GREEN) before checking a task off
+      - Run `make test` and `make lint` after each REFACTOR step
+      - Leave the RED test failing only until its GREEN step; never commit a red suite
+  archive:
+    guidance:
+      - Confirm `make test` and `make lint` pass and every scenario maps to a passing test before archiving
+      - Run `openspec validate <change> --strict` before archiving
