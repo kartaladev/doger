@@ -10,24 +10,11 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    env:
-      # Build and test the root library module on its own: go.work declares
-      # the newest Go required by the http/* and examples/* modules, which the
-      # older matrix versions cannot load.
-      GOWORK: "off"
     strategy:
       fail-fast: false
       matrix:
         go:
-          - "1.18"
-          - "1.19"
-          - "1.20"
-          - "1.21"
-          - "1.22"
-          - "1.23"
-          - "1.24"
-          - "1.25"
-          - "1.26"
+          - "1.27"
           - "stable"
     steps:
     - uses: actions/checkout@v7

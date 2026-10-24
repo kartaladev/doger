@@ -24,7 +24,7 @@ jobs:
   #     - uses: actions/checkout@v7
   #     - uses: actions/setup-go@v7
   #       with:
-  #         go-version-file: go.mod
+  #         go-version-file: go.work
 
   #     - name: Install govulncheck
   #       run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -53,7 +53,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
 
       - name: Run Trivy vulnerability scanner (source code)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -104,7 +104,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
 
       - name: Run Trivy scanner (table output for logs)
         uses: aquasecurity/trivy-action@v0.36.0
