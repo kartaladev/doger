@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "gopls-lsp@claude-plugins-official": true,
+    "cc-skills-golang@samber": true
+  }
+}

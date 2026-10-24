@@ -1,0 +1,37 @@
+schema: tdd-gherkin
+
+# Project context: constraints an agent cannot infer from the code.
+context: |
+  This is a Go library (fork of github.com/samber/do/v2, a generics-based DI toolkit).
+  Consumers are other Go programs; the public API is the product.
+  Library principle: opinionated, safe defaults that work with zero configuration,
+  while consumers keep full control (every opinionated choice is overridable
+  without forking - via options, interfaces, or hooks).
+  Go work MUST use the samber/cc-skills-golang skills (start with golang-how-to)
+  during planning and implementation, and gopls for code navigation.
+  Development is strict TDD: red -> green -> refactor (Fowler-style refactorings).
+  No coverage percentage target, but every hot path MUST be covered by tests.
+  Any claimed error or defect MUST be proven by a reproducible failing test.
+  Test command: `make test` (go test -race ./...); lint: `make lint`.
+
+rules:
+  proposal:
+    - Fill the "Defaults & Control" section for every new or changed behavior
+    - For bug fixes, include a minimal reproduction; do not propose a fix for an unreproduced defect
+  specs:
+    - Every scenario is a fenced gherkin block with concrete values and, where inputs vary, an Examples table
+    - "Walk the full case-coverage checklist for every requirement; record each skipped item as `<!-- cases: N/A ... -->`"
+  design:
+    - Include "Public API & Defaults" and a "Test Strategy" mapping every scenario to a Go test and every hot path to a test
+  tasks:
+    - Every behavior group is RED -> GREEN -> REFACTOR, with the RED test seen failing before production code
+    - Bug-fix changes start with a failing regression test
+
+operations:
+  apply:
+    guidance:
+      - Show the failing test output (RED) and the passing output (GREEN) before checking a task off
+      - Run `make test` and `make lint` after each REFACTOR step
+  archive:
+    guidance:
+      - Confirm `make test` passes and every scenario maps to a passing test before archiving
