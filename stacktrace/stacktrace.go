@@ -31,7 +31,7 @@ type pkgMarker struct{}
 // caller: frames in GOROOT, and frames of the package selfPkg except those
 // declared in _test.go files. function is the fully qualified function name.
 func skipFrame(selfPkg, goroot, function, file string) bool {
-	if strings.Contains(file, goroot) {
+	if goroot != "" && strings.HasPrefix(file, goroot+"/") {
 		return true
 	}
 
@@ -63,7 +63,6 @@ func NewFrameFromCaller() (Frame, bool) {
 		if !ok {
 			break
 		}
-		file = removeGoPath(file)
 
 		f := runtime.FuncForPC(pc)
 		if f == nil {
@@ -72,7 +71,7 @@ func NewFrameFromCaller() (Frame, bool) {
 		if !skipFrame(selfPkgPath, goroot, f.Name(), file) {
 			return Frame{
 				PC:       pc,
-				File:     file,
+				File:     removeGoPath(file),
 				Function: shortFuncName(f.Name()),
 				Line:     line,
 			}, true
