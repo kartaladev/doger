@@ -36,7 +36,7 @@ None at planning time. `service-source-tracking` (from `fix-stacktrace-frame-fil
 
 ## Prerequisites
 
-- The GitHub repository `github.com/kartaladev/doger` must exist (transfer of `zakyalvan/doger` to the `kartaladev` organization) before this change is merged, tagged, or its links published. Today it does not resolve (`gh repo view kartaladev/doger` fails, and `proxy.golang.org` returns 404), so `go get`, the pkg.go.dev links and the docs `editUrl` would all 404. Code tasks can proceed before the transfer. Merging cannot.
+- The GitHub repository `github.com/kartaladev/doger` must exist before this change is merged, tagged, or its links published. Done on 2026-10-24: it was created as a standalone public repository (not a GitHub fork) with the full history of `zakyalvan/doger` (itself a fork of `samber/do`), and `main` as its default branch. Until the first tag, `proxy.golang.org` still returns 404 for the new path, so `go get` and pkg.go.dev links resolve only after the follow-up tag.
 
 ## Defaults & Control
 

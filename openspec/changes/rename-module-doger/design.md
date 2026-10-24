@@ -41,7 +41,7 @@ Other facts that shape the approach:
 - **Tooling coverage.** `make test` covers the root module only.
 - **Versions and hosting.**
   - There are no tags, locally or on the remote.
-  - `origin` is `zakyalvan/doger`. `github.com/kartaladev/doger` does not resolve yet (`gh repo view` fails; `proxy.golang.org` returns 404).
+  - The repository lives at `github.com/kartaladev/doger` (created 2026-10-24 as a standalone repository with the full history of `zakyalvan/doger`, a fork of `samber/do`). `proxy.golang.org` returns 404 for the new path until the first tag.
 - **Docs site.** Upstream identity and accounts:
   - `docs/docusaurus.config.ts`: `url: https://do.samber.dev`, `organizationName: 'samber'`, and the identity links;
   - upstream analytics and search keys: Ahrefs `data-key`, gtag `G-ZQ0MR5WG9T`, PostHog `apiKey` with `appUrl: https://hogpost.samber.dev`, Algolia `appId 9Q5MHPPFJM` with insights;

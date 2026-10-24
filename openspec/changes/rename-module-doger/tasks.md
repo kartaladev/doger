@@ -4,7 +4,7 @@ Spec: `specs/module-identity/spec.md`. Behavior groups (3, 4, 5) are RED → GRE
 
 ## 1. Prerequisites and baseline
 
-- [ ] 1.1 Check hosting (design D10): verify `gh repo view kartaladev/doger --json nameWithOwner` prints `kartaladev/doger`; if it does not, record "transfer of zakyalvan/doger pending" in the PR description (code tasks may continue; merging is blocked until it resolves).
+- [ ] 1.1 Check hosting (design D10): verify `gh repo view kartaladev/doger --json nameWithOwner,defaultBranchRef` prints `kartaladev/doger` with default branch `main`, and `git remote get-url origin` points at it; if not, stop and record it in the PR description (code tasks may continue; merging is blocked until it resolves).
 - [ ] 1.2 Record the test inventory: for each `dir` in `go list -m -f '{{.Dir}}'`, run `go test -list '.*' ./...`, attribute names to package directories, and save the sorted result outside the repo as `baseline-tests.txt`; verify it is non-empty for `.`, `bench`, `http`, `stacktrace` and `tests`.
 - [ ] 1.3 Record the green baseline (requires `fix-stacktrace-frame-filter`): verify `make test`, `make lint`, and `go vet ./... && go test -race ./...` in every workspace module all pass; if anything fails, stop and report, and do not fix it here.
 - [ ] 1.4 Record the reference baseline: save `grep -rn 'samber/do' --exclude-dir=node_modules --exclude-dir=.git .` as `baseline-refs.txt` with every line tagged keep or rewrite per design D11; verify every line has a tag.
@@ -57,8 +57,7 @@ Spec: `specs/module-identity/spec.md`. Behavior groups (3, 4, 5) are RED → GRE
 
 ## Workflow follow-up
 
-- Transfer `zakyalvan/doger` to `kartaladev/doger` if task 1.1 found it missing, and do not merge before it resolves.
-- After merge and transfer: cut the first tag (`v0.1.0`) through the guarded `release.yml`, once the release-gating Open Question is resolved, then confirm `go list -m github.com/kartaladev/doger@v0.1.0` resolves through the proxy.
+- After merge: cut the first tag (`v0.1.0`) through the guarded `release.yml`, once the release-gating Open Question is resolved, then confirm `go list -m github.com/kartaladev/doger@v0.1.0` resolves through the proxy.
 - Decide sub-module publishing (`http/<x>/v0.y.z` tags, real requires), the final docs domain, and docs search (design Open Questions).
 - Decide what to do with the `go.dev/play` links in doc comments (docs decision).
 - Consider extending `make test` to cover every workspace module (separate tooling change).
