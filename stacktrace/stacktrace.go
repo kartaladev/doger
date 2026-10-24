@@ -13,14 +13,7 @@ import (
 /// -> Apache 2.0 LICENSE
 ///
 
-// type fake struct{}
-
 var (
-	// packageName = reflect.TypeOf(fake{}).PkgPath()
-	packageName           = "do"
-	packageNameStacktrace = packageName + "/stacktrace/"
-	packageNameExamples   = packageName + "/examples/"
-
 	// goroot is read once at package init: runtime.GOROOT() re-reads an
 	// env var on every call, and it cannot change during the process lifetime.
 	//nolint:staticcheck
@@ -47,13 +40,16 @@ func skipFrame(selfPkg, goroot, function, file string) bool {
 
 // NewFrameFromCaller creates a new Frame from the current call stack.
 // This function walks up the call stack to find the first frame that is not
-// in the do package or Go runtime, providing useful debugging information
-// about where a service was invoked from.
+// in the stacktrace package or Go runtime, providing useful debugging
+// information about where a service was invoked from.
 //
 // The function filters out:
 //   - Frames in the Go runtime (GOROOT)
-//   - Frames in the do package (except examples and tests)
-//   - Frames in the stacktrace package
+//   - Frames of the stacktrace package itself, except those declared in
+//     _test.go files
+//
+// Frames of other library packages are reported: the caller of a service
+// constructor is the library code that built it.
 //
 // Returns a Frame representing the caller and a boolean indicating success.
 // The boolean is false if no suitable frame was found.
