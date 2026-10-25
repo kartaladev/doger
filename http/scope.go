@@ -35,7 +35,7 @@ func ScopeTreeHTML(basePath string, injector doger.Injector, scopeID string) (st
 		`<!DOCTYPE html>
 <html>
 	<head>
-		<title>Inspect scope tree - samber/do</title>
+		<title>Inspect scope tree - doger</title>
 		<style>
 		header {
 			margin-bottom: 40px;

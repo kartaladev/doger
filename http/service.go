@@ -51,7 +51,7 @@ func ServiceHTML(basePath string, injector doger.Injector, scopeID string, servi
 		`<!DOCTYPE html>
 <html>
 <head>
-	<title>Inspect service - samber/do</title>
+	<title>Inspect service - doger</title>
 	<style>
 	</style>
 </head>
@@ -175,7 +175,7 @@ func ServiceListHTML(basePath string, injector doger.Injector) (string, error) {
 		`<!DOCTYPE html>
 <html>
 	<head>
-		<title>Inspect service - samber/do</title>
+		<title>Inspect service - doger</title>
 		<style>
 		.scope {
 			padding-top: 10px;
