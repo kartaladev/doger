@@ -168,6 +168,14 @@ Alternatives:
   - Set `name: 'doger'`, `codeRepository` and `license` to `kartaladev/doger`.
   - Add `isBasedOn: 'https://github.com/samber/do'`.
   - Keep the upstream author credit.
+- **Recorded during apply.** These follow the rules above but were not spelled out when this design was written:
+  - Removing Algolia also removes the navbar `search` item, which needs a search plugin.
+  - With `baseUrl: '/doger/'`, raw `/img/...` and `/docs/...` paths in pages and MDX would 404. They go through `useBaseUrl` or `require('@site/static/...')` instead.
+  - The FAQ answer "no breaking changes planned before v3" is upstream's v2 promise. It now says doger is v0, so a minor release may break.
+  - The README loses upstream's DBOS sponsor block, GitHub Sponsors badge and Twitter contact, as the docs site does.
+  - Upstream's personal channels go: the `twitter:creator`/`twitter:site` meta tags, the Bing `msvalidate.01` tag, the Substack footer link, and the community page's Twitter card.
+  - Security reports go to GitHub private vulnerability reporting (`/security/advisories/new`, enabled on the repository) instead of upstream's email address.
+  - `llms.txt` drops its GitHub Discussions references, since Discussions is disabled on this repository, along with the "follow the author" line and the "vibrant and growing community" claim. Its copyright line matches `LICENSE`.
 
 **D8. Attribution is never removed.**
 - In `LICENSE`, keep `Copyright (c) 2022 Samuel Berthe` and the MIT text unchanged, and add `Copyright (c) 2026 kartaladev` directly below it.
