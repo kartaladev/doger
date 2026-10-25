@@ -26,7 +26,7 @@ import (
 // Example:
 //
 //	// Create the debugging handler
-//	debugHandler := std.Use("/debug/di", injector)
+//	debugHandler := dogerhttpstd.Use("/debug/di", injector)
 //
 //	// Mount it in your server
 //	mux := http.NewServeMux()
