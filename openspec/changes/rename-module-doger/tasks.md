@@ -55,10 +55,20 @@ Spec: `specs/module-identity/spec.md`. Behavior groups (3, 4, 5) are RED → GRE
 - [x] 8.3 Reference sweep: `grep -rn 'samber/do' --exclude-dir=node_modules --exclude-dir=.git .`; verify every match falls into a design D11 allow-list category, `LICENSE` still contains `Samuel Berthe`, and README and the docs carry the fork notice.
 - [x] 8.4 Package names: run `go list -f '{{.ImportPath}} {{.Name}}' ./...` in every module; verify the output matches design D2 and `specs/module-identity/spec.md`.
 
+## 9. Review follow-ups (PR #17)
+
+Findings of `/opsx:verify` and `/code-review` on the pull request, fixed in this change.
+
+- [x] 9.1 RED: add `module_identity_test.go: TestModuleIdentity_NoOldPackageQualifierInStrings`, which parses every `.go` file and fails on a string literal matching `\bdo\.[A-Z]`; verify it fails only on `examples/service-explanation/main.go:13`.
+- [x] 9.2 GREEN: print `doger.ExplainNamedService` in `examples/service-explanation/main.go`; verify 9.1 passes and `go vet ./...` passes in that module.
+- [x] 9.3 Characterization: `TestProvideNamed_NameUnaffectedByModulePath` passes before and after the rename by design; show it can fail by temporarily making `ProvideNamedValue` register under `NameOf[T]()` (not committed).
+- [x] 9.4 Release (design D9): gate on `github.repository == 'kartaladev/doger'`, accept v0/v1 pre-releases, pin each `http/<x>` adapter to the released root version and tag it `http/<x>/<semver>`; verify actionlint passes and a local rehearsal of the file steps leaves every adapter requiring `github.com/kartaladev/doger@<semver>` and building with `GOWORK=off`.
+- [x] 9.5 Docs (design D7): structured data uses `url` + `baseUrl` and drops `SearchAction` and the WebSite `publisher`; remove `robots.txt`, the PostHog/sponsor theme swizzles with their CSS and images, the `golang-samber-do` skill snippets and the `std.Use` doc example; drop upstream's personal channels and security contact (private vulnerability reporting enabled); add the GitHub Pages deploy to `doc.yml` (Pages enabled); verify `npm run lint && npm run build` and actionlint pass.
+
 ## Workflow follow-up
 
-- After merge: cut the first tag (`v0.1.0`) through the guarded `release.yml`, once the release-gating Open Question is resolved, then confirm `go list -m github.com/kartaladev/doger@v0.1.0` resolves through the proxy.
-- Decide sub-module publishing (`http/<x>/v0.y.z` tags, real requires), the final docs domain, and docs search (design Open Questions).
+- After merge: cut the first tag (`v0.1.0`) through `release.yml`, then confirm `go list -m github.com/kartaladev/doger@v0.1.0` and `go get github.com/kartaladev/doger/http/std@v0.1.0` resolve through the proxy, and that the docs deployed to `https://kartaladev.github.io/doger/`.
+- Decide the final docs domain and docs search (design Open Questions).
 - Decide what to do with the `go.dev/play` links in doc comments (docs decision).
 - Consider extending `make test` to cover every workspace module (separate tooling change).
 - Archive this change once group 8 is recorded, then start `upgrade-go-1-27`.
