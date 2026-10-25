@@ -10,7 +10,7 @@ func main() {
 	injector := doger.New()
 
 	fmt.Println("=== Service Explanation Example ===")
-	fmt.Println("This example demonstrates how to use do.ExplainNamedService to")
+	fmt.Println("This example demonstrates how to use doger.ExplainNamedService to")
 	fmt.Printf("understand service dependencies, lifecycle, and debugging information.\n\n")
 
 	// Step 1: Register Configuration (base service)

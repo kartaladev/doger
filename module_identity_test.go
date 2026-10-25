@@ -2,10 +2,16 @@ package doger
 
 import (
 	"bufio"
+	"go/ast"
 	"go/build"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -187,6 +193,50 @@ func TestModuleIdentity_WorkspaceModules(t *testing.T) {
 			is.False(strings.HasSuffix(got, "/v2"), "module path %q ends with /v2", got)
 		})
 	}
+}
+
+var oldQualifierRe = regexp.MustCompile(`\bdo\.[A-Z]`)
+
+func TestModuleIdentity_NoOldPackageQualifierInStrings(t *testing.T) {
+	t.Parallel()
+
+	var found []string
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "testdata":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(lit.Value)
+			if err == nil && oldQualifierRe.MatchString(value) {
+				found = append(found, fset.Position(lit.Pos()).String()+": "+value)
+			}
+			return true
+		})
+		return nil
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, found, "string literals still use the old package qualifier do.")
 }
 
 type compatDoTagged struct {
