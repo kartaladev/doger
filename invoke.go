@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"errors"
@@ -202,7 +202,7 @@ func invokeByGenericType[T any](i Injector) (T, error) {
 // This function supports automatic dependency injection into struct fields
 // using the `do` tag or a custom tag key specified in the injector options.
 // If `implicitAliasing` is true and a service is not found by tag, the injector
-// will fall back to searching for a service by the field's generic type, like `do.InvokeAs[T]`.
+// will fall back to searching for a service by the field's generic type, like `doger.InvokeAs[T]`.
 //
 // Parameters:
 //   - i: The injector to search for services

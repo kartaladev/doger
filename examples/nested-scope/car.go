@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 /**
@@ -41,28 +41,28 @@ func (e *Engine) Shutdown() {
 	println("stopping engine")
 }
 
-func bootCarModule(injector do.Injector) {
+func bootCarModule(injector doger.Injector) {
 	// provide wheels
-	do.ProvideNamedValue(injector, "wheel-1", &Wheel{})
-	do.ProvideNamedValue(injector, "wheel-2", &Wheel{})
-	do.ProvideNamedValue(injector, "wheel-3", &Wheel{})
-	do.ProvideNamedValue(injector, "wheel-4", &Wheel{})
+	doger.ProvideNamedValue(injector, "wheel-1", &Wheel{})
+	doger.ProvideNamedValue(injector, "wheel-2", &Wheel{})
+	doger.ProvideNamedValue(injector, "wheel-3", &Wheel{})
+	doger.ProvideNamedValue(injector, "wheel-4", &Wheel{})
 
 	// provide engine
-	do.Provide(injector, func(i do.Injector) (*Engine, error) {
+	doger.Provide(injector, func(i doger.Injector) (*Engine, error) {
 		return &Engine{
 			Wheels: []*Wheel{
-				do.MustInvokeNamed[*Wheel](i, "wheel-1"),
-				do.MustInvokeNamed[*Wheel](i, "wheel-2"),
-				do.MustInvokeNamed[*Wheel](i, "wheel-3"),
-				do.MustInvokeNamed[*Wheel](i, "wheel-4"),
+				doger.MustInvokeNamed[*Wheel](i, "wheel-1"),
+				doger.MustInvokeNamed[*Wheel](i, "wheel-2"),
+				doger.MustInvokeNamed[*Wheel](i, "wheel-3"),
+				doger.MustInvokeNamed[*Wheel](i, "wheel-4"),
 			},
 		}, nil
 	})
 
 	// provide seats
-	do.ProvideNamedValue(injector, "seat-1", &Seat{})
-	do.ProvideNamedValue(injector, "seat-2", &Seat{})
-	do.ProvideNamedValue(injector, "seat-3", &Seat{})
-	do.ProvideNamedValue(injector, "seat-4", &Seat{})
+	doger.ProvideNamedValue(injector, "seat-1", &Seat{})
+	doger.ProvideNamedValue(injector, "seat-2", &Seat{})
+	doger.ProvideNamedValue(injector, "seat-3", &Seat{})
+	doger.ProvideNamedValue(injector, "seat-4", &Seat{})
 }

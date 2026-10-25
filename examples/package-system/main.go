@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/samber/do/v2"
-	"github.com/samber/do/v2/examples/package-system/application"
-	"github.com/samber/do/v2/examples/package-system/database"
-	"github.com/samber/do/v2/examples/package-system/logging"
-	"github.com/samber/do/v2/examples/package-system/services"
+	"github.com/kartaladev/doger"
+	"github.com/kartaladev/doger/examples/package-system/application"
+	"github.com/kartaladev/doger/examples/package-system/database"
+	"github.com/kartaladev/doger/examples/package-system/logging"
+	"github.com/kartaladev/doger/examples/package-system/services"
 )
 
 // Configuration represents application configuration.
@@ -27,10 +27,10 @@ func (c *Configuration) GetDebug() bool {
 
 func main() {
 	// Create injector with all packages
-	injector := do.New(
+	injector := doger.New(
 		// Configuration is provided directly
-		func(i do.Injector) {
-			do.ProvideValue(i, &Configuration{
+		func(i doger.Injector) {
+			doger.ProvideValue(i, &Configuration{
 				AppName: "MyApp",
 				Port:    8080,
 				Debug:   true,
@@ -44,16 +44,16 @@ func main() {
 	)
 
 	// Create aliases for Configuration to bridge interface types
-	// This is needed for do.InvokeAs to work across packages
-	_ = do.As[*Configuration, database.Configuration](injector)
-	_ = do.As[*Configuration, logging.Configuration](injector)
-	_ = do.As[*Configuration, application.Configuration](injector)
+	// This is needed for doger.InvokeAs to work across packages
+	_ = doger.As[*Configuration, database.Configuration](injector)
+	_ = doger.As[*Configuration, logging.Configuration](injector)
+	_ = doger.As[*Configuration, application.Configuration](injector)
 
 	fmt.Println("=== Package System Example ===")
 	fmt.Println("Available services:", injector.ListProvidedServices())
 
 	// Run the application
-	app := do.MustInvoke[*application.Application](injector)
+	app := doger.MustInvoke[*application.Application](injector)
 	app.Run()
 
 	fmt.Println("\n=== Package Benefits ===")

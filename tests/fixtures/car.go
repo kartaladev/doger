@@ -1,14 +1,14 @@
 package fixtures
 
-import "github.com/samber/do/v2"
+import "github.com/kartaladev/doger"
 
 /**
  * driver
  */
-func newDriver(i do.Injector) (*Driver, error) {
+func newDriver(i doger.Injector) (*Driver, error) {
 	d := &Driver{
-		seat:   do.MustInvokeNamed[*Seat](i, "seat-1"),
-		engine: do.MustInvoke[*Engine](i),
+		seat:   doger.MustInvokeNamed[*Seat](i, "seat-1"),
+		engine: doger.MustInvoke[*Engine](i),
 	}
 
 	d.seat.take()
@@ -30,10 +30,10 @@ func (d *Driver) Shutdown() {
 /**
  * passenger
  */
-func newPassenger(seatName string) func(i do.Injector) (*Passenger, error) {
-	return func(i do.Injector) (*Passenger, error) {
+func newPassenger(seatName string) func(i doger.Injector) (*Passenger, error) {
+	return func(i doger.Injector) (*Passenger, error) {
 		p := &Passenger{
-			seat: do.MustInvokeNamed[*Seat](i, seatName),
+			seat: doger.MustInvokeNamed[*Seat](i, seatName),
 		}
 
 		p.seat.take()
@@ -107,13 +107,13 @@ func (w *Wheel) Shutdown() {
 /**
  * engine
  */
-func newEngine(i do.Injector) (*Engine, error) {
+func newEngine(i doger.Injector) (*Engine, error) {
 	return &Engine{
 		wheels: []*Wheel{
-			do.MustInvokeNamed[*Wheel](i, "wheel-1"),
-			do.MustInvokeNamed[*Wheel](i, "wheel-2"),
-			do.MustInvokeNamed[*Wheel](i, "wheel-3"),
-			do.MustInvokeNamed[*Wheel](i, "wheel-4"),
+			doger.MustInvokeNamed[*Wheel](i, "wheel-1"),
+			doger.MustInvokeNamed[*Wheel](i, "wheel-2"),
+			doger.MustInvokeNamed[*Wheel](i, "wheel-3"),
+			doger.MustInvokeNamed[*Wheel](i, "wheel-4"),
 		},
 	}, nil
 }
@@ -151,34 +151,34 @@ func (e *Engine) Shutdown() {
 	}
 }
 
-func GetPackage() (do.Injector, do.Injector, do.Injector) {
-	injector := do.New()
+func GetPackage() (doger.Injector, doger.Injector, doger.Injector) {
+	injector := doger.New()
 
 	driverScope := injector.Scope("driver")
 	passengerScope := injector.Scope("passenger")
 
 	// provide wheels
-	do.ProvideNamedValue(injector, "wheel-1", &Wheel{})
-	do.ProvideNamedValue(injector, "wheel-2", &Wheel{})
-	do.ProvideNamedValue(injector, "wheel-3", &Wheel{})
-	do.ProvideNamedValue(injector, "wheel-4", &Wheel{})
+	doger.ProvideNamedValue(injector, "wheel-1", &Wheel{})
+	doger.ProvideNamedValue(injector, "wheel-2", &Wheel{})
+	doger.ProvideNamedValue(injector, "wheel-3", &Wheel{})
+	doger.ProvideNamedValue(injector, "wheel-4", &Wheel{})
 
 	// provide engine
-	do.Provide(injector, newEngine)
+	doger.Provide(injector, newEngine)
 
 	// provide seats
-	do.ProvideNamedValue(injector, "seat-1", &Seat{})
-	do.ProvideNamedValue(injector, "seat-2", &Seat{})
-	do.ProvideNamedValue(injector, "seat-3", &Seat{})
-	do.ProvideNamedValue(injector, "seat-4", &Seat{})
+	doger.ProvideNamedValue(injector, "seat-1", &Seat{})
+	doger.ProvideNamedValue(injector, "seat-2", &Seat{})
+	doger.ProvideNamedValue(injector, "seat-3", &Seat{})
+	doger.ProvideNamedValue(injector, "seat-4", &Seat{})
 
 	// provide driver
-	do.Provide(driverScope, newDriver)
+	doger.Provide(driverScope, newDriver)
 
 	// provide passenger
-	do.ProvideNamed(passengerScope, "passenger-1", newPassenger("seat-2"))
-	do.ProvideNamed(passengerScope, "passenger-2", newPassenger("seat-3"))
-	do.ProvideNamed(passengerScope, "passenger-3", newPassenger("seat-4"))
+	doger.ProvideNamed(passengerScope, "passenger-1", newPassenger("seat-2"))
+	doger.ProvideNamed(passengerScope, "passenger-2", newPassenger("seat-3"))
+	doger.ProvideNamed(passengerScope, "passenger-3", newPassenger("seat-4"))
 
 	return injector, driverScope, passengerScope
 }

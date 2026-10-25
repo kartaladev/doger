@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,11 +17,11 @@ func TestRaceConditionServiceInitialization(t *testing.T) {
 	testWithTimeout(t, 500*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that can be initialized multiple times with different values
 	var initializationCount int32
-	do.ProvideNamed(root, "race-service", func(i do.Injector) (*raceTestService, error) {
+	doger.ProvideNamed(root, "race-service", func(i doger.Injector) (*raceTestService, error) {
 		count := atomic.AddInt32(&initializationCount, 1)
 		return &raceTestService{
 			id:    int(count),
@@ -39,7 +39,7 @@ func TestRaceConditionServiceInitialization(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			result, err := do.InvokeNamed[*raceTestService](root, "race-service")
+			result, err := doger.InvokeNamed[*raceTestService](root, "race-service")
 			results[index] = result
 			errors[index] = err
 		}(i)
@@ -68,25 +68,25 @@ func TestRaceConditionServiceReplacement(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create initial service
-	do.ProvideNamed(root, "race-replace-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "race-replace-service", func(i doger.Injector) (string, error) {
 		return "initial", nil
 	})
 
 	// Invoke the initial service
-	result, err := do.InvokeNamed[string](root, "race-replace-service")
+	result, err := doger.InvokeNamed[string](root, "race-replace-service")
 	is.NoError(err)
 	is.Equal("initial", result)
 
 	// Replace the service
-	do.OverrideNamed(root, "race-replace-service", func(i do.Injector) (string, error) {
+	doger.OverrideNamed(root, "race-replace-service", func(i doger.Injector) (string, error) {
 		return "replaced", nil
 	})
 
 	// Invoke the service again
-	result, err = do.InvokeNamed[string](root, "race-replace-service")
+	result, err = doger.InvokeNamed[string](root, "race-replace-service")
 	is.NoError(err)
 	is.Equal("replaced", result)
 }
@@ -96,10 +96,10 @@ func TestRaceConditionScopeCreation(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service in root
-	do.ProvideNamed(root, "root-race-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "root-race-service", func(i doger.Injector) (string, error) {
 		return "root-value", nil
 	})
 
@@ -118,18 +118,18 @@ func TestRaceConditionScopeCreation(t *testing.T) {
 			childScope := root.Scope(scopeName)
 
 			// Create service in child scope
-			do.ProvideNamed(childScope, "child-race-service", func(i do.Injector) (string, error) {
+			doger.ProvideNamed(childScope, "child-race-service", func(i doger.Injector) (string, error) {
 				return fmt.Sprintf("child-value-%d", index), nil
 			})
 
 			// Access both root and child services
-			rootVal, err := do.InvokeNamed[string](childScope, "root-race-service")
+			rootVal, err := doger.InvokeNamed[string](childScope, "root-race-service")
 			if err != nil {
 				scopeErrors[index] = err
 				return
 			}
 
-			childVal, err := do.InvokeNamed[string](childScope, "child-race-service")
+			childVal, err := doger.InvokeNamed[string](childScope, "child-race-service")
 			if err != nil {
 				scopeErrors[index] = err
 				return
@@ -155,10 +155,10 @@ func TestRaceConditionHealthCheckInvocation(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service with health check
-	do.ProvideNamed(root, "health-race-service", func(i do.Injector) (*raceHealthchecker, error) {
+	doger.ProvideNamed(root, "health-race-service", func(i doger.Injector) (*raceHealthchecker, error) {
 		return &raceHealthchecker{name: "health-race", healthy: true}, nil
 	})
 
@@ -175,7 +175,7 @@ func TestRaceConditionHealthCheckInvocation(t *testing.T) {
 
 			if index%2 == 0 {
 				// Invoke service
-				_, err := do.InvokeNamed[*raceHealthchecker](root, "health-race-service")
+				_, err := doger.InvokeNamed[*raceHealthchecker](root, "health-race-service")
 				invokeErrors[index] = err
 			} else {
 				// Perform health check
@@ -202,22 +202,22 @@ func TestRaceConditionShutdownInvocation(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service with shutdown
-	do.ProvideNamed(root, "shutdown-race-service", func(i do.Injector) (*raceShutdowner, error) {
+	doger.ProvideNamed(root, "shutdown-race-service", func(i doger.Injector) (*raceShutdowner, error) {
 		return &raceShutdowner{name: "shutdown-race"}, nil
 	})
 
 	// Invoke service to ensure it's initialized
-	_, err := do.InvokeNamed[*raceShutdowner](root, "shutdown-race-service")
+	_, err := doger.InvokeNamed[*raceShutdowner](root, "shutdown-race-service")
 	is.NoError(err)
 
 	// Concurrently invoke service and shutdown
 	const numOperations = 10
 	var wg sync.WaitGroup
 	invokeErrors := make([]error, numOperations)
-	report := make([]*do.ShutdownReport, numOperations)
+	report := make([]*doger.ShutdownReport, numOperations)
 
 	for i := 0; i < numOperations; i++ {
 		wg.Add(1)
@@ -226,7 +226,7 @@ func TestRaceConditionShutdownInvocation(t *testing.T) {
 
 			if index%2 == 0 {
 				// Invoke service
-				_, err := do.InvokeNamed[*raceShutdowner](root, "shutdown-race-service")
+				_, err := doger.InvokeNamed[*raceShutdowner](root, "shutdown-race-service")
 				invokeErrors[index] = err
 			} else {
 				// Shutdown
@@ -238,7 +238,7 @@ func TestRaceConditionShutdownInvocation(t *testing.T) {
 	wg.Wait()
 
 	// After concurrent shutdown/invocation, the service should no longer be invokable
-	_, finalErr := do.InvokeNamed[*raceShutdowner](root, "shutdown-race-service")
+	_, finalErr := doger.InvokeNamed[*raceShutdowner](root, "shutdown-race-service")
 	is.Error(finalErr)
 }
 
@@ -247,10 +247,10 @@ func TestRaceConditionSlowServiceInvocation(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that takes time to resolve
-	do.ProvideNamed(root, "slow-race-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "slow-race-service", func(i doger.Injector) (string, error) {
 		time.Sleep(50 * time.Millisecond)
 		return "slow-value", nil
 	})
@@ -267,7 +267,7 @@ func TestRaceConditionSlowServiceInvocation(t *testing.T) {
 			defer wg.Done()
 
 			// Invoke service
-			result, err := do.InvokeNamed[string](root, "slow-race-service")
+			result, err := doger.InvokeNamed[string](root, "slow-race-service")
 			results[index] = result
 			errors[index] = err
 		}(i)
@@ -293,10 +293,10 @@ func TestRaceConditionServiceAliasCreation(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create base service
-	do.ProvideNamed(root, "alias-base-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "alias-base-service", func(i doger.Injector) (string, error) {
 		return "base-value", nil
 	})
 
@@ -316,10 +316,10 @@ func TestRaceConditionServiceAliasCreation(t *testing.T) {
 
 			if index%2 == 0 {
 				// Create alias
-				aliasErrors[index] = do.AsNamed[string, string](root, "alias-base-service", aliasName)
+				aliasErrors[index] = doger.AsNamed[string, string](root, "alias-base-service", aliasName)
 			} else {
 				// Try to invoke alias (may not exist yet)
-				result, err := do.InvokeNamed[string](root, aliasName)
+				result, err := doger.InvokeNamed[string](root, aliasName)
 				invokeResults[index] = result
 				invokeErrors[index] = err
 			}

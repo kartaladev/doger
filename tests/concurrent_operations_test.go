@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2"
-	"github.com/samber/do/v2/tests/fixtures"
+	"github.com/kartaladev/doger"
+	"github.com/kartaladev/doger/tests/fixtures"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -19,10 +19,10 @@ func TestParallelShutdown(t *testing.T) {
 
 	root, driver, passenger := fixtures.GetPackage()
 	is.NotPanics(func() {
-		_ = do.MustInvoke[*fixtures.Driver](driver)
-		_ = do.MustInvokeNamed[*fixtures.Passenger](passenger, "passenger-1")
-		_ = do.MustInvokeNamed[*fixtures.Passenger](passenger, "passenger-2")
-		_ = do.MustInvokeNamed[*fixtures.Passenger](passenger, "passenger-3")
+		_ = doger.MustInvoke[*fixtures.Driver](driver)
+		_ = doger.MustInvokeNamed[*fixtures.Passenger](passenger, "passenger-1")
+		_ = doger.MustInvokeNamed[*fixtures.Passenger](passenger, "passenger-2")
+		_ = doger.MustInvokeNamed[*fixtures.Passenger](passenger, "passenger-3")
 		_ = root.Shutdown()
 	})
 }
@@ -32,10 +32,10 @@ func TestConcurrentServiceAliasOperations(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a base service
-	do.ProvideNamed(root, "base-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "base-service", func(i doger.Injector) (string, error) {
 		return "base-value", nil
 	})
 
@@ -49,7 +49,7 @@ func TestConcurrentServiceAliasOperations(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 			aliasName := fmt.Sprintf("alias-%d", index)
-			errors[index] = do.AsNamed[string, string](root, "base-service", aliasName)
+			errors[index] = doger.AsNamed[string, string](root, "base-service", aliasName)
 		}(i)
 	}
 
@@ -70,7 +70,7 @@ func TestConcurrentServiceAliasOperations(t *testing.T) {
 		go func(index int) {
 			defer wg2.Done()
 			aliasName := fmt.Sprintf("alias-%d", index)
-			result, err := do.InvokeNamed[string](root, aliasName)
+			result, err := doger.InvokeNamed[string](root, aliasName)
 			results[index] = result
 			invokeErrors[index] = err
 		}(i)
@@ -90,25 +90,25 @@ func TestConcurrentServiceReplacement(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create initial service
-	do.ProvideNamed(root, "replaceable-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "replaceable-service", func(i doger.Injector) (string, error) {
 		return "initial-value", nil
 	})
 
 	// Invoke the initial service
-	result, err := do.InvokeNamed[string](root, "replaceable-service")
+	result, err := doger.InvokeNamed[string](root, "replaceable-service")
 	is.NoError(err)
 	is.Equal("initial-value", result)
 
 	// Replace the service (not concurrently to avoid panics)
-	do.OverrideNamed(root, "replaceable-service", func(i do.Injector) (string, error) {
+	doger.OverrideNamed(root, "replaceable-service", func(i doger.Injector) (string, error) {
 		return "replaced-value", nil
 	})
 
 	// Invoke the service again - should get the replacement value
-	result, err = do.InvokeNamed[string](root, "replaceable-service")
+	result, err = doger.InvokeNamed[string](root, "replaceable-service")
 	is.NoError(err)
 	is.Equal("replaced-value", result)
 }
@@ -118,14 +118,14 @@ func TestConcurrentServiceInvocationDuringRegistration(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that takes time to register
 	registrationComplete := make(chan struct{})
 
 	go func() {
 		time.Sleep(50 * time.Millisecond) // Simulate slow registration
-		do.ProvideNamed(root, "slow-registration-service", func(i do.Injector) (string, error) {
+		doger.ProvideNamed(root, "slow-registration-service", func(i doger.Injector) (string, error) {
 			return "slow-registered-value", nil
 		})
 		close(registrationComplete)
@@ -144,7 +144,7 @@ func TestConcurrentServiceInvocationDuringRegistration(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			result, err := do.InvokeNamed[string](root, "slow-registration-service")
+			result, err := doger.InvokeNamed[string](root, "slow-registration-service")
 			results[index] = result
 			errors[index] = err
 		}(i)
@@ -164,17 +164,17 @@ func TestConcurrentScopeOperations(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service in root scope
-	do.ProvideNamed(root, "root-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "root-service", func(i doger.Injector) (string, error) {
 		return "root-value", nil
 	})
 
 	// Concurrently create child scopes and perform operations
 	const numScopes = 10
 	var wg sync.WaitGroup
-	scopes := make([]do.Injector, numScopes)
+	scopes := make([]doger.Injector, numScopes)
 	errors := make([]error, numScopes)
 
 	for i := 0; i < numScopes; i++ {
@@ -186,18 +186,18 @@ func TestConcurrentScopeOperations(t *testing.T) {
 			scopes[index] = childScope
 
 			// Create a service in child scope
-			do.ProvideNamed(childScope, "child-service", func(i do.Injector) (string, error) {
+			doger.ProvideNamed(childScope, "child-service", func(i doger.Injector) (string, error) {
 				return fmt.Sprintf("child-value-%d", index), nil
 			})
 
 			// Invoke both root and child services
-			rootVal, err := do.InvokeNamed[string](childScope, "root-service")
+			rootVal, err := doger.InvokeNamed[string](childScope, "root-service")
 			if err != nil {
 				errors[index] = err
 				return
 			}
 
-			childVal, err := do.InvokeNamed[string](childScope, "child-service")
+			childVal, err := doger.InvokeNamed[string](childScope, "child-service")
 			if err != nil {
 				errors[index] = err
 				return
@@ -224,19 +224,19 @@ func TestConcurrentHealthCheckDuringShutdown(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service with health check that takes time
-	do.ProvideNamed(root, "slow-health-service", func(i do.Injector) (*slowHealthchecker, error) {
+	doger.ProvideNamed(root, "slow-health-service", func(i doger.Injector) (*slowHealthchecker, error) {
 		return &slowHealthchecker{name: "slow-health", healthy: true}, nil
 	})
 
 	// Invoke service to ensure it's initialized
-	_, err := do.InvokeNamed[*slowHealthchecker](root, "slow-health-service")
+	_, err := doger.InvokeNamed[*slowHealthchecker](root, "slow-health-service")
 	is.NoError(err)
 
 	// Start shutdown in background
-	shutdownComplete := make(chan *do.ShutdownReport)
+	shutdownComplete := make(chan *doger.ShutdownReport)
 	go func() {
 		shutdownComplete <- root.Shutdown()
 	}()
@@ -272,28 +272,28 @@ func TestConcurrentServiceAliasReplacement(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create base service and alias
-	do.ProvideNamed(root, "base-for-alias", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "base-for-alias", func(i doger.Injector) (string, error) {
 		return "original-base-value", nil
 	})
 
-	err := do.AsNamed[string, string](root, "base-for-alias", "service-alias")
+	err := doger.AsNamed[string, string](root, "base-for-alias", "service-alias")
 	is.NoError(err)
 
 	// Invoke through alias - should get original value
-	result, err := do.InvokeNamed[string](root, "service-alias")
+	result, err := doger.InvokeNamed[string](root, "service-alias")
 	is.NoError(err)
 	is.Equal("original-base-value", result)
 
 	// Replace the base service (not concurrently to avoid panics)
-	do.OverrideNamed(root, "base-for-alias", func(i do.Injector) (string, error) {
+	doger.OverrideNamed(root, "base-for-alias", func(i doger.Injector) (string, error) {
 		return "replaced-base-value", nil
 	})
 
 	// Invoke through alias - should get the replacement value
-	result, err = do.InvokeNamed[string](root, "service-alias")
+	result, err = doger.InvokeNamed[string](root, "service-alias")
 	is.NoError(err)
 	is.Equal("replaced-base-value", result)
 }
@@ -303,7 +303,7 @@ func TestConcurrentServiceRegistration(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Concurrently register many services
 	const numServices = 100
@@ -314,7 +314,7 @@ func TestConcurrentServiceRegistration(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 			serviceName := fmt.Sprintf("service-%d", index)
-			do.ProvideNamed(root, serviceName, func(i do.Injector) (string, error) {
+			doger.ProvideNamed(root, serviceName, func(i doger.Injector) (string, error) {
 				return fmt.Sprintf("value-%d", index), nil
 			})
 		}(i)
@@ -325,7 +325,7 @@ func TestConcurrentServiceRegistration(t *testing.T) {
 	// Verify all services can be invoked
 	for i := 0; i < numServices; i++ {
 		serviceName := fmt.Sprintf("service-%d", i)
-		result, err := do.InvokeNamed[string](root, serviceName)
+		result, err := doger.InvokeNamed[string](root, serviceName)
 		is.NoError(err)
 		is.Equal(fmt.Sprintf("value-%d", i), result)
 	}
@@ -336,10 +336,10 @@ func TestConcurrentServiceInvocation(t *testing.T) {
 	testWithTimeout(t, 450*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that can be invoked concurrently
-	do.ProvideNamed(root, "concurrent-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "concurrent-service", func(i doger.Injector) (string, error) {
 		time.Sleep(10 * time.Millisecond) // Simulate some work
 		return "concurrent-value", nil
 	})
@@ -354,7 +354,7 @@ func TestConcurrentServiceInvocation(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			result, err := do.InvokeNamed[string](root, "concurrent-service")
+			result, err := doger.InvokeNamed[string](root, "concurrent-service")
 			results[index] = result
 			errors[index] = err
 		}(i)
@@ -374,12 +374,12 @@ func TestConcurrentScopeCreation(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Concurrently create scopes
 	const numScopes = 50
 	var wg sync.WaitGroup
-	scopes := make([]do.Injector, numScopes)
+	scopes := make([]doger.Injector, numScopes)
 
 	for i := 0; i < numScopes; i++ {
 		wg.Add(1)
@@ -404,21 +404,21 @@ func TestConcurrentHealthChecks(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services with health checks
-	do.ProvideNamed(root, "healthy-service", func(i do.Injector) (*testHealthchecker, error) {
+	doger.ProvideNamed(root, "healthy-service", func(i doger.Injector) (*testHealthchecker, error) {
 		return &testHealthchecker{name: "healthy", healthy: true}, nil
 	})
 
-	do.ProvideNamed(root, "unhealthy-service", func(i do.Injector) (*testHealthchecker, error) {
+	doger.ProvideNamed(root, "unhealthy-service", func(i doger.Injector) (*testHealthchecker, error) {
 		return &testHealthchecker{name: "unhealthy", healthy: false}, nil
 	})
 
 	// Invoke services to ensure they are initialized
-	_, err := do.InvokeNamed[*testHealthchecker](root, "healthy-service")
+	_, err := doger.InvokeNamed[*testHealthchecker](root, "healthy-service")
 	is.NoError(err)
-	_, err = do.InvokeNamed[*testHealthchecker](root, "unhealthy-service")
+	_, err = doger.InvokeNamed[*testHealthchecker](root, "unhealthy-service")
 	is.NoError(err)
 
 	// Concurrently perform health checks
@@ -451,30 +451,30 @@ func TestConcurrentShutdown(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services with shutdown tracking
 	shutdownOrder := make([]string, 0)
 	var mu sync.Mutex
 
-	do.ProvideNamed(root, "shutdownable-1", func(i do.Injector) (*concurrentTestShutdowner, error) {
+	doger.ProvideNamed(root, "shutdownable-1", func(i doger.Injector) (*concurrentTestShutdowner, error) {
 		return &concurrentTestShutdowner{name: "service-1", shutdownOrder: &shutdownOrder, mu: &mu}, nil
 	})
 
-	do.ProvideNamed(root, "shutdownable-2", func(i do.Injector) (*concurrentTestShutdowner, error) {
+	doger.ProvideNamed(root, "shutdownable-2", func(i doger.Injector) (*concurrentTestShutdowner, error) {
 		return &concurrentTestShutdowner{name: "service-2", shutdownOrder: &shutdownOrder, mu: &mu}, nil
 	})
 
 	// Invoke services to ensure they are initialized
-	_, err := do.InvokeNamed[*concurrentTestShutdowner](root, "shutdownable-1")
+	_, err := doger.InvokeNamed[*concurrentTestShutdowner](root, "shutdownable-1")
 	is.NoError(err)
-	_, err = do.InvokeNamed[*concurrentTestShutdowner](root, "shutdownable-2")
+	_, err = doger.InvokeNamed[*concurrentTestShutdowner](root, "shutdownable-2")
 	is.NoError(err)
 
 	// Concurrently shutdown the root scope
 	const numGoroutines = 5
 	var wg sync.WaitGroup
-	errors := make([]*do.ShutdownReport, numGoroutines)
+	errors := make([]*doger.ShutdownReport, numGoroutines)
 
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
@@ -504,18 +504,18 @@ func TestConcurrentServiceLifecycleFailures(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services that fail during different lifecycle phases
-	do.ProvideNamed(root, "construction-failure", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "construction-failure", func(i doger.Injector) (string, error) {
 		return "", fmt.Errorf("construction failed")
 	})
 
-	do.ProvideNamed(root, "health-check-failure", func(i do.Injector) (*testHealthchecker, error) {
+	doger.ProvideNamed(root, "health-check-failure", func(i doger.Injector) (*testHealthchecker, error) {
 		return &testHealthchecker{name: "health-failure", healthy: false}, nil
 	})
 
-	do.ProvideNamed(root, "shutdown-failure", func(i do.Injector) (*concurrentTestShutdowner, error) {
+	doger.ProvideNamed(root, "shutdown-failure", func(i doger.Injector) (*concurrentTestShutdowner, error) {
 		return &concurrentTestShutdowner{name: "shutdown-failure", shouldFail: true, shutdownOrder: &[]string{}, mu: &sync.Mutex{}}, nil
 	})
 
@@ -531,11 +531,11 @@ func TestConcurrentServiceLifecycleFailures(t *testing.T) {
 			defer wg.Done()
 
 			// Try to invoke construction failure service
-			_, err := do.InvokeNamed[string](root, "construction-failure")
+			_, err := doger.InvokeNamed[string](root, "construction-failure")
 			constructionErrors[index] = err
 
 			// Try to invoke health check failure service
-			_, err = do.InvokeNamed[*testHealthchecker](root, "health-check-failure")
+			_, err = doger.InvokeNamed[*testHealthchecker](root, "health-check-failure")
 			if err == nil {
 				// If invocation succeeds, check health
 				healthMap := root.HealthCheck()
@@ -565,17 +565,17 @@ func TestConcurrentTimeoutScenarios(t *testing.T) {
 	testWithTimeout(t, 900*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that takes a long time to resolve
-	do.ProvideNamed(root, "slow-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "slow-service", func(i doger.Injector) (string, error) {
 		time.Sleep(100 * time.Millisecond)
 		return "slow-value", nil
 	})
 
 	// Create a service that depends on the slow service
-	do.ProvideNamed(root, "dependent-on-slow", func(i do.Injector) (string, error) {
-		slowVal, err := do.InvokeNamed[string](i, "slow-service")
+	doger.ProvideNamed(root, "dependent-on-slow", func(i doger.Injector) (string, error) {
+		slowVal, err := doger.InvokeNamed[string](i, "slow-service")
 		if err != nil {
 			return "", err
 		}
@@ -592,7 +592,7 @@ func TestConcurrentTimeoutScenarios(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			result, err := do.InvokeNamed[string](root, "dependent-on-slow")
+			result, err := doger.InvokeNamed[string](root, "dependent-on-slow")
 			results[index] = result
 			errors[index] = err
 		}(i)
@@ -612,15 +612,15 @@ func TestConcurrentBlockingOperations(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that blocks during shutdown
-	do.ProvideNamed(root, "blocking-shutdown", func(i do.Injector) (*concurrentTestShutdowner, error) {
+	doger.ProvideNamed(root, "blocking-shutdown", func(i doger.Injector) (*concurrentTestShutdowner, error) {
 		return &concurrentTestShutdowner{name: "blocking", shouldBlock: true, shutdownOrder: &[]string{}, mu: &sync.Mutex{}}, nil
 	})
 
 	// Invoke the service to ensure it is initialized
-	_, err := do.InvokeNamed[*concurrentTestShutdowner](root, "blocking-shutdown")
+	_, err := doger.InvokeNamed[*concurrentTestShutdowner](root, "blocking-shutdown")
 	is.NoError(err)
 
 	// Concurrently shutdown with context timeout
@@ -629,7 +629,7 @@ func TestConcurrentBlockingOperations(t *testing.T) {
 
 	const numGoroutines = 3
 	var wg sync.WaitGroup
-	reports := make([]*do.ShutdownReport, numGoroutines)
+	reports := make([]*doger.ShutdownReport, numGoroutines)
 
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
@@ -657,14 +657,14 @@ func TestConcurrentMemoryPressure(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create many services to simulate memory pressure
 	const numServices = 1000
 
 	for i := 0; i < numServices; i++ {
 		serviceName := fmt.Sprintf("service-%d", i)
-		do.ProvideNamed(root, serviceName, func(i do.Injector) (string, error) {
+		doger.ProvideNamed(root, serviceName, func(i doger.Injector) (string, error) {
 			return fmt.Sprintf("value-%d", i), nil
 		})
 	}
@@ -683,7 +683,7 @@ func TestConcurrentMemoryPressure(t *testing.T) {
 			for j := 0; j < 10; j++ {
 				serviceIndex := (index + j) % numServices
 				serviceName := fmt.Sprintf("service-%d", serviceIndex)
-				_, err := do.InvokeNamed[string](root, serviceName)
+				_, err := doger.InvokeNamed[string](root, serviceName)
 				if err != nil {
 					errors[index] = err
 					return

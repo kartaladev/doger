@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"context"
@@ -118,7 +118,7 @@ func TestShutdownWithContext(t *testing.T) {
 	is.NoError(ShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i))
 	_, _ = Invoke[*lazyTestShutdownerKOCtx](i)
 
-	is.EqualError(ShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i), "DI: could not find service `*github.com/samber/do/v2.lazyTestShutdownerKOCtx`, no service available")
+	is.EqualError(ShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i), "DI: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available")
 }
 
 func TestMustShutdown(t *testing.T) {
@@ -167,7 +167,7 @@ func TestMustShutdownWithContext(t *testing.T) {
 	})
 	_, _ = Invoke[*lazyTestShutdownerKOCtx](i)
 
-	is.PanicsWithError("DI: could not find service `*github.com/samber/do/v2.lazyTestShutdownerKOCtx`, no service available", func() {
+	is.PanicsWithError("DI: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available", func() {
 		MustShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i)
 	})
 }
@@ -270,23 +270,23 @@ func TestDoubleInjection(t *testing.T) {
 		})
 	})
 
-	is.PanicsWithError("DI: service `*github.com/samber/do/v2.test` has already been declared", func() {
+	is.PanicsWithError("DI: service `*github.com/kartaladev/doger.test` has already been declared", func() {
 		Provide(i, func(i Injector) (*test, error) {
 			return &test{}, nil
 		})
 	})
 
-	is.PanicsWithError("DI: service `*github.com/samber/do/v2.test` has already been declared", func() {
+	is.PanicsWithError("DI: service `*github.com/kartaladev/doger.test` has already been declared", func() {
 		ProvideValue(i, &test{})
 	})
 
-	is.PanicsWithError("DI: service `*github.com/samber/do/v2.test` has already been declared", func() {
-		ProvideNamed(i, "*github.com/samber/do/v2.test", func(i Injector) (*test, error) {
+	is.PanicsWithError("DI: service `*github.com/kartaladev/doger.test` has already been declared", func() {
+		ProvideNamed(i, "*github.com/kartaladev/doger.test", func(i Injector) (*test, error) {
 			return &test{}, nil
 		})
 	})
 
-	is.PanicsWithError("DI: service `*github.com/samber/do/v2.test` has already been declared", func() {
-		ProvideNamedValue(i, "*github.com/samber/do/v2.test", &test{})
+	is.PanicsWithError("DI: service `*github.com/kartaladev/doger.test` has already been declared", func() {
+		ProvideNamedValue(i, "*github.com/kartaladev/doger.test", &test{})
 	})
 }

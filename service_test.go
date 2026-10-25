@@ -1,11 +1,11 @@
-package do
+package doger
 
 import (
 	"reflect"
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2/stacktrace"
+	"github.com/kartaladev/doger/stacktrace"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,9 +16,9 @@ func TestInferServiceName(t *testing.T) {
 
 	// more tests in the package
 	is.Equal("int", inferServiceName[int]())
-	is.Equal("github.com/samber/do/v2.eagerTest", inferServiceName[eagerTest]())
-	is.Equal("*github.com/samber/do/v2.eagerTest", inferServiceName[*eagerTest]())
-	is.Equal("github.com/samber/do/v2.Healthchecker", inferServiceName[Healthchecker]())
+	is.Equal("github.com/kartaladev/doger.eagerTest", inferServiceName[eagerTest]())
+	is.Equal("*github.com/kartaladev/doger.eagerTest", inferServiceName[*eagerTest]())
+	is.Equal("github.com/kartaladev/doger.Healthchecker", inferServiceName[Healthchecker]())
 }
 
 func TestInferServiceProviderStacktrace(t *testing.T) {
@@ -78,9 +78,9 @@ func TestInferServiceInfo(t *testing.T) {
 		return &lazyTestHeathcheckerOK{foobar: "foobar"}, nil
 	})
 
-	info, ok := inferServiceInfo(i, "*github.com/samber/do/v2.lazyTestHeathcheckerOK")
+	info, ok := inferServiceInfo(i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK")
 	is.True(ok)
-	is.Equal("*github.com/samber/do/v2.lazyTestHeathcheckerOK", info.name)
+	is.Equal("*github.com/kartaladev/doger.lazyTestHeathcheckerOK", info.name)
 	is.Equal(ServiceTypeLazy, info.serviceType)
 	is.Equal(time.Duration(0), info.serviceBuildTime) // Not built yet
 	is.False(info.healthchecker)                      // Not built yet
@@ -89,9 +89,9 @@ func TestInferServiceInfo(t *testing.T) {
 	// Build the service
 	_, _ = Invoke[*lazyTestHeathcheckerOK](i)
 
-	info2, ok2 := inferServiceInfo(i, "*github.com/samber/do/v2.lazyTestHeathcheckerOK")
+	info2, ok2 := inferServiceInfo(i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK")
 	is.True(ok2)
-	is.Equal("*github.com/samber/do/v2.lazyTestHeathcheckerOK", info2.name)
+	is.Equal("*github.com/kartaladev/doger.lazyTestHeathcheckerOK", info2.name)
 	is.Equal(ServiceTypeLazy, info2.serviceType)
 	is.Positive(info2.serviceBuildTime) // Should have build time now
 	is.True(info2.healthchecker)        // Should be healthchecker now
@@ -101,9 +101,9 @@ func TestInferServiceInfo(t *testing.T) {
 	i2 := New()
 	ProvideValue(i2, &eagerTest{foobar: "foobar"})
 
-	info3, ok3 := inferServiceInfo(i2, "*github.com/samber/do/v2.eagerTest")
+	info3, ok3 := inferServiceInfo(i2, "*github.com/kartaladev/doger.eagerTest")
 	is.True(ok3)
-	is.Equal("*github.com/samber/do/v2.eagerTest", info3.name)
+	is.Equal("*github.com/kartaladev/doger.eagerTest", info3.name)
 	is.Equal(ServiceTypeEager, info3.serviceType)
 	is.Equal(time.Duration(0), info3.serviceBuildTime) // Eager services don't have build time
 	is.False(info3.healthchecker)

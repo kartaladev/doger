@@ -1,6 +1,7 @@
-package do
+package doger
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 	"testing"
@@ -15,10 +16,56 @@ func TestNameOf(t *testing.T) {
 	is := assert.New(t)
 
 	is.Equal("int", NameOf[int]())
-	is.Equal("github.com/samber/do/v2.eagerTest", NameOf[eagerTest]())
-	is.Equal("*github.com/samber/do/v2.eagerTest", NameOf[*eagerTest]())
+	is.Equal("github.com/kartaladev/doger.eagerTest", NameOf[eagerTest]())
+	is.Equal("*github.com/kartaladev/doger.eagerTest", NameOf[*eagerTest]())
 	is.Equal("*map[int]bool", NameOf[*map[int]bool]())
-	is.Equal("github.com/samber/do/v2.serviceWrapper[int]", NameOf[serviceWrapper[int]]())
+	is.Equal("github.com/kartaladev/doger.serviceWrapper[int]", NameOf[serviceWrapper[int]]())
+}
+
+func TestNameOf_LibraryTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		nameOf func() string
+		want   string
+	}{
+		{name: "root_scope_pointer", nameOf: NameOf[*RootScope], want: "*github.com/kartaladev/doger.RootScope"},
+		{name: "injector", nameOf: NameOf[Injector], want: "github.com/kartaladev/doger.Injector"},
+		{name: "healthchecker", nameOf: NameOf[Healthchecker], want: "github.com/kartaladev/doger.Healthchecker"},
+		{name: "root_scope_pointer_slice", nameOf: NameOf[[]*RootScope], want: "[]*github.com/kartaladev/doger.RootScope"},
+		{name: "injector_map", nameOf: NameOf[map[string]Injector], want: "map[string]github.com/kartaladev/doger.Injector"},
+		{name: "int", nameOf: NameOf[int], want: "int"},
+		{name: "bytes_buffer_pointer", nameOf: NameOf[*bytes.Buffer], want: "*bytes.Buffer"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, tt.nameOf())
+		})
+	}
+}
+
+func TestProvideNamed_NameUnaffectedByModulePath(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 100*time.Millisecond)
+	is := assert.New(t)
+
+	i := New()
+	ProvideNamedValue(i, "db", 42)
+
+	services := i.ListProvidedServices()
+	is.Len(services, 1)
+	if is.NotEmpty(services) {
+		is.Equal("db", services[0].Service)
+	}
+
+	value, err := InvokeNamed[int](i, "db")
+	is.NoError(err)
+	is.Equal(42, value)
 }
 
 func TestProvide(t *testing.T) {
@@ -47,27 +94,27 @@ func TestProvide(t *testing.T) {
 
 	is.Len(i.self.services, 2)
 
-	s1, ok1 := i.self.services["*github.com/samber/do/v2.test"]
+	s1, ok1 := i.self.services["*github.com/kartaladev/doger.test"]
 	is.True(ok1)
 	if ok1 {
 		s, ok := s1.(serviceWrapper[*test])
 		is.True(ok)
 		if ok {
-			is.Equal("*github.com/samber/do/v2.test", s.getName())
+			is.Equal("*github.com/kartaladev/doger.test", s.getName())
 		}
 	}
 
-	s2, ok2 := i.self.services["github.com/samber/do/v2.test"]
+	s2, ok2 := i.self.services["github.com/kartaladev/doger.test"]
 	is.True(ok2)
 	if ok2 {
 		s, ok := s2.(serviceWrapper[test])
 		is.True(ok)
 		if ok {
-			is.Equal("github.com/samber/do/v2.test", s.getName())
+			is.Equal("github.com/kartaladev/doger.test", s.getName())
 		}
 	}
 
-	_, ok3 := i.self.services["github.com/samber/do/v2.*plop"]
+	_, ok3 := i.self.services["github.com/kartaladev/doger.*plop"]
 	is.False(ok3)
 
 	// Test that all services share the same references when invoked multiple times
@@ -187,13 +234,13 @@ func TestProvideValue(t *testing.T) {
 		}
 	}
 
-	s2, ok2 := i.self.services["github.com/samber/do/v2.test"]
+	s2, ok2 := i.self.services["github.com/kartaladev/doger.test"]
 	is.True(ok2)
 	if ok2 {
 		s, ok := s2.(serviceWrapper[test])
 		is.True(ok)
 		if ok {
-			is.Equal("github.com/samber/do/v2.test", s.getName())
+			is.Equal("github.com/kartaladev/doger.test", s.getName())
 			instance, err := s.getInstance(i)
 			is.Equal(_test, instance)
 			is.NoError(err)
@@ -321,27 +368,27 @@ func TestProvideTransient(t *testing.T) {
 
 	is.Len(i.self.services, 2)
 
-	s1, ok1 := i.self.services["*github.com/samber/do/v2.test"]
+	s1, ok1 := i.self.services["*github.com/kartaladev/doger.test"]
 	is.True(ok1)
 	if ok1 {
 		s, ok := s1.(serviceWrapper[*test])
 		is.True(ok)
 		if ok {
-			is.Equal("*github.com/samber/do/v2.test", s.getName())
+			is.Equal("*github.com/kartaladev/doger.test", s.getName())
 		}
 	}
 
-	s2, ok2 := i.self.services["github.com/samber/do/v2.test"]
+	s2, ok2 := i.self.services["github.com/kartaladev/doger.test"]
 	is.True(ok2)
 	if ok2 {
 		s, ok := s2.(serviceWrapper[test])
 		is.True(ok)
 		if ok {
-			is.Equal("github.com/samber/do/v2.test", s.getName())
+			is.Equal("github.com/kartaladev/doger.test", s.getName())
 		}
 	}
 
-	_, ok3 := i.self.services["github.com/samber/do/v2.*plop"]
+	_, ok3 := i.self.services["github.com/kartaladev/doger.*plop"]
 	is.False(ok3)
 
 	// Test that transient services create new instances each time
@@ -479,7 +526,7 @@ func TestOverride(t *testing.T) {
 		})
 		is.Equal(1, MustInvoke[*test](i).foobar)
 
-		OverrideNamed(i, "*github.com/samber/do/v2.test", func(i Injector) (*test, error) {
+		OverrideNamed(i, "*github.com/kartaladev/doger.test", func(i Injector) (*test, error) {
 			return &test{2}, nil
 		})
 		is.Equal(2, MustInvoke[*test](i).foobar)
@@ -487,7 +534,7 @@ func TestOverride(t *testing.T) {
 		OverrideValue(i, &test{3})
 		is.Equal(3, MustInvoke[*test](i).foobar)
 
-		OverrideNamedValue(i, "*github.com/samber/do/v2.test", &test{4})
+		OverrideNamedValue(i, "*github.com/kartaladev/doger.test", &test{4})
 		is.Equal(4, MustInvoke[*test](i).foobar)
 	})
 }
@@ -508,7 +555,7 @@ func TestOverrideNamed(t *testing.T) {
 	})
 	is.Equal(42, MustInvoke[*test](i).foobar)
 
-	OverrideNamed(i, "*github.com/samber/do/v2.test", func(i Injector) (*test, error) {
+	OverrideNamed(i, "*github.com/kartaladev/doger.test", func(i Injector) (*test, error) {
 		return &test{2}, nil
 	})
 	is.Equal(2, MustInvoke[*test](i).foobar)
@@ -530,7 +577,7 @@ func TestOverrideValue(t *testing.T) {
 	})
 	is.Equal(42, MustInvoke[*test](i).foobar)
 
-	OverrideNamed(i, "*github.com/samber/do/v2.test", func(i Injector) (*test, error) {
+	OverrideNamed(i, "*github.com/kartaladev/doger.test", func(i Injector) (*test, error) {
 		return &test{2}, nil
 	})
 	is.Equal(2, MustInvoke[*test](i).foobar)
@@ -552,7 +599,7 @@ func TestOverrideNamedValue(t *testing.T) {
 	})
 	is.Equal(42, MustInvoke[*test](i).foobar)
 
-	OverrideNamedValue(i, "*github.com/samber/do/v2.test", &test{4})
+	OverrideNamedValue(i, "*github.com/kartaladev/doger.test", &test{4})
 	is.Equal(4, MustInvoke[*test](i).foobar)
 }
 
@@ -690,7 +737,7 @@ func TestInvoke(t *testing.T) {
 
 	is.Len(i.self.services, 1)
 
-	s0a, ok0a := i.self.services["github.com/samber/do/v2.test"]
+	s0a, ok0a := i.self.services["github.com/kartaladev/doger.test"]
 	is.True(ok0a)
 
 	s0b, ok0b := s0a.(*serviceLazy[test])
@@ -707,7 +754,7 @@ func TestInvoke(t *testing.T) {
 
 	_, err2 := Invoke[*test](i)
 	is.Error(err2)
-	is.EqualError(err2, "DI: could not find service `*github.com/samber/do/v2.test`, available services: `github.com/samber/do/v2.test`")
+	is.EqualError(err2, "DI: could not find service `*github.com/kartaladev/doger.test`, available services: `github.com/kartaladev/doger.test`")
 
 	ProvideNamedValue(i, NameOf[any](), 0)
 
@@ -872,10 +919,10 @@ func TestInvokeStruct(t *testing.T) {
 
 	// use tag but wrong type
 	type namedDependencyButTypeMismatch struct {
-		EagerTest *int `do:"*github.com/samber/do/v2.eagerTest"`
+		EagerTest *int `do:"*github.com/kartaladev/doger.eagerTest"`
 	}
 	test7, err := InvokeStruct[namedDependencyButTypeMismatch](i)
-	is.Equal("DI: `*github.com/samber/do/v2.eagerTest` is not assignable to field `github.com/samber/do/v2.namedDependencyButTypeMismatch.EagerTest`", err.Error())
+	is.Equal("DI: `*github.com/kartaladev/doger.eagerTest` is not assignable to field `github.com/kartaladev/doger.namedDependencyButTypeMismatch.EagerTest`", err.Error())
 	is.Empty(test7)
 
 	// use a custom tag
@@ -943,9 +990,9 @@ func TestAs(t *testing.T) {
 	Provide(i, func(i Injector) (*lazyTestHeathcheckerOK, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NoError(As[*lazyTestHeathcheckerOK, Healthchecker](i))
-	is.EqualError(As[*lazyTestShutdownerOK, Healthchecker](i), "DI: `*github.com/samber/do/v2.lazyTestShutdownerOK` does not implement `github.com/samber/do/v2.Healthchecker`")
-	is.EqualError(As[*lazyTestHeathcheckerKO, Healthchecker](i), "DI: service `*github.com/samber/do/v2.lazyTestHeathcheckerKO` has not been declared")
-	is.EqualError(As[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i), "DI: service `*github.com/samber/do/v2.lazyTestShutdownerOK` has not been declared")
+	is.EqualError(As[*lazyTestShutdownerOK, Healthchecker](i), "DI: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(As[*lazyTestHeathcheckerKO, Healthchecker](i), "DI: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
+	is.EqualError(As[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i), "DI: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
 
 	i = New()
 	type iTestHeathchecker interface {
@@ -1011,14 +1058,14 @@ func TestAsNamed(t *testing.T) {
 	i := New()
 	Provide(i, func(i Injector) (*lazyTestHeathcheckerOK, error) { return &lazyTestHeathcheckerOK{}, nil })
 
-	is.NoError(AsNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/samber/do/v2.lazyTestHeathcheckerOK", "github.com/samber/do/v2.Healthchecker"))
-	is.EqualError(AsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/samber/do/v2.lazyTestShutdownerOK", "github.com/samber/do/v2.Healthchecker"), "DI: `*github.com/samber/do/v2.lazyTestShutdownerOK` does not implement `github.com/samber/do/v2.Healthchecker`")
-	is.EqualError(AsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/samber/do/v2.lazyTestHeathcheckerKO", "github.com/samber/do/v2.Healthchecker"), "DI: service `*github.com/samber/do/v2.lazyTestHeathcheckerKO` has not been declared")
-	is.EqualError(AsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/samber/do/v2.lazyTestShutdownerOK", "*github.com/samber/do/v2.lazyTestShutdownerOK"), "DI: service `*github.com/samber/do/v2.lazyTestShutdownerOK` has not been declared")
+	is.NoError(AsNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker"))
+	is.EqualError(AsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker"), "DI: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(AsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker"), "DI: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
+	is.EqualError(AsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK"), "DI: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
 
 	i = New()
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
-	is.NoError(AsNamed[iTestHeathchecker, Healthchecker](i, "github.com/samber/do/v2.iTestHeathchecker", "github.com/samber/do/v2.Healthchecker"))
+	is.NoError(AsNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker"))
 }
 
 func TestMustAsNamed(t *testing.T) {
@@ -1030,27 +1077,27 @@ func TestMustAsNamed(t *testing.T) {
 
 	// Test successful named alias creation
 	is.NotPanics(func() {
-		MustAsNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/samber/do/v2.lazyTestHeathcheckerOK", "github.com/samber/do/v2.Healthchecker")
+		MustAsNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test that the named alias was created and can be invoked
-	hc, err := InvokeNamed[Healthchecker](i, "github.com/samber/do/v2.Healthchecker")
+	hc, err := InvokeNamed[Healthchecker](i, "github.com/kartaladev/doger.Healthchecker")
 	is.NoError(err)
 	is.NotNil(hc)
 
 	// Test panic on invalid interface implementation
 	is.Panics(func() {
-		MustAsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/samber/do/v2.lazyTestShutdownerOK", "github.com/samber/do/v2.Healthchecker")
+		MustAsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test panic on service not declared
 	is.Panics(func() {
-		MustAsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/samber/do/v2.lazyTestHeathcheckerKO", "github.com/samber/do/v2.Healthchecker")
+		MustAsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test panic on self-reference
 	is.Panics(func() {
-		MustAsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/samber/do/v2.lazyTestShutdownerOK", "*github.com/samber/do/v2.lazyTestShutdownerOK")
+		MustAsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK")
 	})
 
 	// Test with interface-to-interface named alias
@@ -1061,11 +1108,11 @@ func TestMustAsNamed(t *testing.T) {
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NotPanics(func() {
-		MustAsNamed[iTestHeathchecker, Healthchecker](i, "github.com/samber/do/v2.iTestHeathchecker", "github.com/samber/do/v2.Healthchecker")
+		MustAsNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test that the interface named alias works
-	hc2, err2 := InvokeNamed[Healthchecker](i, "github.com/samber/do/v2.Healthchecker")
+	hc2, err2 := InvokeNamed[Healthchecker](i, "github.com/kartaladev/doger.Healthchecker")
 	is.NoError(err2)
 	is.NotNil(hc2)
 
@@ -1107,7 +1154,7 @@ func TestInvokeAs(t *testing.T) {
 	// not found
 	svc2, err := InvokeAs[Shutdowner](i)
 	is.Empty(svc2)
-	is.EqualError(err, "DI: could not find service satisfying interface `github.com/samber/do/v2.Shutdowner`, available services: `*github.com/samber/do/v2.lazyTestHeathcheckerOK`")
+	is.EqualError(err, "DI: could not find service satisfying interface `github.com/kartaladev/doger.Shutdowner`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`")
 }
 
 func TestMustInvokeAs(t *testing.T) {

@@ -1,10 +1,10 @@
-package dohttp
+package dogerhttp
 
 import (
 	"strings"
 	"testing"
 
-	do "github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -51,12 +51,12 @@ func TestScopeTreeHTML_Basic(t *testing.T) {
 	is := assert.New(t)
 
 	basePath := "/debug/di"
-	root := do.New()
+	root := doger.New()
 	child := root.Scope("child")
 
-	do.ProvideNamedValue(root, "db-service", "db-value")
-	do.ProvideNamedTransient(root, "request-id", func(i do.Injector) (string, error) { return "rid", nil })
-	do.ProvideNamedValue(child, "cache-service", 123)
+	doger.ProvideNamedValue(root, "db-service", "db-value")
+	doger.ProvideNamedTransient(root, "request-id", func(i doger.Injector) (string, error) { return "rid", nil })
+	doger.ProvideNamedValue(child, "cache-service", 123)
 
 	html, err := ScopeTreeHTML(basePath, root, "")
 	is.NoError(err)
@@ -72,9 +72,9 @@ func TestServiceListHTML_Basic(t *testing.T) {
 	is := assert.New(t)
 
 	basePath := "/debug/di"
-	root := do.New()
+	root := doger.New()
 	_ = root // ensure non-nil
-	do.ProvideNamedValue(root, "cfg", "x")
+	doger.ProvideNamedValue(root, "cfg", "x")
 
 	html, err := ServiceListHTML(basePath, root)
 	is.NoError(err)
@@ -88,8 +88,8 @@ func TestServiceHTML_Basic(t *testing.T) {
 	is := assert.New(t)
 
 	basePath := "/debug/di"
-	root := do.New()
-	do.ProvideNamedValue(root, "cfg", "x")
+	root := doger.New()
+	doger.ProvideNamedValue(root, "cfg", "x")
 
 	html, err := ServiceHTML(basePath, root, root.ID(), "cfg")
 	is.NoError(err)

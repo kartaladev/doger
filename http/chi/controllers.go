@@ -1,15 +1,15 @@
-package dochi
+package dogerchi
 
 import (
 	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/samber/do/v2"
-	dohttp "github.com/samber/do/v2/http"
+	"github.com/kartaladev/doger"
+	dogerhttp "github.com/kartaladev/doger/http"
 )
 
-// Use integrates the do library's web-based debugging interface with a Chi router.
+// Use integrates the doger library's web-based debugging interface with a Chi router.
 // This function sets up HTTP routes for the debugging UI, allowing you to inspect
 // your DI container through a web browser using the Chi framework.
 //
@@ -29,7 +29,7 @@ import (
 //	api := r.Route("/api", nil)
 //
 //	// Add the debugging interface
-//	dochi.Use(r, "/debug/di", injector)
+//	dogerchi.Use(r, "/debug/di", injector)
 //
 //	// Your application routes
 //	api.Get("/users", userHandler)
@@ -47,9 +47,9 @@ import (
 // Do not expose these routes publicly in production. They reveal internal details
 // about your DI graph. Protect the basePath with authentication (e.g., Basic Auth)
 // and/or network restrictions. Apply your auth middleware before calling Use.
-func Use(router *chi.Mux, basePath string, injector do.Injector) {
+func Use(router *chi.Mux, basePath string, injector doger.Injector) {
 	router.Get(basePath, func(w http.ResponseWriter, r *http.Request) {
-		output, err := dohttp.IndexHTML(basePath)
+		output, err := dogerhttp.IndexHTML(basePath)
 		response(w, output, err)
 	})
 
@@ -61,7 +61,7 @@ func Use(router *chi.Mux, basePath string, injector do.Injector) {
 			return
 		}
 
-		output, err := dohttp.ScopeTreeHTML(basePath, injector, scopeID)
+		output, err := dogerhttp.ScopeTreeHTML(basePath, injector, scopeID)
 		response(w, output, err)
 	})
 
@@ -70,12 +70,12 @@ func Use(router *chi.Mux, basePath string, injector do.Injector) {
 		serviceName := r.URL.Query().Get("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := dohttp.ServiceListHTML(basePath, injector)
+			output, err := dogerhttp.ServiceListHTML(basePath, injector)
 			response(w, output, err)
 			return
 		}
 
-		output, err := dohttp.ServiceHTML(basePath, injector, scopeID, serviceName)
+		output, err := dogerhttp.ServiceHTML(basePath, injector, scopeID, serviceName)
 		response(w, output, err)
 	})
 }

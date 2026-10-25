@@ -1,4 +1,4 @@
-package do
+package doger
 
 import "context"
 
@@ -136,7 +136,7 @@ type ShutdownerWithContextAndError interface {
 //
 // Example:
 //
-//	err := do.HealthCheck[*Database](injector)
+//	err := doger.HealthCheck[*Database](injector)
 //	if err != nil {
 //	    log.Printf("Database health check failed: %v", err)
 //	}
@@ -162,7 +162,7 @@ func HealthCheck[T any](i Injector) error {
 //	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 //	defer cancel()
 //
-//	err := do.HealthCheckWithContext[*Database](ctx, injector)
+//	err := doger.HealthCheckWithContext[*Database](ctx, injector)
 //	if err != nil {
 //	    log.Printf("Database health check failed: %v", err)
 //	}
@@ -185,7 +185,7 @@ func HealthCheckWithContext[T any](ctx context.Context, i Injector) error {
 //
 // Example:
 //
-//	err := do.HealthCheckNamed(injector, "main-database")
+//	err := doger.HealthCheckNamed(injector, "main-database")
 //	if err != nil {
 //	    log.Printf("Main database health check failed: %v", err)
 //	}
@@ -210,7 +210,7 @@ func HealthCheckNamed(i Injector, name string) error {
 //	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 //	defer cancel()
 //
-//	err := do.HealthCheckNamedWithContext(ctx, injector, "main-database")
+//	err := doger.HealthCheckNamedWithContext(ctx, injector, "main-database")
 //	if err != nil {
 //	    log.Printf("Main database health check failed: %v", err)
 //	}
@@ -232,7 +232,7 @@ func HealthCheckNamedWithContext(ctx context.Context, i Injector, name string) e
 //
 // Example:
 //
-//	err := do.Shutdown[*Database](injector)
+//	err := doger.Shutdown[*Database](injector)
 //	if err != nil {
 //	    log.Printf("Database shutdown failed: %v", err)
 //	}
@@ -258,7 +258,7 @@ func Shutdown[T any](i Injector) error {
 //	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 //	defer cancel()
 //
-//	err := do.ShutdownWithContext[*Database](ctx, injector)
+//	err := doger.ShutdownWithContext[*Database](ctx, injector)
 //	if err != nil {
 //	    log.Printf("Database shutdown failed: %v", err)
 //	}
@@ -281,7 +281,7 @@ func ShutdownWithContext[T any](ctx context.Context, i Injector) error {
 //
 // Example:
 //
-//	err := do.ShutdownNamed(injector, "main-database")
+//	err := doger.ShutdownNamed(injector, "main-database")
 //	if err != nil {
 //	    log.Printf("Main database shutdown failed: %v", err)
 //	}
@@ -305,7 +305,7 @@ func ShutdownNamed(i Injector, name string) error {
 //	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 //	defer cancel()
 //
-//	err := do.ShutdownNamedWithContext(ctx, injector, "main-database")
+//	err := doger.ShutdownNamedWithContext(ctx, injector, "main-database")
 //	if err != nil {
 //	    log.Printf("Main database shutdown failed: %v", err)
 //	}
@@ -326,7 +326,7 @@ func ShutdownNamedWithContext(ctx context.Context, i Injector, name string) erro
 //
 // Example:
 //
-//	do.MustShutdown[*Database](injector)
+//	doger.MustShutdown[*Database](injector)
 func MustShutdown[T any](i Injector) {
 	must0(Shutdown[T](i))
 }
@@ -348,7 +348,7 @@ func MustShutdown[T any](i Injector) {
 //	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 //	defer cancel()
 //
-//	do.MustShutdownWithContext[*Database](ctx, injector)
+//	doger.MustShutdownWithContext[*Database](ctx, injector)
 func MustShutdownWithContext[T any](ctx context.Context, i Injector) {
 	must0(ShutdownWithContext[T](ctx, i))
 }
@@ -367,7 +367,7 @@ func MustShutdownWithContext[T any](ctx context.Context, i Injector) {
 //
 // Example:
 //
-//	do.MustShutdownNamed(injector, "main-database")
+//	doger.MustShutdownNamed(injector, "main-database")
 func MustShutdownNamed(i Injector, name string) {
 	must0(ShutdownNamed(i, name))
 }
@@ -390,7 +390,7 @@ func MustShutdownNamed(i Injector, name string) {
 //	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 //	defer cancel()
 //
-//	do.MustShutdownNamedWithContext(ctx, injector, "main-database")
+//	doger.MustShutdownNamedWithContext(ctx, injector, "main-database")
 func MustShutdownNamedWithContext(ctx context.Context, i Injector, name string) {
 	must0(ShutdownNamedWithContext(ctx, i, name))
 }

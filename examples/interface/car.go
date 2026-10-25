@@ -1,6 +1,6 @@
 package main
 
-import "github.com/samber/do/v2"
+import "github.com/kartaladev/doger"
 
 type Car interface {
 	Start()
@@ -15,15 +15,15 @@ func (c carImplem) Start() {
 	println("vroooom")
 }
 
-func NewCar(i do.Injector) (*carImplem, error) {
+func NewCar(i doger.Injector) (*carImplem, error) {
 	wheels := []*Wheel{
-		do.MustInvokeNamed[*Wheel](i, "wheel-1"),
-		do.MustInvokeNamed[*Wheel](i, "wheel-2"),
-		do.MustInvokeNamed[*Wheel](i, "wheel-3"),
-		do.MustInvokeNamed[*Wheel](i, "wheel-4"),
+		doger.MustInvokeNamed[*Wheel](i, "wheel-1"),
+		doger.MustInvokeNamed[*Wheel](i, "wheel-2"),
+		doger.MustInvokeNamed[*Wheel](i, "wheel-3"),
+		doger.MustInvokeNamed[*Wheel](i, "wheel-4"),
 	}
 
-	engine := do.MustInvoke[Engine](i)
+	engine := doger.MustInvoke[Engine](i)
 
 	car := carImplem{
 		Engine: engine,

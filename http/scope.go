@@ -1,7 +1,7 @@
-package dohttp
+package dogerhttp
 
 import (
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 // ScopeTreeHTML generates an HTML page that displays the scope tree structure of the DI container.
@@ -28,8 +28,8 @@ import (
 //	    log.Fatal(err)
 //	}
 //	fmt.Fprint(w, html)
-func ScopeTreeHTML(basePath string, injector do.Injector, scopeID string) (string, error) {
-	description := do.ExplainInjector(injector)
+func ScopeTreeHTML(basePath string, injector doger.Injector, scopeID string) (string, error) {
+	description := doger.ExplainInjector(injector)
 
 	return fromTemplate(
 		`<!DOCTYPE html>
@@ -95,14 +95,14 @@ func ScopeTreeHTML(basePath string, injector do.Injector, scopeID string) (strin
 </html>`,
 		map[string]any{
 			keyBasePath: basePath,
-			keyScopes: mAp(description.DAG, func(item do.ExplainInjectorScopeOutput) string {
+			keyScopes: mAp(description.DAG, func(item doger.ExplainInjectorScopeOutput) string {
 				return scopeTreeScopeToHTML(basePath, item)
 			}),
 		},
 	)
 }
 
-func scopeTreeScopeToHTML(basePath string, description do.ExplainInjectorScopeOutput) string {
+func scopeTreeScopeToHTML(basePath string, description doger.ExplainInjectorScopeOutput) string {
 	html, _ := fromTemplate(
 		`
 			Scope:
@@ -134,10 +134,10 @@ func scopeTreeScopeToHTML(basePath string, description do.ExplainInjectorScopeOu
 			keyBasePath:  basePath,
 			keyScopeID:   description.ScopeID,
 			keyScopeName: description.ScopeName,
-			keyServices: mAp(description.Services, func(item do.ExplainInjectorServiceOutput) string {
+			keyServices: mAp(description.Services, func(item doger.ExplainInjectorServiceOutput) string {
 				return scopeTreeServiceToHTML(basePath, description.ScopeID, item)
 			}),
-			keyScopes: mAp(description.Children, func(item do.ExplainInjectorScopeOutput) string {
+			keyScopes: mAp(description.Children, func(item doger.ExplainInjectorScopeOutput) string {
 				return scopeTreeScopeToHTML(basePath, item)
 			}),
 		},
@@ -145,7 +145,7 @@ func scopeTreeScopeToHTML(basePath string, description do.ExplainInjectorScopeOu
 	return html
 }
 
-func scopeTreeServiceToHTML(basePath string, scopeID string, description do.ExplainInjectorServiceOutput) string {
+func scopeTreeServiceToHTML(basePath string, scopeID string, description doger.ExplainInjectorServiceOutput) string {
 	featuresIcons := ""
 
 	if description.IsHealthchecker {

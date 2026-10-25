@@ -1,6 +1,6 @@
-package dohttp
+package dogerhttp
 
-// IndexHTML generates the main HTML page for the do library's web-based debugging interface.
+// IndexHTML generates the main HTML page for the doger library's web-based debugging interface.
 // This function creates a welcome page that provides navigation to various debugging features
 // and links to external resources like documentation and the GitHub repository.
 //

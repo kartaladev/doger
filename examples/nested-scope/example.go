@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 /**
@@ -11,7 +11,7 @@ import (
  */
 
 func main() {
-	injector := do.New()
+	injector := doger.New()
 
 	driverModule := injector.Scope("driver")
 	passengerModule := injector.Scope("passenger")
@@ -21,8 +21,8 @@ func main() {
 	bootPassengerModule(passengerModule)
 
 	// 1 driver + 1 passenger
-	driver := do.MustInvoke[*Driver](driverModule)
-	passenger := do.MustInvokeNamed[*Passenger](passengerModule, "passenger-1")
+	driver := doger.MustInvoke[*Driver](driverModule)
+	passenger := doger.MustInvokeNamed[*Passenger](passengerModule, "passenger-1")
 
 	driver.TakeASeat()
 	passenger.TakeASeat()

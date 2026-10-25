@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 func main() {
-	injector := do.New()
+	injector := doger.New()
 
 	fmt.Println("=== Service Aliases Example ===")
 	fmt.Println("Service aliases allow the same concrete implementation to be")
@@ -16,7 +16,7 @@ func main() {
 
 	// Step 1: Register the concrete database implementation
 	fmt.Println("Step 1: Registering concrete Database implementation")
-	do.Provide(injector, func(i do.Injector) (*Database, error) {
+	doger.Provide(injector, func(i doger.Injector) (*Database, error) {
 		return &Database{
 			URL:       "postgres://localhost:5432/mydb",
 			Connected: false,
@@ -29,46 +29,46 @@ func main() {
 	fmt.Println("  - ReadOnlyDatabase: Read-only operations only")
 	fmt.Println("  - WriteDatabase: Write operations only")
 
-	_ = do.As[*Database, DatabaseInterface](injector)
-	_ = do.As[*Database, ReadOnlyDatabase](injector)
-	_ = do.As[*Database, WriteDatabase](injector)
+	_ = doger.As[*Database, DatabaseInterface](injector)
+	_ = doger.As[*Database, ReadOnlyDatabase](injector)
+	_ = doger.As[*Database, WriteDatabase](injector)
 
 	// Step 3: Register repositories that depend on DatabaseInterface
 	fmt.Println("Step 3: Registering repositories (use DatabaseInterface)")
-	do.Provide(injector, func(i do.Injector) (*UserRepository, error) {
+	doger.Provide(injector, func(i doger.Injector) (*UserRepository, error) {
 		return &UserRepository{
-			DB: do.MustInvoke[DatabaseInterface](i),
+			DB: doger.MustInvoke[DatabaseInterface](i),
 		}, nil
 	})
 
-	do.Provide(injector, func(i do.Injector) (*OrderRepository, error) {
+	doger.Provide(injector, func(i doger.Injector) (*OrderRepository, error) {
 		return &OrderRepository{
-			DB: do.MustInvoke[DatabaseInterface](i),
+			DB: doger.MustInvoke[DatabaseInterface](i),
 		}, nil
 	})
 
 	// Step 4: Register services that depend on specific interfaces
 	fmt.Println("Step 4: Registering services with specific interface requirements")
-	do.Provide(injector, func(i do.Injector) (*AuditService, error) {
+	doger.Provide(injector, func(i doger.Injector) (*AuditService, error) {
 		return &AuditService{
-			DB: do.MustInvoke[ReadOnlyDatabase](i), // Only needs read access
+			DB: doger.MustInvoke[ReadOnlyDatabase](i), // Only needs read access
 		}, nil
 	})
 
-	do.Provide(injector, func(i do.Injector) (*ConnectionManager, error) {
+	doger.Provide(injector, func(i doger.Injector) (*ConnectionManager, error) {
 		return &ConnectionManager{
-			DB: do.MustInvoke[WriteDatabase](i), // Only needs write access
+			DB: doger.MustInvoke[WriteDatabase](i), // Only needs write access
 		}, nil
 	})
 
 	// Step 5: Register the main application
 	fmt.Println("Step 5: Registering main application")
-	do.Provide(injector, func(i do.Injector) (*Application, error) {
+	doger.Provide(injector, func(i doger.Injector) (*Application, error) {
 		return &Application{
-			UserRepo:      do.MustInvoke[*UserRepository](i),
-			OrderRepo:     do.MustInvoke[*OrderRepository](i),
-			AuditService:  do.MustInvoke[*AuditService](i),
-			ConnectionMgr: do.MustInvoke[*ConnectionManager](i),
+			UserRepo:      doger.MustInvoke[*UserRepository](i),
+			OrderRepo:     doger.MustInvoke[*OrderRepository](i),
+			AuditService:  doger.MustInvoke[*AuditService](i),
+			ConnectionMgr: doger.MustInvoke[*ConnectionManager](i),
 		}, nil
 	})
 
@@ -77,15 +77,15 @@ func main() {
 
 	// Run the application
 	fmt.Println("\n=== Running Application ===")
-	app := do.MustInvoke[*Application](injector)
+	app := doger.MustInvoke[*Application](injector)
 	app.Run()
 
 	fmt.Println("\n=== Demonstrating Alias Functionality ===")
 	fmt.Println("All aliases point to the same underlying database instance:")
 
 	// Show that all aliases point to the same underlying database instance
-	db1 := do.MustInvoke[DatabaseInterface](injector)
-	db2 := do.MustInvoke[ReadOnlyDatabase](injector)
+	db1 := doger.MustInvoke[DatabaseInterface](injector)
+	db2 := doger.MustInvoke[ReadOnlyDatabase](injector)
 
 	// All should return the same query result since they're the same instance
 	fmt.Println("DatabaseInterface query:", db1.Query("SELECT 1"))

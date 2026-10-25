@@ -1,14 +1,14 @@
-package doecho
+package dogerecho
 
 import (
 	"fmt"
 
+	"github.com/kartaladev/doger"
+	dogerhttp "github.com/kartaladev/doger/http"
 	"github.com/labstack/echo/v4"
-	"github.com/samber/do/v2"
-	dohttp "github.com/samber/do/v2/http"
 )
 
-// Use integrates the do library's web-based debugging interface with an Echo router.
+// Use integrates the doger library's web-based debugging interface with an Echo router.
 // This function sets up HTTP routes for the debugging UI, allowing you to inspect
 // your DI container through a web browser using the Echo framework.
 //
@@ -29,7 +29,7 @@ import (
 //	debug := e.Group("/debug/di")
 //
 //	// Add the debugging interface
-//	doecho.Use(debug, "/debug/di", injector)
+//	dogerecho.Use(debug, "/debug/di", injector)
 //
 //	// Your application routes
 //	api.GET("/users", userHandler)
@@ -44,9 +44,9 @@ import (
 // Do not expose this group publicly in production. Protect it with authentication
 // (e.g., Basic Auth) and/or network restrictions, since it reveals internals
 // about your DI graph. Attach auth middleware to the Echo group before Use.
-func Use(router *echo.Group, basePath string, injector do.Injector) {
+func Use(router *echo.Group, basePath string, injector doger.Injector) {
 	router.GET("", func(c echo.Context) error {
-		output, err := dohttp.IndexHTML(basePath)
+		output, err := dogerhttp.IndexHTML(basePath)
 		if err != nil {
 			return err
 		}
@@ -63,7 +63,7 @@ func Use(router *echo.Group, basePath string, injector do.Injector) {
 			return nil
 		}
 
-		output, err := dohttp.ScopeTreeHTML(basePath, injector, scopeID)
+		output, err := dogerhttp.ScopeTreeHTML(basePath, injector, scopeID)
 		if err != nil {
 			return err
 		}
@@ -77,7 +77,7 @@ func Use(router *echo.Group, basePath string, injector do.Injector) {
 		serviceName := c.QueryParam("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := dohttp.ServiceListHTML(basePath, injector)
+			output, err := dogerhttp.ServiceListHTML(basePath, injector)
 			if err != nil {
 				return err
 			}
@@ -86,7 +86,7 @@ func Use(router *echo.Group, basePath string, injector do.Injector) {
 			return nil
 		}
 
-		output, err := dohttp.ServiceHTML(basePath, injector, scopeID, serviceName)
+		output, err := dogerhttp.ServiceHTML(basePath, injector, scopeID, serviceName)
 		if err != nil {
 			return err
 		}

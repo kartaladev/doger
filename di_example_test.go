@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ func ExampleNameOf() {
 	name := NameOf[*exampleService]()
 
 	fmt.Println(name)
-	// Output: *github.com/samber/do/v2.exampleService
+	// Output: *github.com/kartaladev/doger.exampleService
 }
 
 func ExampleProvide() {

@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"fmt"
@@ -18,14 +18,14 @@ const DefaultStructTagKey = "do"
 //
 // Example:
 //
-//	func NewMyService(i do.Injector) (*MyService, error) {
-//	    db := do.MustInvoke[*Database](i)
-//	    config := do.MustInvoke[*Config](i)
+//	func NewMyService(i doger.Injector) (*MyService, error) {
+//	    db := doger.MustInvoke[*Database](i)
+//	    config := doger.MustInvoke[*Config](i)
 //	    return &MyService{DB: db, Config: config}, nil
 //	}
 //
 //	// Register the provider
-//	do.Provide(injector, NewMyService)
+//	doger.Provide(injector, NewMyService)
 type Provider[T any] func(Injector) (T, error)
 
 // NameOf returns the name of the service in the DI container.
@@ -39,7 +39,7 @@ type Provider[T any] func(Injector) (T, error)
 //
 // Example:
 //
-//	serviceName := do.NameOf[*Database]()
+//	serviceName := doger.NameOf[*Database]()
 func NameOf[T any]() string {
 	return inferServiceName[T]()
 }
@@ -51,7 +51,7 @@ func NameOf[T any]() string {
 //
 // Example:
 //
-//	do.Provide(injector, func(i do.Injector) (*MyService, error) {
+//	doger.Provide(injector, func(i doger.Injector) (*MyService, error) {
 //	    return &MyService{...}, nil
 //	})
 func Provide[T any](i Injector, provider Provider[T]) {
@@ -69,10 +69,10 @@ func Provide[T any](i Injector, provider Provider[T]) {
 //
 // Example:
 //
-//	do.ProvideNamed(injector, "main-db", func(i do.Injector) (*Database, error) {
+//	doger.ProvideNamed(injector, "main-db", func(i doger.Injector) (*Database, error) {
 //	    return &Database{URL: "postgres://main.acme.dev:5432/db"}, nil
 //	})
-//	do.ProvideNamed(injector, "backup-db", func(i do.Injector) (*Database, error) {
+//	doger.ProvideNamed(injector, "backup-db", func(i doger.Injector) (*Database, error) {
 //	    return &Database{URL: "postgres://backup.acme.dev:5432/db"}, nil
 //	})
 func ProvideNamed[T any](i Injector, name string, provider Provider[T]) {
@@ -102,8 +102,8 @@ func ProvideValue[T any](i Injector, value T) {
 //
 // Example:
 //
-//	do.ProvideNamedValue(injector, "app-config", &Config{Port: 8080})
-//	do.ProvideNamedValue(injector, "db-config", &Config{Port: 5432})
+//	doger.ProvideNamedValue(injector, "app-config", &Config{Port: 8080})
+//	doger.ProvideNamedValue(injector, "db-config", &Config{Port: 5432})
 func ProvideNamedValue[T any](i Injector, name string, value T) {
 	provide(i, name, value, func(s string, a T) serviceWrapper[T] {
 		return newServiceEager(s, a)
@@ -118,14 +118,14 @@ func ProvideNamedValue[T any](i Injector, name string, value T) {
 // Example:
 //
 //	// Each invocation creates a new instance
-//	do.ProvideTransient(injector, func(i do.Injector) (string, error) {
+//	doger.ProvideTransient(injector, func(i doger.Injector) (string, error) {
 //	    return uuid.New().String(), nil
 //	})
 //
 //	// First invocation
-//	id1, _ := do.Invoke[string](injector)
+//	id1, _ := doger.Invoke[string](injector)
 //	// Second invocation - different instance
-//	id2, _ := do.Invoke[string](injector)
+//	id2, _ := doger.Invoke[string](injector)
 //
 //	fmt.Println(id1 != id2) // Output: true
 func ProvideTransient[T any](i Injector, provider Provider[T]) {
@@ -142,14 +142,14 @@ func ProvideTransient[T any](i Injector, provider Provider[T]) {
 // Example:
 //
 //	// Each invocation creates a new instance
-//	do.ProvideNamedTransient(injector, "request-id", func(i do.Injector) (string, error) {
+//	doger.ProvideNamedTransient(injector, "request-id", func(i doger.Injector) (string, error) {
 //	    return uuid.New().String(), nil
 //	})
 //
 //	// First invocation
-//	id1, _ := do.InvokeNamed[string](injector, "request-id")
+//	id1, _ := doger.InvokeNamed[string](injector, "request-id")
 //	// Second invocation - different instance
-//	id2, _ := do.InvokeNamed[string](injector, "request-id")
+//	id2, _ := doger.InvokeNamed[string](injector, "request-id")
 //
 //	fmt.Println(id1 != id2) // Output: true
 func ProvideNamedTransient[T any](i Injector, name string, provider Provider[T]) {
@@ -274,7 +274,7 @@ func override[T any, A any](i Injector, name string, valueOrProvider A, serviceC
 //
 // Example:
 //
-//	service, err := do.Invoke[*MyService](injector)
+//	service, err := doger.Invoke[*MyService](injector)
 func Invoke[T any](i Injector) (T, error) {
 	name := inferServiceName[T]()
 	return invokeByName[T](i, name)
@@ -289,16 +289,16 @@ func Invoke[T any](i Injector) (T, error) {
 // Example:
 //
 //	// Register multiple databases
-//	do.ProvideNamed(injector, "main-db", func(i do.Injector) (*Database, error) {
+//	doger.ProvideNamed(injector, "main-db", func(i doger.Injector) (*Database, error) {
 //	    return &Database{URL: "postgres://main.acme.dev:5432/db"}, nil
 //	})
-//	do.ProvideNamed(injector, "backup-db", func(i do.Injector) (*Database, error) {
+//	doger.ProvideNamed(injector, "backup-db", func(i doger.Injector) (*Database, error) {
 //	    return &Database{URL: "postgres://backup.acme.dev:5432/db"}, nil
 //	})
 //
 //	// Retrieve specific database
-//	mainDB, err := do.InvokeNamed[*Database](injector, "main-db")
-//	backupDB, err := do.InvokeNamed[*Database](injector, "backup-db")
+//	mainDB, err := doger.InvokeNamed[*Database](injector, "main-db")
+//	backupDB, err := doger.InvokeNamed[*Database](injector, "backup-db")
 func InvokeNamed[T any](i Injector, name string) (T, error) {
 	if typeIsAssignable[T, any]() {
 		v, err := invokeAnyByName(i, name)
@@ -319,7 +319,7 @@ func InvokeNamed[T any](i Injector, name string) (T, error) {
 //
 // Example:
 //
-//	service := do.MustInvoke[*MyService](injector)
+//	service := doger.MustInvoke[*MyService](injector)
 func MustInvoke[T any](i Injector) T {
 	return must1(Invoke[T](i))
 }
@@ -334,7 +334,7 @@ func MustInvoke[T any](i Injector) T {
 //
 // Example:
 //
-//	service := do.MustInvokeNamed[*MyService](injector, "my-service")
+//	service := doger.MustInvokeNamed[*MyService](injector, "my-service")
 func MustInvokeNamed[T any](i Injector, name string) T {
 	return must1(InvokeNamed[T](i, name))
 }
@@ -355,18 +355,18 @@ func MustInvokeNamed[T any](i Injector, name string) T {
 //	}
 //
 //	// Register services
-//	do.Provide(injector, func(i do.Injector) (*Database, error) {
+//	doger.Provide(injector, func(i doger.Injector) (*Database, error) {
 //	    return &Database{}, nil
 //	})
-//	do.ProvideNamed(injector, "app-logger", func(i do.Injector) (*Logger, error) {
+//	doger.ProvideNamed(injector, "app-logger", func(i doger.Injector) (*Logger, error) {
 //	    return &Logger{}, nil
 //	})
-//	do.Provide(injector, func(i do.Injector) (*Config, error) {
+//	doger.Provide(injector, func(i doger.Injector) (*Config, error) {
 //	    return &Config{}, nil
 //	})
 //
 //	// Invoke struct with injected services
-//	app, err := do.InvokeStruct[App](injector)
+//	app, err := doger.InvokeStruct[App](injector)
 func InvokeStruct[T any](i Injector) (T, error) {
 	structName := inferServiceName[T]()
 	output := deepEmpty[T]() // if the struct is hidden behind a pointer, we need to init the struct value deep enough
@@ -406,18 +406,18 @@ func InvokeStruct[T any](i Injector) (T, error) {
 //	}
 //
 //	// Register services
-//	do.Provide(injector, func(i do.Injector) (*Database, error) {
+//	doger.Provide(injector, func(i doger.Injector) (*Database, error) {
 //	    return &Database{}, nil
 //	})
-//	do.ProvideNamed(injector, "app-logger", func(i do.Injector) (*Logger, error) {
+//	doger.ProvideNamed(injector, "app-logger", func(i doger.Injector) (*Logger, error) {
 //	    return &Logger{}, nil
 //	})
-//	do.Provide(injector, func(i do.Injector) (*Config, error) {
+//	doger.Provide(injector, func(i doger.Injector) (*Config, error) {
 //	    return &Config{}, nil
 //	})
 //
 //	// Invoke struct with injected services (panics on error)
-//	app := do.MustInvokeStruct[App](injector)
+//	app := doger.MustInvokeStruct[App](injector)
 func MustInvokeStruct[T any](i Injector) T {
 	return must1(InvokeStruct[T](i))
 }
@@ -440,16 +440,16 @@ func MustInvokeStruct[T any](i Injector) T {
 // Example:
 //
 //	// Register a concrete service
-//	do.Provide(injector, func(i do.Injector) (*PostgresqlDatabase, error) {
+//	doger.Provide(injector, func(i doger.Injector) (*PostgresqlDatabase, error) {
 //	    return &PostgresqlDatabase{}, nil
 //	})
 //
 //	// Create an alias so it can be retrieved as an interface
-//	do.As[*PostgresqlDatabase, Database](injector)
+//	doger.As[*PostgresqlDatabase, Database](injector)
 //
 //	// Now both work:
-//	db := do.MustInvoke[*PostgresqlDatabase](injector)
-//	db := do.MustInvoke[Database](injector)
+//	db := doger.MustInvoke[*PostgresqlDatabase](injector)
+//	db := doger.MustInvoke[Database](injector)
 func As[Initial any, Alias any](i Injector) error {
 	initialName := NameOf[Initial]()
 	aliasName := NameOf[Alias]()
@@ -469,7 +469,7 @@ func As[Initial any, Alias any](i Injector) error {
 //
 // Example:
 //
-//	do.MustAs[*PostgresqlDatabase, Database](injector)
+//	doger.MustAs[*PostgresqlDatabase, Database](injector)
 func MustAs[Initial any, Alias any](i Injector) {
 	must0(As[Initial, Alias](i))
 }
@@ -489,15 +489,15 @@ func MustAs[Initial any, Alias any](i Injector) {
 // Example:
 //
 //	// Register a service with a custom name
-//	do.ProvideNamed(injector, "my-db", func(i do.Injector) (*PostgresqlDatabase, error) {
+//	doger.ProvideNamed(injector, "my-db", func(i doger.Injector) (*PostgresqlDatabase, error) {
 //	    return &PostgresqlDatabase{}, nil
 //	})
 //
 //	// Create an alias with custom names
-//	do.AsNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
+//	doger.AsNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
 //
 //	// Retrieve using the alias name
-//	db := do.MustInvokeNamed[Database](injector, "db-interface")
+//	db := doger.MustInvokeNamed[Database](injector, "db-interface")
 func AsNamed[Initial any, Alias any](i Injector, initial string, alias string) error {
 	// first, we check if Initial can be cast to Alias
 	if !genericCanCastToGeneric[Initial, Alias]() {
@@ -530,7 +530,7 @@ func AsNamed[Initial any, Alias any](i Injector, initial string, alias string) e
 //
 // Example:
 //
-//	do.MustAsNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
+//	doger.MustAsNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
 func MustAsNamed[Initial any, Alias any](i Injector, initial string, alias string) {
 	must0(AsNamed[Initial, Alias](i, initial, alias))
 }
@@ -553,12 +553,12 @@ func MustAsNamed[Initial any, Alias any](i Injector, initial string, alias strin
 // Example:
 //
 //	// Register a concrete service
-//	do.Provide(injector, func(i do.Injector) (*PostgresqlDatabase, error) {
+//	doger.Provide(injector, func(i doger.Injector) (*PostgresqlDatabase, error) {
 //	    return &PostgresqlDatabase{}, nil
 //	})
 //
 //	// Retrieve by interface
-//	db, err := do.InvokeAs[Database](injector)
+//	db, err := doger.InvokeAs[Database](injector)
 func InvokeAs[T any](i Injector) (T, error) {
 	return invokeByGenericType[T](i)
 }
@@ -578,12 +578,12 @@ func InvokeAs[T any](i Injector) (T, error) {
 // Example:
 //
 //	// Register a concrete service
-//	do.Provide(injector, func(i do.Injector) (*PostgresqlDatabase, error) {
+//	doger.Provide(injector, func(i doger.Injector) (*PostgresqlDatabase, error) {
 //	    return &PostgresqlDatabase{}, nil
 //	})
 //
 //	// Retrieve by interface
-//	db := do.MustInvokeAs[Database](injector)
+//	db := doger.MustInvokeAs[Database](injector)
 func MustInvokeAs[T any](i Injector) T {
 	return must1(InvokeAs[T](i))
 }
@@ -607,11 +607,11 @@ func MustInvokeAs[T any](i Injector) T {
 //
 //		 // pkg/database/package.go
 //			// Create a global `Package` variable
-//			var Package = do.Package(
-//			    do.Lazy[*Database](func(i do.Injector) (*Database, error) {
+//			var Package = doger.Package(
+//			    doger.Lazy[*Database](func(i doger.Injector) (*Database, error) {
 //			        return &Database{}, nil
 //			    }),
-//			    do.Lazy[*ConnectionPool](func(i do.Injector) (*ConnectionPool, error) {
+//			    doger.Lazy[*ConnectionPool](func(i doger.Injector) (*ConnectionPool, error) {
 //			        return &ConnectionPool{}, nil
 //			    }),
 //	         ...
@@ -619,7 +619,7 @@ func MustInvokeAs[T any](i Injector) T {
 //
 //		 // main.go
 //			// Apply the package to an injector
-//			injector := do.New(database.Package)
+//			injector := doger.New(database.Package)
 func Package(services ...func(i Injector)) func(Injector) {
 	return func(injector Injector) {
 		for i := range services {
@@ -642,8 +642,8 @@ func Package(services ...func(i Injector)) func(Injector) {
 // Example:
 //
 //	// Global to a package
-//	var Package = do.Package(
-//		do.Lazy[*Database](func(i do.Injector) (*Database, error) {
+//	var Package = doger.Package(
+//		doger.Lazy[*Database](func(i doger.Injector) (*Database, error) {
 //	    	return &Database{}, nil
 //		}),
 //	)
@@ -668,8 +668,8 @@ func Lazy[T any](p Provider[T]) func(Injector) {
 // Example:
 //
 //	// Global to a package
-//	var Package = do.Package(
-//		do.LazyNamed[*Database]("main-db", func(i do.Injector) (*Database, error) {
+//	var Package = doger.Package(
+//		doger.LazyNamed[*Database]("main-db", func(i doger.Injector) (*Database, error) {
 //	    	return &Database{}, nil
 //		}),
 //	)
@@ -693,8 +693,8 @@ func LazyNamed[T any](serviceName string, p Provider[T]) func(Injector) {
 // Example:
 //
 //	// Global to a package
-//	var Package = do.Package(
-//		do.Eager[*Config](&Config{Port: 8080})
+//	var Package = doger.Package(
+//		doger.Eager[*Config](&Config{Port: 8080})
 //	)
 func Eager[T any](value T) func(Injector) {
 	return func(injector Injector) {
@@ -717,8 +717,8 @@ func Eager[T any](value T) func(Injector) {
 // Example:
 //
 //	// Global to a package
-//	var Package = do.Package(
-//		do.EagerNamed[*Config]("app-config", &Config{Port: 8080})
+//	var Package = doger.Package(
+//		doger.EagerNamed[*Config]("app-config", &Config{Port: 8080})
 //	)
 func EagerNamed[T any](serviceName string, value T) func(Injector) {
 	return func(injector Injector) {
@@ -740,8 +740,8 @@ func EagerNamed[T any](serviceName string, value T) func(Injector) {
 // Example:
 //
 //	// Global to a package
-//	var Package = do.Package(
-//		do.Transient[*Logger](func(i do.Injector) (*Logger, error) {
+//	var Package = doger.Package(
+//		doger.Transient[*Logger](func(i doger.Injector) (*Logger, error) {
 //	    	return &Logger{}, nil
 //		})
 //	)
@@ -766,8 +766,8 @@ func Transient[T any](p Provider[T]) func(Injector) {
 // Example:
 //
 //	// Global to a package
-//	var Package = do.Package(
-//		do.TransientNamed[*Logger]("request-logger", func(i do.Injector) (*Logger, error) {
+//	var Package = doger.Package(
+//		doger.TransientNamed[*Logger]("request-logger", func(i doger.Injector) (*Logger, error) {
 //	    	return &Logger{}, nil
 //		})
 //	)
@@ -793,8 +793,8 @@ func TransientNamed[T any](serviceName string, p Provider[T]) func(Injector) {
 // Example:
 //
 //	// Global to a package
-//	var Package = do.Package(
-//		do.Bind[*Database, DatabaseInterface]()
+//	var Package = doger.Package(
+//		doger.Bind[*Database, DatabaseInterface]()
 //	)
 func Bind[Initial any, Alias any]() func(Injector) {
 	return func(injector Injector) {
@@ -820,8 +820,8 @@ func Bind[Initial any, Alias any]() func(Injector) {
 // Example:
 //
 //	// Global to a package
-//	var Package = do.Package(
-//		do.BindNamed[*Database, DatabaseInterface]("main-db", "db-interface")
+//	var Package = doger.Package(
+//		doger.BindNamed[*Database, DatabaseInterface]("main-db", "db-interface")
 //	)
 func BindNamed[Initial any, Alias any](initial string, alias string) func(Injector) {
 	return func(injector Injector) {

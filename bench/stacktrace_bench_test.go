@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/samber/do/v2/stacktrace"
+	"github.com/kartaladev/doger/stacktrace"
 )
 
 func BenchmarkNewFrameFromCaller(b *testing.B) {

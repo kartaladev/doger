@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,15 +16,15 @@ func TestMixedServiceTypesComplexDependencies(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services of different types with complex dependencies
 	// Eager service (immediate initialization)
-	do.ProvideNamedValue(root, "eager-base", "eager-base-value")
+	doger.ProvideNamedValue(root, "eager-base", "eager-base-value")
 
 	// Lazy service that depends on eager service
-	do.ProvideNamed(root, "lazy-dependent", func(i do.Injector) (string, error) {
-		eagerVal, err := do.InvokeNamed[string](i, "eager-base")
+	doger.ProvideNamed(root, "lazy-dependent", func(i doger.Injector) (string, error) {
+		eagerVal, err := doger.InvokeNamed[string](i, "eager-base")
 		if err != nil {
 			return "", err
 		}
@@ -32,8 +32,8 @@ func TestMixedServiceTypesComplexDependencies(t *testing.T) {
 	})
 
 	// Transient service that depends on lazy service
-	do.ProvideNamedTransient(root, "transient-dependent", func(i do.Injector) (string, error) {
-		lazyVal, err := do.InvokeNamed[string](i, "lazy-dependent")
+	doger.ProvideNamedTransient(root, "transient-dependent", func(i doger.Injector) (string, error) {
+		lazyVal, err := doger.InvokeNamed[string](i, "lazy-dependent")
 		if err != nil {
 			return "", err
 		}
@@ -41,15 +41,15 @@ func TestMixedServiceTypesComplexDependencies(t *testing.T) {
 	})
 
 	// Alias service that points to transient service
-	err := do.AsNamed[string, string](root, "transient-dependent", "alias-service")
+	err := doger.AsNamed[string, string](root, "transient-dependent", "alias-service")
 	is.NoError(err)
 
 	// Invoke the alias service multiple times
-	result1, err := do.InvokeNamed[string](root, "alias-service")
+	result1, err := doger.InvokeNamed[string](root, "alias-service")
 	is.NoError(err)
 	is.Contains(result1, "transient-lazy-eager-base-value")
 
-	result2, err := do.InvokeNamed[string](root, "alias-service")
+	result2, err := doger.InvokeNamed[string](root, "alias-service")
 	is.NoError(err)
 	is.Contains(result2, "transient-lazy-eager-base-value")
 
@@ -62,11 +62,11 @@ func TestMixedServiceTypesCircularDependencies(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a lazy service that depends on an eager service
-	do.ProvideNamed(root, "lazy-service", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "eager-service")
+	doger.ProvideNamed(root, "lazy-service", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "eager-service")
 		if err != nil {
 			return "", err
 		}
@@ -74,8 +74,8 @@ func TestMixedServiceTypesCircularDependencies(t *testing.T) {
 	})
 
 	// Create an eager service that depends on the lazy service (circular dependency)
-	do.ProvideNamed(root, "eager-service", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "lazy-service")
+	doger.ProvideNamed(root, "eager-service", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "lazy-service")
 		if err != nil {
 			return "", err
 		}
@@ -83,7 +83,7 @@ func TestMixedServiceTypesCircularDependencies(t *testing.T) {
 	})
 
 	// Attempting to invoke should detect circular dependency
-	_, err := do.InvokeNamed[string](root, "lazy-service")
+	_, err := doger.InvokeNamed[string](root, "lazy-service")
 	is.Error(err)
 	is.Contains(err.Error(), "circular dependency")
 }
@@ -93,17 +93,17 @@ func TestMixedServiceTypesConcurrentAccess(t *testing.T) {
 	testWithTimeout(t, 450*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services of different types
-	do.ProvideNamedValue(root, "eager-shared", "eager-shared-value")
+	doger.ProvideNamedValue(root, "eager-shared", "eager-shared-value")
 
-	do.ProvideNamed(root, "lazy-shared", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "lazy-shared", func(i doger.Injector) (string, error) {
 		time.Sleep(10 * time.Millisecond) // Simulate some work
 		return "lazy-shared-value", nil
 	})
 
-	do.ProvideNamedTransient(root, "transient-shared", func(i do.Injector) (string, error) {
+	doger.ProvideNamedTransient(root, "transient-shared", func(i doger.Injector) (string, error) {
 		return "transient-shared-value", nil
 	})
 
@@ -120,21 +120,21 @@ func TestMixedServiceTypesConcurrentAccess(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 
-			eagerVal, err := do.InvokeNamed[string](root, "eager-shared")
+			eagerVal, err := doger.InvokeNamed[string](root, "eager-shared")
 			if err != nil {
 				errors[index] = err
 				return
 			}
 			eagerResults[index] = eagerVal
 
-			lazyVal, err := do.InvokeNamed[string](root, "lazy-shared")
+			lazyVal, err := doger.InvokeNamed[string](root, "lazy-shared")
 			if err != nil {
 				errors[index] = err
 				return
 			}
 			lazyResults[index] = lazyVal
 
-			transientVal, err := do.InvokeNamed[string](root, "transient-shared")
+			transientVal, err := doger.InvokeNamed[string](root, "transient-shared")
 			if err != nil {
 				errors[index] = err
 				return
@@ -159,28 +159,28 @@ func TestMixedServiceTypesLifecycle(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services of different types with lifecycle tracking
 	shutdownOrder := make([]string, 0)
 	var mu sync.Mutex
 
-	do.ProvideNamedValue(root, "eager-lifecycle", &mixedLifecycleService{name: "eager", shutdownOrder: &shutdownOrder, mu: &mu})
+	doger.ProvideNamedValue(root, "eager-lifecycle", &mixedLifecycleService{name: "eager", shutdownOrder: &shutdownOrder, mu: &mu})
 
-	do.ProvideNamed(root, "lazy-lifecycle", func(i do.Injector) (*mixedLifecycleService, error) {
+	doger.ProvideNamed(root, "lazy-lifecycle", func(i doger.Injector) (*mixedLifecycleService, error) {
 		return &mixedLifecycleService{name: "lazy", shutdownOrder: &shutdownOrder, mu: &mu}, nil
 	})
 
-	do.ProvideNamedTransient(root, "transient-lifecycle", func(i do.Injector) (*mixedLifecycleService, error) {
+	doger.ProvideNamedTransient(root, "transient-lifecycle", func(i doger.Injector) (*mixedLifecycleService, error) {
 		return &mixedLifecycleService{name: "transient", shutdownOrder: &shutdownOrder, mu: &mu}, nil
 	})
 
 	// Invoke services to ensure they are initialized
-	_, err := do.InvokeNamed[*mixedLifecycleService](root, "eager-lifecycle")
+	_, err := doger.InvokeNamed[*mixedLifecycleService](root, "eager-lifecycle")
 	is.NoError(err)
-	_, err = do.InvokeNamed[*mixedLifecycleService](root, "lazy-lifecycle")
+	_, err = doger.InvokeNamed[*mixedLifecycleService](root, "lazy-lifecycle")
 	is.NoError(err)
-	_, err = do.InvokeNamed[*mixedLifecycleService](root, "transient-lifecycle")
+	_, err = doger.InvokeNamed[*mixedLifecycleService](root, "transient-lifecycle")
 	is.NoError(err)
 
 	// Shutdown the root scope
@@ -200,27 +200,27 @@ func TestMixedServiceTypesNestedScopes(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 	child1 := root.Scope("child1")
 	child2 := child1.Scope("child2")
 
 	// Services of different types in different scopes
-	do.ProvideNamedValue(root, "root-eager", "root-eager-value")
+	doger.ProvideNamedValue(root, "root-eager", "root-eager-value")
 
-	do.ProvideNamed(child1, "child1-lazy", func(i do.Injector) (string, error) {
-		rootVal, err := do.InvokeNamed[string](i, "root-eager")
+	doger.ProvideNamed(child1, "child1-lazy", func(i doger.Injector) (string, error) {
+		rootVal, err := doger.InvokeNamed[string](i, "root-eager")
 		if err != nil {
 			return "", err
 		}
 		return "child1-lazy-" + rootVal, nil
 	})
 
-	do.ProvideNamedTransient(child2, "child2-transient", func(i do.Injector) (string, error) {
-		rootVal, err := do.InvokeNamed[string](i, "root-eager")
+	doger.ProvideNamedTransient(child2, "child2-transient", func(i doger.Injector) (string, error) {
+		rootVal, err := doger.InvokeNamed[string](i, "root-eager")
 		if err != nil {
 			return "", err
 		}
-		child1Val, err := do.InvokeNamed[string](i, "child1-lazy")
+		child1Val, err := doger.InvokeNamed[string](i, "child1-lazy")
 		if err != nil {
 			return "", err
 		}
@@ -228,16 +228,16 @@ func TestMixedServiceTypesNestedScopes(t *testing.T) {
 	})
 
 	// Alias in child2 that points to child1 service
-	err := do.AsNamed[string, string](child2, "child1-lazy", "child2-alias")
+	err := doger.AsNamed[string, string](child2, "child1-lazy", "child2-alias")
 	is.NoError(err)
 
 	// Invoke the transient service
-	result, err := do.InvokeNamed[string](child2, "child2-transient")
+	result, err := doger.InvokeNamed[string](child2, "child2-transient")
 	is.NoError(err)
 	is.Contains(result, "child2-transient-root-eager-value-child1-lazy-root-eager-value")
 
 	// Invoke the alias service
-	aliasResult, err := do.InvokeNamed[string](child2, "child2-alias")
+	aliasResult, err := doger.InvokeNamed[string](child2, "child2-alias")
 	is.NoError(err)
 	is.Equal("child1-lazy-root-eager-value", aliasResult)
 }
@@ -247,17 +247,17 @@ func TestMixedServiceTypesPerformance(t *testing.T) {
 	testWithTimeout(t, 450*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services of different types
-	do.ProvideNamedValue(root, "eager-perf", "eager-value")
+	doger.ProvideNamedValue(root, "eager-perf", "eager-value")
 
-	do.ProvideNamed(root, "lazy-perf", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "lazy-perf", func(i doger.Injector) (string, error) {
 		time.Sleep(1 * time.Millisecond) // Simulate initialization cost
 		return "lazy-value", nil
 	})
 
-	do.ProvideNamedTransient(root, "transient-perf", func(i do.Injector) (string, error) {
+	doger.ProvideNamedTransient(root, "transient-perf", func(i doger.Injector) (string, error) {
 		time.Sleep(1 * time.Millisecond) // Simulate creation cost
 		return "transient-value", nil
 	})
@@ -268,7 +268,7 @@ func TestMixedServiceTypesPerformance(t *testing.T) {
 	// Eager service should be fastest (no initialization cost)
 	start := time.Now()
 	for i := 0; i < numInvocations; i++ {
-		_, err := do.InvokeNamed[string](root, "eager-perf")
+		_, err := doger.InvokeNamed[string](root, "eager-perf")
 		is.NoError(err)
 	}
 	eagerDuration := time.Since(start)
@@ -276,7 +276,7 @@ func TestMixedServiceTypesPerformance(t *testing.T) {
 	// Lazy service should be slower on first invocation, then fast
 	start = time.Now()
 	for i := 0; i < numInvocations; i++ {
-		_, err := do.InvokeNamed[string](root, "lazy-perf")
+		_, err := doger.InvokeNamed[string](root, "lazy-perf")
 		is.NoError(err)
 	}
 	lazyDuration := time.Since(start)
@@ -284,7 +284,7 @@ func TestMixedServiceTypesPerformance(t *testing.T) {
 	// Transient service should be slowest (creation cost on every invocation)
 	start = time.Now()
 	for i := 0; i < numInvocations; i++ {
-		_, err := do.InvokeNamed[string](root, "transient-perf")
+		_, err := doger.InvokeNamed[string](root, "transient-perf")
 		is.NoError(err)
 	}
 	transientDuration := time.Since(start)
@@ -299,16 +299,16 @@ func TestMixedServiceTypesMemoryUsage(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services that allocate memory
-	do.ProvideNamedValue(root, "eager-memory", make([]byte, 1024))
+	doger.ProvideNamedValue(root, "eager-memory", make([]byte, 1024))
 
-	do.ProvideNamed(root, "lazy-memory", func(i do.Injector) ([]byte, error) {
+	doger.ProvideNamed(root, "lazy-memory", func(i doger.Injector) ([]byte, error) {
 		return make([]byte, 1024), nil
 	})
 
-	do.ProvideNamedTransient(root, "transient-memory", func(i do.Injector) ([]byte, error) {
+	doger.ProvideNamedTransient(root, "transient-memory", func(i doger.Injector) ([]byte, error) {
 		return make([]byte, 1024), nil
 	})
 
@@ -317,28 +317,28 @@ func TestMixedServiceTypesMemoryUsage(t *testing.T) {
 
 	// Eager service - memory allocated once
 	for i := 0; i < numInvocations; i++ {
-		_, err := do.InvokeNamed[[]byte](root, "eager-memory")
+		_, err := doger.InvokeNamed[[]byte](root, "eager-memory")
 		is.NoError(err)
 	}
 
 	// Lazy service - memory allocated once, then reused
 	for i := 0; i < numInvocations; i++ {
-		_, err := do.InvokeNamed[[]byte](root, "lazy-memory")
+		_, err := doger.InvokeNamed[[]byte](root, "lazy-memory")
 		is.NoError(err)
 	}
 
 	// Transient service - memory allocated on every invocation
 	for i := 0; i < numInvocations; i++ {
-		_, err := do.InvokeNamed[[]byte](root, "transient-memory")
+		_, err := doger.InvokeNamed[[]byte](root, "transient-memory")
 		is.NoError(err)
 	}
 
 	// All services should still work correctly
-	_, err := do.InvokeNamed[[]byte](root, "eager-memory")
+	_, err := doger.InvokeNamed[[]byte](root, "eager-memory")
 	is.NoError(err)
-	_, err = do.InvokeNamed[[]byte](root, "lazy-memory")
+	_, err = doger.InvokeNamed[[]byte](root, "lazy-memory")
 	is.NoError(err)
-	_, err = do.InvokeNamed[[]byte](root, "transient-memory")
+	_, err = doger.InvokeNamed[[]byte](root, "transient-memory")
 	is.NoError(err)
 }
 
@@ -347,24 +347,24 @@ func TestMixedServiceTypesErrorHandling(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services of different types that can fail
-	do.ProvideNamed(root, "lazy-error", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "lazy-error", func(i doger.Injector) (string, error) {
 		return "", fmt.Errorf("lazy service error")
 	})
 
-	do.ProvideNamedTransient(root, "transient-error", func(i do.Injector) (string, error) {
+	doger.ProvideNamedTransient(root, "transient-error", func(i doger.Injector) (string, error) {
 		return "", fmt.Errorf("transient service error")
 	})
 
 	// Service that depends on failing services
-	do.ProvideNamed(root, "dependent-on-errors", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "lazy-error")
+	doger.ProvideNamed(root, "dependent-on-errors", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "lazy-error")
 		if err != nil {
 			return "", err
 		}
-		_, err = do.InvokeNamed[string](i, "transient-error")
+		_, err = doger.InvokeNamed[string](i, "transient-error")
 		if err != nil {
 			return "", err
 		}
@@ -372,7 +372,7 @@ func TestMixedServiceTypesErrorHandling(t *testing.T) {
 	})
 
 	// Attempting to invoke should fail
-	_, err := do.InvokeNamed[string](root, "dependent-on-errors")
+	_, err := doger.InvokeNamed[string](root, "dependent-on-errors")
 	is.Error(err)
 	is.Contains(err.Error(), "lazy service error")
 }

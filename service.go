@@ -1,11 +1,11 @@
-package do
+package doger
 
 import (
 	"context"
 	"reflect"
 	"time"
 
-	"github.com/samber/do/v2/stacktrace"
+	"github.com/kartaladev/doger/stacktrace"
 	typetostring "github.com/samber/go-type-to-string"
 )
 

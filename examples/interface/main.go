@@ -1,29 +1,29 @@
 package main
 
 import (
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 func main() {
-	injector := do.New()
+	injector := doger.New()
 
 	// provide wheels
-	do.ProvideNamedValue(injector, "wheel-1", NewWheel())
-	do.ProvideNamedValue(injector, "wheel-2", NewWheel())
-	do.ProvideNamedValue(injector, "wheel-3", NewWheel())
-	do.ProvideNamedValue(injector, "wheel-4", NewWheel())
+	doger.ProvideNamedValue(injector, "wheel-1", NewWheel())
+	doger.ProvideNamedValue(injector, "wheel-2", NewWheel())
+	doger.ProvideNamedValue(injector, "wheel-3", NewWheel())
+	doger.ProvideNamedValue(injector, "wheel-4", NewWheel())
 
 	// provide car
-	do.Provide(injector, NewCar)
+	doger.Provide(injector, NewCar)
 
 	// provide engine
-	do.Provide(injector, NewEngine)
+	doger.Provide(injector, NewEngine)
 
 	// magic happens here
-	_ = do.As[*carImplem, Car](injector)
-	_ = do.As[*engineImplem, Engine](injector)
+	_ = doger.As[*carImplem, Car](injector)
+	_ = doger.As[*engineImplem, Engine](injector)
 
 	// start car
-	car := do.MustInvoke[Car](injector)
+	car := doger.MustInvoke[Car](injector)
 	car.Start()
 }

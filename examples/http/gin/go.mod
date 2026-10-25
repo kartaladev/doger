@@ -1,16 +1,8 @@
-module github.com/samber/do/examples/http/gin/v2
+module github.com/kartaladev/doger/examples/http/gin
 
 go 1.26.0
 
-replace github.com/samber/do/v2 => ../../../
-
-replace github.com/samber/do/http/gin/v2 => ../../../http/gin
-
-require (
-	github.com/gin-gonic/gin v1.12.0
-	github.com/samber/do/http/gin/v2 v2.0.0-00010101000000-000000000000
-	github.com/samber/do/v2 v2.0.0-00010101000000-000000000000
-)
+require github.com/gin-gonic/gin v1.12.0
 
 require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
@@ -25,6 +17,8 @@ require (
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
+	github.com/kartaladev/doger/http/gin v0.0.0-00010101000000-000000000000
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -44,3 +38,7 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )
+
+replace github.com/kartaladev/doger => ../../../
+
+replace github.com/kartaladev/doger/http/gin => ../../../http/gin
