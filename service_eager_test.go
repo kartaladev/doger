@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2/stacktrace"
+	"github.com/kartaladev/doger/stacktrace"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -134,27 +134,27 @@ func TestNewServiceEager(t *testing.T) {
 	testStruct := eagerTest{foobar: "test"}
 	service3 := newServiceEager("struct-service", testStruct)
 	is.Equal("struct-service", service3.name)
-	is.Equal("github.com/samber/do/v2.eagerTest", service3.typeName)
+	is.Equal("github.com/kartaladev/doger.eagerTest", service3.typeName)
 	is.Equal(testStruct, service3.instance)
 
 	// Test with pointer instance
 	testPtr := &eagerTest{foobar: "pointer-test"}
 	service4 := newServiceEager("pointer-service", testPtr)
 	is.Equal("pointer-service", service4.name)
-	is.Equal("*github.com/samber/do/v2.eagerTest", service4.typeName)
+	is.Equal("*github.com/kartaladev/doger.eagerTest", service4.typeName)
 	is.Equal(testPtr, service4.instance)
 
 	// Test with interface instance
 	var healthchecker Healthchecker = &eagerTestHeathcheckerOK{foobar: "healthchecker"}
 	service5 := newServiceEager("interface-service", healthchecker)
 	is.Equal("interface-service", service5.name)
-	is.Equal("github.com/samber/do/v2.Healthchecker", service5.typeName)
+	is.Equal("github.com/kartaladev/doger.Healthchecker", service5.typeName)
 	is.Equal(healthchecker, service5.instance)
 
 	// Test with nil instance
 	service6 := newServiceEager[*eagerTest]("nil-service", nil)
 	is.Equal("nil-service", service6.name)
-	is.Equal("*github.com/samber/do/v2.eagerTest", service6.typeName)
+	is.Equal("*github.com/kartaladev/doger.eagerTest", service6.typeName)
 	is.Nil(service6.instance)
 
 	// Test with boolean instance
@@ -203,7 +203,7 @@ func TestServiceEager_getTypeName(t *testing.T) {
 	is.Equal("int", service1.getTypeName())
 
 	service2 := newServiceEager("foobar2", test)
-	is.Equal("github.com/samber/do/v2.eagerTest", service2.getTypeName())
+	is.Equal("github.com/kartaladev/doger.eagerTest", service2.getTypeName())
 }
 
 func TestServiceEager_getServiceType(t *testing.T) {

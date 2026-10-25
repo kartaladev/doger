@@ -64,7 +64,7 @@ Other facts that shape the approach:
 - Rewriting upstream history references: issue links such as `samber/do/issues/114` (`invoke.go:160,270`), the docs "v1" link, upstream releases history, and `docs/docs/upgrading/from-v1-x-to-v2.md` (it stays as upstream history, with a pointer to the new migration page).
 - Replacing `go.dev/play` links in doc comments (5 files). They run upstream code. This is a docs decision, tracked as a follow-up.
 - Go version changes (`upgrade-go-1-27`).
-- Publishing the `http/*` sub-modules (prefix tags, dropping the placeholder requires). See Open Questions.
+- Dropping the placeholder requires and local `replace` directives of the `http/*` sub-modules on `main`. Releases pin and tag them instead (D9).
 
 ## Decisions
 
@@ -147,10 +147,10 @@ Alternatives:
 - **Code snippets:** import paths, `go get` lines and the `do.` qualifier become `doger.`. The `do:""` tags and `/debug/do` routes stay.
 - **Files:**
   - `README.md`, `docs/docusaurus.config.ts`, `docs/plugins/structured-data/index.ts` and `docs/static/llms.txt`;
-  - `docs/static/robots.txt` (`Sitemap:`) and every file under `docs/docs` and `docs/src`;
+  - every file under `docs/docs` and `docs/src`; `docs/static/robots.txt` is removed, because a project site under `/doger/` cannot serve a robots file at the domain root;
   - a new page `docs/docs/migrating/migrating-from-samber-do.md` with the migration steps from "Public API & Defaults".
 - **Interim docs URL** (final domain in Open Questions): GitHub Pages under the organization, `url: 'https://kartaladev.github.io'` and `baseUrl: '/doger/'`, with `organizationName: 'kartaladev'` and `projectName: 'doger'`.
-  - Every absolute `https://do.samber.dev` reference moves to `https://kartaladev.github.io/doger/…`: the og:image tags, the sitemap filter, the `about.md` JSON-LD ids, `robots.txt`, the README links and the debug UI link.
+  - Every absolute `https://do.samber.dev` reference moves to `https://kartaladev.github.io/doger/…`: the og:image tags, the sitemap filter, the `about.md` JSON-LD ids, the README links and the debug UI link.
   - Site title "doger - Go Dependency Injection", navbar title "⚙️ doger", `og:site_name` "doger", and `editUrl` `https://github.com/kartaladev/doger/tree/main/docs/`.
   - Repository, issues, releases, LICENSE and pkg.go.dev links point to `kartaladev/doger`.
   - The version dropdown keeps one link to the upstream v1 tree, labelled as upstream.
@@ -163,11 +163,22 @@ Alternatives:
   - the navbar and footer "💖 Sponsor", Twitter and Stack Overflow (`samber+do`) links;
   - `.github/FUNDING.yml`.
 
-  The theme components call `window.posthog?.capture`, which is a no-op without the plugin, so they stay. `@docusaurus/plugin-vercel-analytics` has no account key and reports to whichever Vercel project deploys the site, so it stays.
+  The swizzled theme components that existed only for PostHog events and the sponsor sidebar (`Root`, `CodeBlock`, `DocSidebar`) are removed with their sponsor CSS and images. `@docusaurus/plugin-vercel-analytics` has no account key and reports to whichever Vercel project deploys the site, so it stays.
 - **structured-data:**
   - Set `name: 'doger'`, `codeRepository` and `license` to `kartaladev/doger`.
   - Add `isBasedOn: 'https://github.com/samber/do'`.
   - Keep the upstream author credit.
+- **Recorded during apply.** These follow the rules above but were not spelled out when this design was written:
+  - Removing Algolia also removes the navbar `search` item, which needs a search plugin.
+  - With `baseUrl: '/doger/'`, raw `/img/...` and `/docs/...` paths in pages and MDX would 404. They go through `useBaseUrl` or `require('@site/static/...')` instead.
+  - The FAQ answer "no breaking changes planned before v3" is upstream's v2 promise. It now says doger is v0, so a minor release may break.
+  - The README loses upstream's DBOS sponsor block, GitHub Sponsors badge and Twitter contact, as the docs site does.
+  - Upstream's personal channels go: the `twitter:creator`/`twitter:site` meta tags, the Bing `msvalidate.01` tag, the Substack footer link, and the community page's Twitter card.
+  - Security reports go to GitHub private vulnerability reporting (`/security/advisories/new`, enabled on the repository) instead of upstream's email address.
+  - The structured-data plugin builds its URLs from `url` + `baseUrl`, so its `@id`s match the pages' JSON-LD; it drops the `SearchAction` (no search page) and the WebSite `publisher` (upstream's author does not publish this site).
+  - README, getting-started and `llms.txt` stop recommending the `golang-samber-do` agent skill, which teaches upstream's import path and `do.` qualifier.
+  - `.github/workflows/doc.yml` deploys the built site to GitHub Pages from `main` (Pages enabled on the repository with GitHub Actions as its source).
+  - `llms.txt` drops its GitHub Discussions references, since Discussions is disabled on this repository, along with the "follow the author" line and the "vibrant and growing community" claim. Its copyright line matches `LICENSE`.
 
 **D8. Attribution is never removed.**
 - In `LICENSE`, keep `Copyright (c) 2022 Samuel Berthe` and the MIT text unchanged, and add `Copyright (c) 2026 kartaladev` directly below it.
@@ -175,7 +186,9 @@ Alternatives:
 - The palantir/stacktrace credit in `stacktrace/stacktrace.go` stays.
 
 **D9. Repository metadata.**
-- `release.yml` gets a first step that fails unless `inputs.semver` matches `^v[01]\.[0-9]+\.[0-9]+$`. A `v2+` tag on a path without `/v2` is not a valid version of this module. The `triggering_actor == 'samber'` gate is out of scope (Open Questions).
+- `release.yml` gets a first step that fails unless `inputs.semver` is a v0 or v1 semantic version, pre-releases included (`^v[01]\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`). A `v2+` tag on a path without `/v2` is not a valid version of this module.
+- The release job runs only in `kartaladev/doger` (`github.repository`), replacing upstream's `triggering_actor == 'samber'` gate; `workflow_dispatch` already requires write access.
+- Consumers ignore the adapters' `replace` directives, so a release pins every `http/<x>` module to `github.com/kartaladev/doger@<semver>` in the release commit and tags it `http/<x>/<semver>` next to the root tag. `main` keeps the v0 placeholder and local `replace` for development.
 - `CLAUDE.md` line 3 and the `openspec/config.yaml` `context` name the module `github.com/kartaladev/doger` (package `doger`), "a fork of `github.com/samber/do/v2`".
 
 **D10. Hosting prerequisite.** The `kartaladev/doger` GitHub repository must exist before merge, tag or publication of links (proposal Prerequisites). Task 1.1 checks it.
@@ -188,7 +201,7 @@ Alternatives:
 - the fork notices, attribution links and the structured-data `isBasedOn`;
 - prose that means upstream (D7) and file slugs or heading IDs kept for link stability;
 - `openspec/`, plus `CLAUDE.md` and `openspec/config.yaml` attribution;
-- the `fix-stacktrace-frame-filter` test data (`stacktrace/stacktrace_internal_test.go` rows) and the `shortFuncName` inputs (D4).
+- the `shortFuncName` inputs (D4). The `stacktrace/stacktrace_internal_test.go` classification rows are not on this list: they move to `github.com/kartaladev/doger` together with the `service-source-tracking` MODIFIED delta (task 7.3), and `own_module_cache_renamed` uses `example.com/fork` as the other module path.
 
 `github.com/samber/go-type-to-string` is a separate dependency and stays.
 
@@ -272,7 +285,5 @@ Rollback: revert the commit series. No published artifact depends on the new pat
 
 ## Open Questions
 
-- **Final docs domain and hosting.** Interim default: GitHub Pages at `https://kartaladev.github.io/doger/` (D7). Upstream's `vercel.json` stays untouched until a host is chosen. Changing the domain later is a config-only edit.
-- **Release gating.** `release.yml` gates on `github.triggering_actor == 'samber'`, so the fork cannot release until the gate is changed. That is fork administration and is independent of this design. D9 already adds the v0/v1 guard.
-- **Sub-module publishing.** The `http/*` modules keep `replace` plus placeholder requires. External consumers will need tagged versions (`http/<x>/v0.y.z`) and real requires. Pre-existing, separate release-process change.
+- **Final docs domain.** The site deploys to GitHub Pages at `https://kartaladev.github.io/doger/` (D7). Upstream's `vercel.json` stays untouched. A custom domain later is a config-only edit, and would bring back a `robots.txt` served at its root.
 - **Tooling.** Whether `make test` should cover every workspace module (separate tooling change), and whether the docs site gets a self-owned search after Algolia's removal.

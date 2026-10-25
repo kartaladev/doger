@@ -1,10 +1,10 @@
-package dohttp
+package dogerhttp
 
 import (
 	"strings"
 	"testing"
 
-	do "github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,7 +17,7 @@ func Test_mAp_and_getScopeByID(t *testing.T) {
 	is.Equal([]string{"x", "xx", "xxx"}, out)
 
 	// getScopeByID
-	root := do.New()
+	root := doger.New()
 	child := root.Scope("child")
 	got, ok := getScopeByID(root, child.ID())
 	is.True(ok)

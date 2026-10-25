@@ -1,15 +1,15 @@
-module github.com/samber/do/v2/examples/web-application
+module github.com/kartaladev/doger/examples/web-application
 
 go 1.24
 
-replace github.com/samber/do/v2 => ../../
-
-replace github.com/samber/do/http/chi/v2 => ../../http/chi
+require github.com/go-chi/chi/v5 v5.5.0
 
 require (
-	github.com/go-chi/chi/v5 v5.5.0
-	github.com/samber/do/http/chi/v2 v2.0.0-00010101000000-000000000000
-	github.com/samber/do/v2 v2.0.0-00010101000000-000000000000
+	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
+	github.com/kartaladev/doger/http/chi v0.0.0-00010101000000-000000000000
+	github.com/samber/go-type-to-string v1.8.0 // indirect
 )
 
-require github.com/samber/go-type-to-string v1.8.0 // indirect
+replace github.com/kartaladev/doger => ../../
+
+replace github.com/kartaladev/doger/http/chi => ../../http/chi

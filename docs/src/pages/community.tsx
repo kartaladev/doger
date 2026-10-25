@@ -6,9 +6,11 @@ import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
 
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 function Community() {
   const context = useDocusaurusContext();
+  const headerImg = useBaseUrl('/img/go-community.webp');
 
   return (
     <Layout
@@ -27,10 +29,10 @@ function Community() {
           </div>
           <img
             className={styles.headerImg}
-            src="/img/go-community.webp"
+            src={headerImg}
             width={1200}
             height={431}
-            alt="Gophers collaborating together, illustrating the samber/do community"
+            alt="Gophers collaborating together, illustrating the doger community"
           />
         </div>
       </header>
@@ -47,7 +49,7 @@ function Community() {
                 </div>
                 <div className="card__footer">
                   <Link
-                    to="https://github.com/samber/do/issues"
+                    to="https://github.com/kartaladev/doger/issues"
                     className="button button--outline button--primary button--block"
                   >
                     Open new issue
@@ -66,7 +68,7 @@ function Community() {
                 </div>
                 <div className="card__footer">
                   <Link
-                    to="https://github.com/samber/do?tab=readme-ov-file#-contributing"
+                    to="https://github.com/kartaladev/doger?tab=readme-ov-file#-contributing"
                     className="button button--outline button--primary button--block"
                   >
                     Start contributing!
@@ -78,38 +80,17 @@ function Community() {
             <div className="col text--center padding-vert--md">
               <div className="card">
                 <div className="card__header">
-                  <i className={classnames(styles.icon, styles.twitter)}></i>
-                </div>
-                <div className="card__body">
-                  <p>Follow &#64;samuelberthe on Twitter</p>
-                </div>
-                <div className="card__footer">
-                  <Link
-                    to="https://twitter.com/samuelberthe"
-                    className="button button--outline button--primary button--block"
-                  >
-                    Follow &#64;SamuelBerthe
-                  </Link>
-                </div>
-              </div>
-            </div>
-
-            <div className="col text--center padding-vert--md">
-              <div className="card">
-                <div className="card__header">
                   <i className={classnames(styles.icon, styles.email)}></i>
                 </div>
                 <div className="card__body">
-                  <p>
-                    For sensitive or security-related queries, send us an email
-                  </p>
+                  <p>Report a security vulnerability privately</p>
                 </div>
                 <div className="card__footer">
                   <Link
-                    to="mailto:contact@samuel-berthe.fr"
+                    to="https://github.com/kartaladev/doger/security/advisories/new"
                     className="button button--outline button--primary button--block"
                   >
-                    contact&#64;samuel-berthe.fr
+                    Report a vulnerability
                   </Link>
                 </div>
               </div>

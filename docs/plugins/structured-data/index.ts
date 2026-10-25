@@ -12,7 +12,9 @@ export default function structuredDataPlugin(
   context: LoadContext,
 ): Plugin<void> {
   const {siteConfig} = context;
-  const siteUrl = siteConfig.url;
+  // the site lives under baseUrl (e.g. https://kartaladev.github.io/doger),
+  // so every @id and URL must include it
+  const siteUrl = `${siteConfig.url}${siteConfig.baseUrl}`.replace(/\/$/, '');
 
   const structuredData = {
     '@context': 'https://schema.org',
@@ -35,31 +37,23 @@ export default function structuredDataPlugin(
         url: siteUrl,
         name: siteConfig.title,
         description:
-          'Documentation for samber/do, a type-safe dependency injection toolkit for Go using generics.',
+          'Documentation for doger, a type-safe dependency injection toolkit for Go using generics.',
         inLanguage: 'en',
-        publisher: {'@id': `${siteUrl}/#person-samber`},
-        potentialAction: {
-          '@type': 'SearchAction',
-          target: {
-            '@type': 'EntryPoint',
-            urlTemplate: `${siteUrl}/search?q={search_term_string}`,
-          },
-          'query-input': 'required name=search_term_string',
-        },
       },
       {
         '@type': 'SoftwareSourceCode',
         '@id': `${siteUrl}/#software`,
-        name: 'samber/do',
+        name: 'doger',
         description:
           'A dependency injection toolkit for Go based on 1.18+ generics, offering a type-safe API without reflection or code generation.',
-        codeRepository: 'https://github.com/samber/do',
+        codeRepository: 'https://github.com/kartaladev/doger',
+        isBasedOn: 'https://github.com/samber/do',
         programmingLanguage: {
           '@type': 'ComputerLanguage',
           name: 'Go',
         },
         runtimePlatform: 'Go 1.18+',
-        license: 'https://github.com/samber/do/blob/master/LICENSE',
+        license: 'https://github.com/kartaladev/doger/blob/main/LICENSE',
         author: {'@id': `${siteUrl}/#person-samber`},
         applicationCategory: 'DeveloperApplication',
         offers: {

@@ -1,6 +1,6 @@
-package dohttp
+package dogerhttp
 
-// IndexHTML generates the main HTML page for the do library's web-based debugging interface.
+// IndexHTML generates the main HTML page for the doger library's web-based debugging interface.
 // This function creates a welcome page that provides navigation to various debugging features
 // and links to external resources like documentation and the GitHub repository.
 //
@@ -26,19 +26,20 @@ func IndexHTML(basePath string) (string, error) {
 		`<!DOCTYPE html>
 <html>
 	<head>
-		<title>Dependency injection UI - samber/do</title>
+		<title>Dependency injection UI - doger</title>
 	</head>
 	<body>
-		<h1>Welcome to do UI ✌️</h1>
+		<h1>Welcome to doger UI ✌️</h1>
 		
 		<h2>Introduction</h2>
 		<ul>
-			<li><a href="https://github.com/samber/do" target="_blank">Repository</a></li>
-			<li><a href="https://github.com/samber/do/issues" target="_blank">New issue</a></li>
-			<li><a href="https://do.samber.dev" target="_blank">Documentation</a></li>
-			<li><a href="https://pkg.go.dev/github.com/samber/do/v2" target="_blank">Godoc</a></li>
-			<li><a href="https://github.com/samber/do/releases" target="_blank">Changelog</a></li>
-			<li><a href="https://github.com/samber/do/blob/master/LICENSE" target="_blank">License</a></li>
+			<li><a href="https://github.com/kartaladev/doger" target="_blank">Repository</a></li>
+			<li><a href="https://github.com/kartaladev/doger/issues" target="_blank">New issue</a></li>
+			<li><a href="https://kartaladev.github.io/doger/" target="_blank">Documentation</a></li>
+			<li><a href="https://pkg.go.dev/github.com/kartaladev/doger" target="_blank">Godoc</a></li>
+			<li><a href="https://github.com/kartaladev/doger/releases" target="_blank">Changelog</a></li>
+			<li><a href="https://github.com/kartaladev/doger/blob/main/LICENSE" target="_blank">License</a></li>
+			<li><a href="https://github.com/samber/do" target="_blank">Upstream project</a></li>
 		</ul>
 
 		<h2>Getting started</h2>

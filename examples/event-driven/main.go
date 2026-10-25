@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 func main() {
-	injector := do.New()
+	injector := doger.New()
 
 	fmt.Println("=== Event-Driven Architecture Example ===")
 	fmt.Println("This example demonstrates how to build an event-driven system")
@@ -15,66 +15,66 @@ func main() {
 
 	// Step 1: Register core infrastructure services
 	fmt.Println("Step 1: Registering core infrastructure services")
-	do.Provide(injector, func(i do.Injector) (*Logger, error) {
+	doger.Provide(injector, func(i doger.Injector) (*Logger, error) {
 		return &Logger{Level: "INFO"}, nil
 	})
 
-	do.Provide(injector, func(i do.Injector) (*EventBus, error) {
+	doger.Provide(injector, func(i doger.Injector) (*EventBus, error) {
 		return NewEventBus(), nil
 	})
 
 	// Step 2: Register event handlers
 	fmt.Println("Step 2: Registering event handlers")
-	do.Provide(injector, func(i do.Injector) (*UserEventHandler, error) {
+	doger.Provide(injector, func(i doger.Injector) (*UserEventHandler, error) {
 		return &UserEventHandler{
-			Logger: do.MustInvoke[*Logger](i),
+			Logger: doger.MustInvoke[*Logger](i),
 		}, nil
 	})
 
-	do.Provide(injector, func(i do.Injector) (*OrderEventHandler, error) {
+	doger.Provide(injector, func(i doger.Injector) (*OrderEventHandler, error) {
 		return &OrderEventHandler{
-			Logger: do.MustInvoke[*Logger](i),
+			Logger: doger.MustInvoke[*Logger](i),
 		}, nil
 	})
 
-	do.Provide(injector, func(i do.Injector) (*PaymentEventHandler, error) {
+	doger.Provide(injector, func(i doger.Injector) (*PaymentEventHandler, error) {
 		return &PaymentEventHandler{
-			Logger: do.MustInvoke[*Logger](i),
+			Logger: doger.MustInvoke[*Logger](i),
 		}, nil
 	})
 
 	// Step 3: Register business services that publish events
 	fmt.Println("Step 3: Registering business services that publish events")
-	do.Provide(injector, func(i do.Injector) (*UserService, error) {
+	doger.Provide(injector, func(i doger.Injector) (*UserService, error) {
 		return &UserService{
-			EventBus: do.MustInvoke[*EventBus](i),
-			Logger:   do.MustInvoke[*Logger](i),
+			EventBus: doger.MustInvoke[*EventBus](i),
+			Logger:   doger.MustInvoke[*Logger](i),
 		}, nil
 	})
 
-	do.Provide(injector, func(i do.Injector) (*OrderService, error) {
+	doger.Provide(injector, func(i doger.Injector) (*OrderService, error) {
 		return &OrderService{
-			EventBus: do.MustInvoke[*EventBus](i),
-			Logger:   do.MustInvoke[*Logger](i),
+			EventBus: doger.MustInvoke[*EventBus](i),
+			Logger:   doger.MustInvoke[*Logger](i),
 		}, nil
 	})
 
-	do.Provide(injector, func(i do.Injector) (*PaymentService, error) {
+	doger.Provide(injector, func(i doger.Injector) (*PaymentService, error) {
 		return &PaymentService{
-			EventBus: do.MustInvoke[*EventBus](i),
-			Logger:   do.MustInvoke[*Logger](i),
+			EventBus: doger.MustInvoke[*EventBus](i),
+			Logger:   doger.MustInvoke[*Logger](i),
 		}, nil
 	})
 
 	// Step 4: Register main application
 	fmt.Println("Step 4: Registering main application")
-	do.Provide(injector, func(i do.Injector) (*Application, error) {
+	doger.Provide(injector, func(i doger.Injector) (*Application, error) {
 		return &Application{
-			EventBus:       do.MustInvoke[*EventBus](i),
-			UserService:    do.MustInvoke[*UserService](i),
-			OrderService:   do.MustInvoke[*OrderService](i),
-			PaymentService: do.MustInvoke[*PaymentService](i),
-			Logger:         do.MustInvoke[*Logger](i),
+			EventBus:       doger.MustInvoke[*EventBus](i),
+			UserService:    doger.MustInvoke[*UserService](i),
+			OrderService:   doger.MustInvoke[*OrderService](i),
+			PaymentService: doger.MustInvoke[*PaymentService](i),
+			Logger:         doger.MustInvoke[*Logger](i),
 		}, nil
 	})
 
@@ -82,10 +82,10 @@ func main() {
 	fmt.Println("Subscribing event handlers to the event bus:")
 
 	// Get the event bus and register handlers
-	eventBus := do.MustInvoke[*EventBus](injector)
-	userHandler := do.MustInvoke[*UserEventHandler](injector)
-	orderHandler := do.MustInvoke[*OrderEventHandler](injector)
-	paymentHandler := do.MustInvoke[*PaymentEventHandler](injector)
+	eventBus := doger.MustInvoke[*EventBus](injector)
+	userHandler := doger.MustInvoke[*UserEventHandler](injector)
+	orderHandler := doger.MustInvoke[*OrderEventHandler](injector)
+	paymentHandler := doger.MustInvoke[*PaymentEventHandler](injector)
 
 	// Subscribe handlers to events
 	fmt.Println("  - UserEventHandler subscribed to 'user.created' events")
@@ -105,7 +105,7 @@ func main() {
 	// Run the application
 	fmt.Println("\n=== Running Application ===")
 	fmt.Println("Simulating a complete user journey with event publishing:")
-	app := do.MustInvoke[*Application](injector)
+	app := doger.MustInvoke[*Application](injector)
 	app.Run()
 
 	fmt.Println("\n=== Event-Driven Architecture Benefits ===")

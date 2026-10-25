@@ -1,12 +1,12 @@
 ---
 title: 'Scopes'
-description: A scope groups related services into an independent module with restricted visibility across a samber/do dependency graph.
+description: A scope groups related services into an independent module with restricted visibility across a doger dependency graph.
 sidebar_position: 1
 ---
 
 # Scopes
 
-A scope in `samber/do` is a module of an application with restricted visibility: it groups related services and can see services from its ancestor scopes, but not from its siblings. We advocate having a `RootScope` for common code and moving business logic to dedicated `Scopes`.
+A scope in `doger` is a module of an application with restricted visibility: it groups related services and can see services from its ancestor scopes, but not from its siblings. We advocate having a `RootScope` for common code and moving business logic to dedicated `Scopes`.
 
 Scopes are structured with a parent (the root scope or another scope), numerous services, and potentially a few child scopes as well.
 
@@ -18,7 +18,7 @@ A chain of service invocations instantiates multiple virtual scopes to track dep
 
 Scopes are almost invisible to developers: services use the Injector API without awareness of whether the underlying implementation is a root scope, a regular scope, or an internal virtual scope used for dependency tracking.
 
-The `do.Injector` interface is implemented by `*do.RootScope` and `*do.Scope`. `*do.virtualScope` are internal implementation details.
+The `doger.Injector` interface is implemented by `*doger.RootScope` and `*doger.Scope`. `*doger.virtualScope` are internal implementation details.
 
 ```mermaid
 graph TD
@@ -58,11 +58,11 @@ graph TD
 
 ## New scope {#new-scope}
 
-A root scope is created when calling `do.New()`. Multiple layers of child scopes can be added. Each nested scope shares the same root scope.
+A root scope is created when calling `doger.New()`. Multiple layers of child scopes can be added. Each nested scope shares the same root scope.
 
 ```go
 // root scope
-injector := do.New()
+injector := doger.New()
 
 // nested scopes
 driverModule := injector.Scope("driver")
@@ -73,24 +73,24 @@ Then, inject services into respective scopes. Some services can depend on parent
 
 ```go
 // inject services to root scope
-do.Provide(injector, NewEngine)
+doger.Provide(injector, NewEngine)
 
 // inject *SteeringWheel service to "driver" scope
-do.Provide(driverModule, func(i do.Injector) (*SteeringWheel, error) {
+doger.Provide(driverModule, func(i doger.Injector) (*SteeringWheel, error) {
     return &SteeringWheel{
         // invoke *Engine service from parent scope
-        Engine: do.MustInvoke[*Engine](i),
+        Engine: doger.MustInvoke[*Engine](i),
     }, nil
 })
 
 // inject many *Passenger services to "passengers" scope
-do.ProvideNamed(passengersModule, "passenger-1", func(i do.Injector) (*Passenger, error) {
+doger.ProvideNamed(passengersModule, "passenger-1", func(i doger.Injector) (*Passenger, error) {
     return &Passenger{ ... }, nil
 })
-do.ProvideNamed(passengersModule, "passenger-2", func(i do.Injector) (*Passenger, error) {
+doger.ProvideNamed(passengersModule, "passenger-2", func(i doger.Injector) (*Passenger, error) {
     return &Passenger{ ... }, nil
 })
-do.ProvideNamed(passengersModule, "passenger-3", func(i do.Injector) (*Passenger, error) {
+doger.ProvideNamed(passengersModule, "passenger-3", func(i doger.Injector) (*Passenger, error) {
     return &Passenger{ ... }, nil
 })
 ```
@@ -99,12 +99,12 @@ At this step, services have not been instantiated. Let's invoke them:
 
 ```go
 // instantiate *SteeringWheel and *Engine
-svc := do.MustInvoke[*SteeringWheel](driverModule)
+svc := doger.MustInvoke[*SteeringWheel](driverModule)
 
 // instantiate passengers
-svc := do.MustInvokeNamed[*Passenger](passengersModule, "passenger-1")
-svc := do.MustInvokeNamed[*Passenger](passengersModule, "passenger-2")
-svc := do.MustInvokeNamed[*Passenger](passengersModule, "passenger-3")
+svc := doger.MustInvokeNamed[*Passenger](passengersModule, "passenger-1")
+svc := doger.MustInvokeNamed[*Passenger](passengersModule, "passenger-2")
+svc := doger.MustInvokeNamed[*Passenger](passengersModule, "passenger-3")
 ```
 
 **Play: https://go.dev/play/p/vwLEbyo0APp**
@@ -115,4 +115,4 @@ A debugging toolchain has been added to illustrate the service [dependency](../t
 
 ## Examples {#examples}
 
-See examples in the [project repository](https://github.com/samber/do).
+See examples in the [project repository](https://github.com/kartaladev/doger).

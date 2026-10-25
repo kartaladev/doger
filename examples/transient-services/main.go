@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 func main() {
-	injector := do.New()
+	injector := doger.New()
 
 	fmt.Println("=== Transient Services Example ===")
 	fmt.Println("Transient services are recreated each time they are requested")
@@ -17,7 +17,7 @@ func main() {
 
 	// Step 1: Register RequestID (transient)
 	fmt.Println("Step 1: Registering RequestID (transient)")
-	do.ProvideTransient(injector, func(i do.Injector) (*RequestID, error) {
+	doger.ProvideTransient(injector, func(i doger.Injector) (*RequestID, error) {
 		return &RequestID{
 			ID:        fmt.Sprintf("req-%d", time.Now().UnixNano()),
 			CreatedAt: time.Now(),
@@ -26,9 +26,9 @@ func main() {
 
 	// Step 2: Register RequestContext (transient with dependency)
 	fmt.Println("Step 2: Registering RequestContext (transient with RequestID dependency)")
-	do.ProvideTransient(injector, func(i do.Injector) (*RequestContext, error) {
+	doger.ProvideTransient(injector, func(i doger.Injector) (*RequestContext, error) {
 		return &RequestContext{
-			ID:      do.MustInvoke[*RequestID](i),
+			ID:      doger.MustInvoke[*RequestID](i),
 			UserID:  "user-123",    // In real app, this would come from request
 			Session: "session-456", // In real app, this would come from request
 		}, nil
@@ -36,39 +36,39 @@ func main() {
 
 	// Step 3: Register Business Services (transient)
 	fmt.Println("Step 3: Registering Business Services (transient)")
-	do.ProvideTransient(injector, func(i do.Injector) (*UserService, error) {
+	doger.ProvideTransient(injector, func(i doger.Injector) (*UserService, error) {
 		return &UserService{
-			Context: do.MustInvoke[*RequestContext](i),
+			Context: doger.MustInvoke[*RequestContext](i),
 		}, nil
 	})
 
-	do.ProvideTransient(injector, func(i do.Injector) (*OrderService, error) {
+	doger.ProvideTransient(injector, func(i doger.Injector) (*OrderService, error) {
 		return &OrderService{
-			Context: do.MustInvoke[*RequestContext](i),
+			Context: doger.MustInvoke[*RequestContext](i),
 		}, nil
 	})
 
-	do.ProvideTransient(injector, func(i do.Injector) (*PaymentService, error) {
+	doger.ProvideTransient(injector, func(i doger.Injector) (*PaymentService, error) {
 		return &PaymentService{
-			Context: do.MustInvoke[*RequestContext](i),
+			Context: doger.MustInvoke[*RequestContext](i),
 		}, nil
 	})
 
 	// Step 4: Register OrderProcessor (transient with multiple dependencies)
 	fmt.Println("Step 4: Registering OrderProcessor (transient with multiple dependencies)")
-	do.ProvideTransient(injector, func(i do.Injector) (*OrderProcessor, error) {
+	doger.ProvideTransient(injector, func(i doger.Injector) (*OrderProcessor, error) {
 		return &OrderProcessor{
-			UserService:    do.MustInvoke[*UserService](i),
-			OrderService:   do.MustInvoke[*OrderService](i),
-			PaymentService: do.MustInvoke[*PaymentService](i),
+			UserService:    doger.MustInvoke[*UserService](i),
+			OrderService:   doger.MustInvoke[*OrderService](i),
+			PaymentService: doger.MustInvoke[*PaymentService](i),
 		}, nil
 	})
 
 	// Step 5: Register RequestHandler (transient)
 	fmt.Println("Step 5: Registering RequestHandler (transient)")
-	do.ProvideTransient(injector, func(i do.Injector) (*RequestHandler, error) {
+	doger.ProvideTransient(injector, func(i doger.Injector) (*RequestHandler, error) {
 		return &RequestHandler{
-			Processor: do.MustInvoke[*OrderProcessor](i),
+			Processor: doger.MustInvoke[*OrderProcessor](i),
 		}, nil
 	})
 
@@ -77,7 +77,7 @@ func main() {
 
 	// Simulate multiple requests - each gets fresh instances
 	for i := 1; i <= 3; i++ {
-		handler := do.MustInvoke[*RequestHandler](injector)
+		handler := doger.MustInvoke[*RequestHandler](injector)
 		handler.HandleRequest(fmt.Sprintf("user-%d", i), fmt.Sprintf("session-%d", i))
 		time.Sleep(100 * time.Millisecond) // Small delay to see different timestamps
 	}
@@ -86,8 +86,8 @@ func main() {
 	fmt.Println("Notice how each RequestID has a unique timestamp:")
 
 	// Access the request IDs to show they're different
-	req1 := do.MustInvoke[*RequestContext](injector)
-	req2 := do.MustInvoke[*RequestContext](injector)
+	req1 := doger.MustInvoke[*RequestContext](injector)
+	req2 := doger.MustInvoke[*RequestContext](injector)
 
 	fmt.Printf("Request 1 ID: %s, Created: %s\n", req1.ID.ID, req1.ID.CreatedAt.Format("15:04:05.000"))
 	fmt.Printf("Request 2 ID: %s, Created: %s\n", req2.ID.ID, req2.ID.CreatedAt.Format("15:04:05.000"))

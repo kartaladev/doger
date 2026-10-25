@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +15,7 @@ func TestVirtualScopeDeepDependencyChain(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a deep chain of services that depend on each other
 	const chainDepth = 50
@@ -26,14 +26,14 @@ func TestVirtualScopeDeepDependencyChain(t *testing.T) {
 		serviceIndex := i // Capture the loop variable
 		if i == chainDepth {
 			// Last service in chain has no dependencies
-			do.ProvideNamed(root, serviceName, func(i do.Injector) (string, error) {
+			doger.ProvideNamed(root, serviceName, func(i doger.Injector) (string, error) {
 				return fmt.Sprintf("value-%d", serviceIndex), nil
 			})
 		} else {
 			// Each service depends on the next one in the chain
 			nextServiceName := fmt.Sprintf("service-%d", i+1)
-			do.ProvideNamed(root, serviceName, func(i do.Injector) (string, error) {
-				nextVal, err := do.InvokeNamed[string](i, nextServiceName)
+			doger.ProvideNamed(root, serviceName, func(i doger.Injector) (string, error) {
+				nextVal, err := doger.InvokeNamed[string](i, nextServiceName)
 				if err != nil {
 					return "", err
 				}
@@ -43,7 +43,7 @@ func TestVirtualScopeDeepDependencyChain(t *testing.T) {
 	}
 
 	// Invoke the first service in the chain - this should resolve the entire chain
-	result, err := do.InvokeNamed[string](root, "service-1")
+	result, err := doger.InvokeNamed[string](root, "service-1")
 	is.NoError(err)
 	is.Contains(result, "value-1-depends-on-value-2-depends-on-value-3")
 }
@@ -53,16 +53,16 @@ func TestVirtualScopeConcurrentAccess(t *testing.T) {
 	testWithTimeout(t, 450*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services that can be accessed concurrently
-	do.ProvideNamed(root, "shared-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "shared-service", func(i doger.Injector) (string, error) {
 		time.Sleep(10 * time.Millisecond) // Simulate some work
 		return "shared-value", nil
 	})
 
-	do.ProvideNamed(root, "dependent-service", func(i do.Injector) (string, error) {
-		sharedVal, err := do.InvokeNamed[string](i, "shared-service")
+	doger.ProvideNamed(root, "dependent-service", func(i doger.Injector) (string, error) {
+		sharedVal, err := doger.InvokeNamed[string](i, "shared-service")
 		if err != nil {
 			return "", err
 		}
@@ -79,7 +79,7 @@ func TestVirtualScopeConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			result, err := do.InvokeNamed[string](root, "dependent-service")
+			result, err := doger.InvokeNamed[string](root, "dependent-service")
 			results[index] = result
 			errors[index] = err
 		}(i)
@@ -99,16 +99,16 @@ func TestVirtualScopeContextCancellation(t *testing.T) {
 	testWithTimeout(t, 450*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that takes a long time to resolve
-	do.ProvideNamed(root, "slow-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "slow-service", func(i doger.Injector) (string, error) {
 		time.Sleep(100 * time.Millisecond)
 		return "slow-value", nil
 	})
 
-	do.ProvideNamed(root, "dependent-on-slow", func(i do.Injector) (string, error) {
-		slowVal, err := do.InvokeNamed[string](i, "slow-service")
+	doger.ProvideNamed(root, "dependent-on-slow", func(i doger.Injector) (string, error) {
+		slowVal, err := doger.InvokeNamed[string](i, "slow-service")
 		if err != nil {
 			return "", err
 		}
@@ -116,7 +116,7 @@ func TestVirtualScopeContextCancellation(t *testing.T) {
 	})
 
 	// Try to invoke the service - context cancellation doesn't affect virtual scope operations
-	_, err := do.InvokeNamed[string](root, "dependent-on-slow")
+	_, err := doger.InvokeNamed[string](root, "dependent-on-slow")
 	// The service should still resolve because the context cancellation
 	// doesn't affect the virtual scope's internal operations
 	is.NoError(err)
@@ -127,27 +127,27 @@ func TestVirtualScopeCircularDependencyDetection(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a complex circular dependency scenario
-	do.ProvideNamed(root, "service-a", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "service-b")
+	doger.ProvideNamed(root, "service-a", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "service-b")
 		if err != nil {
 			return "", err
 		}
 		return "service-a-value", nil
 	})
 
-	do.ProvideNamed(root, "service-b", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "service-c")
+	doger.ProvideNamed(root, "service-b", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "service-c")
 		if err != nil {
 			return "", err
 		}
 		return "service-b-value", nil
 	})
 
-	do.ProvideNamed(root, "service-c", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "service-a")
+	doger.ProvideNamed(root, "service-c", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "service-a")
 		if err != nil {
 			return "", err
 		}
@@ -155,7 +155,7 @@ func TestVirtualScopeCircularDependencyDetection(t *testing.T) {
 	})
 
 	// Attempting to invoke should detect circular dependency
-	_, err := do.InvokeNamed[string](root, "service-a")
+	_, err := doger.InvokeNamed[string](root, "service-a")
 	is.Error(err)
 	is.Contains(err.Error(), "circular dependency")
 }
@@ -165,26 +165,26 @@ func TestVirtualScopeNestedScopes(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 	child1 := root.Scope("child1")
 	child2 := child1.Scope("child2")
 
 	// Services in different scopes
-	do.ProvideNamedValue(root, "root-service", "root-value")
-	do.ProvideNamedValue(child1, "child1-service", "child1-value")
-	do.ProvideNamedValue(child2, "child2-service", "child2-value")
+	doger.ProvideNamedValue(root, "root-service", "root-value")
+	doger.ProvideNamedValue(child1, "child1-service", "child1-value")
+	doger.ProvideNamedValue(child2, "child2-service", "child2-value")
 
 	// Service in child2 that depends on services in parent scopes
-	do.ProvideNamed(child2, "dependent-service", func(i do.Injector) (string, error) {
-		rootVal, err := do.InvokeNamed[string](i, "root-service")
+	doger.ProvideNamed(child2, "dependent-service", func(i doger.Injector) (string, error) {
+		rootVal, err := doger.InvokeNamed[string](i, "root-service")
 		if err != nil {
 			return "", err
 		}
-		child1Val, err := do.InvokeNamed[string](i, "child1-service")
+		child1Val, err := doger.InvokeNamed[string](i, "child1-service")
 		if err != nil {
 			return "", err
 		}
-		child2Val, err := do.InvokeNamed[string](i, "child2-service")
+		child2Val, err := doger.InvokeNamed[string](i, "child2-service")
 		if err != nil {
 			return "", err
 		}
@@ -192,7 +192,7 @@ func TestVirtualScopeNestedScopes(t *testing.T) {
 	})
 
 	// Invoke the dependent service
-	result, err := do.InvokeNamed[string](child2, "dependent-service")
+	result, err := doger.InvokeNamed[string](child2, "dependent-service")
 	is.NoError(err)
 	is.Equal("root-value-child1-value-child2-value", result)
 }
@@ -202,11 +202,11 @@ func TestVirtualScopeServiceNotFound(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Service that depends on a non-existent service
-	do.ProvideNamed(root, "dependent-service", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "non-existent-service")
+	doger.ProvideNamed(root, "dependent-service", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "non-existent-service")
 		if err != nil {
 			return "", err
 		}
@@ -214,7 +214,7 @@ func TestVirtualScopeServiceNotFound(t *testing.T) {
 	})
 
 	// Attempting to invoke should fail with service not found error
-	_, err := do.InvokeNamed[string](root, "dependent-service")
+	_, err := doger.InvokeNamed[string](root, "dependent-service")
 	is.Error(err)
 	is.Contains(err.Error(), "could not find service")
 }
@@ -224,16 +224,16 @@ func TestVirtualScopeProviderErrors(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Service that returns an error
-	do.ProvideNamed(root, "error-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "error-service", func(i doger.Injector) (string, error) {
 		return "", fmt.Errorf("provider error")
 	})
 
 	// Service that depends on the error service
-	do.ProvideNamed(root, "dependent-service", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "error-service")
+	doger.ProvideNamed(root, "dependent-service", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "error-service")
 		if err != nil {
 			return "", err
 		}
@@ -241,7 +241,7 @@ func TestVirtualScopeProviderErrors(t *testing.T) {
 	})
 
 	// Attempting to invoke should fail with the provider error
-	_, err := do.InvokeNamed[string](root, "dependent-service")
+	_, err := doger.InvokeNamed[string](root, "dependent-service")
 	is.Error(err)
 	is.Contains(err.Error(), "provider error")
 }
@@ -251,16 +251,16 @@ func TestVirtualScopePanicRecovery(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Service that panics
-	do.ProvideNamed(root, "panic-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "panic-service", func(i doger.Injector) (string, error) {
 		panic("provider panic")
 	})
 
 	// Service that depends on the panic service
-	do.ProvideNamed(root, "dependent-service", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "panic-service")
+	doger.ProvideNamed(root, "dependent-service", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "panic-service")
 		if err != nil {
 			return "", err
 		}
@@ -268,7 +268,7 @@ func TestVirtualScopePanicRecovery(t *testing.T) {
 	})
 
 	// Attempting to invoke should fail with panic error
-	_, err := do.InvokeNamed[string](root, "dependent-service")
+	_, err := doger.InvokeNamed[string](root, "dependent-service")
 	is.Error(err)
 	is.Contains(err.Error(), "panic")
 }
@@ -278,23 +278,23 @@ func TestVirtualScopeMemoryLeak(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that can be invoked multiple times
-	do.ProvideNamed(root, "memory-test-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "memory-test-service", func(i doger.Injector) (string, error) {
 		return "test-value", nil
 	})
 
 	// Invoke the service many times to test for memory leaks
 	const numInvocations = 1000
 	for i := 0; i < numInvocations; i++ {
-		result, err := do.InvokeNamed[string](root, "memory-test-service")
+		result, err := doger.InvokeNamed[string](root, "memory-test-service")
 		is.NoError(err)
 		is.Equal("test-value", result)
 	}
 
 	// The service should still work correctly after many invocations
-	result, err := do.InvokeNamed[string](root, "memory-test-service")
+	result, err := doger.InvokeNamed[string](root, "memory-test-service")
 	is.NoError(err)
 	is.Equal("test-value", result)
 }

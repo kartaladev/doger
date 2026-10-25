@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"fmt"
@@ -290,7 +290,7 @@ func TestInvokeByGenericType(t *testing.T) {
 	svcX, err := invokeByGenericType[string](i)
 	is.Empty(svcX)
 	is.Error(err)
-	is.Contains(err.Error(), "DI: could not find service satisfying interface `string`, available services: `*github.com/samber/do/v2.lazyTest`")
+	is.Contains(err.Error(), "DI: could not find service satisfying interface `string`, available services: `*github.com/kartaladev/doger.lazyTest`")
 
 	// test virtual scope wrapper
 	called := false
@@ -298,7 +298,7 @@ func TestInvokeByGenericType(t *testing.T) {
 		// check we received a virtualScope
 		vs, ok := ivs.(*virtualScope)
 		is.True(ok)
-		is.Equal([]string{"*github.com/samber/do/v2.eagerTest"}, vs.invokerChain)
+		is.Equal([]string{"*github.com/kartaladev/doger.eagerTest"}, vs.invokerChain)
 		is.NotEqual(i, ivs)
 
 		// create a dependency/dependent relationship
@@ -310,12 +310,12 @@ func TestInvokeByGenericType(t *testing.T) {
 	_, _ = invokeByGenericType[*eagerTest](i)
 	is.True(called)
 	// check dependency/dependent relationship
-	dependencies, dependents := i.dag.explainService(i.self.id, i.self.name, "*github.com/samber/do/v2.eagerTest")
-	is.ElementsMatch([]ServiceDescription{{ScopeID: i.self.id, ScopeName: i.self.name, Service: "*github.com/samber/do/v2.lazyTest"}}, dependencies)
+	dependencies, dependents := i.dag.explainService(i.self.id, i.self.name, "*github.com/kartaladev/doger.eagerTest")
+	is.ElementsMatch([]ServiceDescription{{ScopeID: i.self.id, ScopeName: i.self.name, Service: "*github.com/kartaladev/doger.lazyTest"}}, dependencies)
 	is.ElementsMatch([]ServiceDescription{}, dependents)
 
 	// test circular dependency
-	vs := newVirtualScope(i, []string{"*github.com/samber/do/v2.eagerTest", "bar"})
+	vs := newVirtualScope(i, []string{"*github.com/kartaladev/doger.eagerTest", "bar"})
 	var svc1 *eagerTest
 	svc1, err = invokeByGenericType[*eagerTest](vs)
 	is.Error(err)
@@ -323,7 +323,7 @@ func TestInvokeByGenericType(t *testing.T) {
 	is.Empty(svc1)
 	is.ErrorIs(err, ErrCircularDependency)
 
-	is.EqualError(err, "DI: circular dependency detected: `*github.com/samber/do/v2.eagerTest` -> `bar` -> `*github.com/samber/do/v2.eagerTest`")
+	is.EqualError(err, "DI: circular dependency detected: `*github.com/kartaladev/doger.eagerTest` -> `bar` -> `*github.com/kartaladev/doger.eagerTest`")
 
 	// Test with nil injector (should use default root scope)
 	// Note: Skipping DefaultRootScope tests due to parallel test conflicts
@@ -332,7 +332,7 @@ func TestInvokeByGenericType(t *testing.T) {
 	svc4, err := invokeByGenericType[Healthchecker](i)
 	is.Empty(svc4)
 	is.Error(err)
-	is.Contains(err.Error(), "DI: could not find service satisfying interface `github.com/samber/do/v2.Healthchecker`")
+	is.Contains(err.Error(), "DI: could not find service satisfying interface `github.com/kartaladev/doger.Healthchecker`")
 
 	// Test provider error with different service type
 	// Note: Skipping provider error tests due to service conflicts
@@ -530,11 +530,11 @@ func TestInvokeByTags(t *testing.T) {
 
 	// use tag but wrong type
 	type namedDependencyButTypeMismatch struct {
-		EagerTest *int `do:"*github.com/samber/do/v2.eagerTest"`
+		EagerTest *int `do:"*github.com/kartaladev/doger.eagerTest"`
 	}
 	test6 := namedDependencyButTypeMismatch{}
 	err = invokeByTags(i, "*myStruct", reflect.ValueOf(&test6), false)
-	is.Equal("DI: `*github.com/samber/do/v2.eagerTest` is not assignable to field `*myStruct.EagerTest`", err.Error())
+	is.Equal("DI: `*github.com/kartaladev/doger.eagerTest` is not assignable to field `*myStruct.EagerTest`", err.Error())
 
 	// use a custom tag
 	i = NewWithOpts(&InjectorOpts{StructTagKey: "hello"})
@@ -564,7 +564,7 @@ func TestInvokeByTags_ImplicitAliasing_FallbackOnNotFound(t *testing.T) {
 	s := foobar{}
 	err := invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
 	is.Error(err)
-	is.Equal("DI: could not find service `github.com/samber/do/v2.Healthchecker`, no service available", err.Error())
+	is.Equal("DI: could not find service `github.com/kartaladev/doger.Healthchecker`, no service available", err.Error())
 	is.Nil(s.Dep)
 
 	// Now, declare a service with the right type
@@ -612,7 +612,7 @@ func TestInvokeByTags_ImplicitAliasing_NoFallbackOnOtherErrors(t *testing.T) {
 	s := foobar{}
 	err := invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
 	is.Error(err)
-	is.Equal("DI: could not find service `bad`, available services: `*github.com/samber/do/v2.lazyTestHeathcheckerOK`", err.Error())
+	is.Equal("DI: could not find service `bad`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`", err.Error())
 	is.Nil(s.Dep)
 
 	// Now, declare a service with a wrong type
@@ -746,6 +746,52 @@ func TestServiceNotFound(t *testing.T) {
 	err = serviceNotFound(rootScope, ErrServiceNotFound, []string{"not-found"})
 	is.Error(err)
 	is.Contains(err.Error(), unicodeName)
+}
+
+func TestInvoke_NotFoundNamesLibraryTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		setup   func(Injector)
+		invoke  func(Injector) error
+		message string
+	}{
+		{
+			name:  "empty_scope",
+			setup: func(Injector) {},
+			invoke: func(i Injector) error {
+				_, err := Invoke[*RootScope](i)
+				return err
+			},
+			message: "DI: could not find service `*github.com/kartaladev/doger.RootScope`, no service available",
+		},
+		{
+			name:  "int_registered",
+			setup: func(i Injector) { ProvideValue(i, 42) },
+			invoke: func(i Injector) error {
+				_, err := Invoke[Healthchecker](i)
+				return err
+			},
+			message: "DI: could not find service `github.com/kartaladev/doger.Healthchecker`, available services: `int`",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
+			is := assert.New(t)
+
+			i := New()
+			tt.setup(i)
+
+			err := tt.invoke(i)
+			is.ErrorIs(err, ErrServiceNotFound)
+			is.EqualError(err, tt.message)
+		})
+	}
 }
 
 func TestHandleProviderPanic(t *testing.T) {

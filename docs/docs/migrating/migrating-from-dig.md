@@ -1,23 +1,23 @@
 ---
 title: From Uber Dig
-description: Migrate your dependency injection from Uber Dig to samber/do
+description: Migrate your dependency injection from Uber Dig to doger
 sidebar_position: 3
 ---
 
 # Migrating from Uber Dig
 
-This guide will help you migrate your dependency injection setup from Uber Dig to `samber/do`.
+This guide will help you migrate your dependency injection setup from Uber Dig to `doger`.
 
 ## Overview {#overview}
 
-Uber Dig and `samber/do` are both runtime dependency injection libraries for Go, but they have different APIs and features:
+Uber Dig and `doger` are both runtime dependency injection libraries for Go, but they have different APIs and features:
 
 - **Uber Dig**: Uses a builder pattern with `dig.New()` and `Provide`/`Invoke` methods
-- **samber/do**: Uses a fluent API with `do.New()` and similar `Provide`/`Invoke` methods
+- **doger**: Uses a fluent API with `doger.New()` and similar `Provide`/`Invoke` methods
 
 ## Key Differences {#key-differences}
 
-| Feature               | Uber Dig                      | samber/do                      |
+| Feature               | Uber Dig                      | doger                          |
 | --------------------- | ----------------------------- | ------------------------------ |
 | **API Style**         | Builder pattern               | Fluent API                     |
 | **Error Handling**    | Returns errors from `Build()` | Returns errors from `Invoke()` |
@@ -51,13 +51,13 @@ func main() {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-import "github.com/samber/do/v2"
+import "github.com/kartaladev/doger"
 
 func main() {
-    injector := do.New()
+    injector := doger.New()
     // ... setup injector
 }
 ```
@@ -78,11 +78,11 @@ if err != nil {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-do.Provide(injector, NewDatabase)
-do.Provide(injector, NewUserService)
+doger.Provide(injector, NewDatabase)
+doger.Provide(injector, NewUserService)
 ```
 
 ### 4. Update Service Invocation {#4-update-service-invocation}
@@ -98,22 +98,22 @@ if err != nil {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-app, err := do.Invoke[*App](injector)
+app, err := doger.Invoke[*App](injector)
 if err != nil {
     log.Fatal(err)
 }
 // or
-app := do.MustInvoke[*App](injector)
+app := doger.MustInvoke[*App](injector)
 
 app.Run()
 ```
 
 ### 5. Handle Constructor Functions {#5-handle-constructor-functions}
 
-Dig and `samber/do` use different constructor function signatures. `samber/do` constructors receive `do.Injector` as the first parameter and return an additional error:
+Dig and `doger` use different constructor function signatures. `doger` constructors receive `doger.Injector` as the first parameter and return an additional error:
 
 **Before (Dig):**
 
@@ -127,17 +127,17 @@ func NewDatabase(config *Config) *Database {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-func NewUserService(i do.Injector) (*UserService, error) {
-    // if service is not found, `do` will catch the panic and return an `error`
-    db := do.MustInvoke[*Database](i)
+func NewUserService(i doger.Injector) (*UserService, error) {
+    // if service is not found, `doger` will catch the panic and return an `error`
+    db := doger.MustInvoke[*Database](i)
     return &UserService{db: db}, nil
 }
 
-func NewDatabase(i do.Injector) (*Database, error) {
-    config := do.MustInvoke[*Config](i)
+func NewDatabase(i doger.Injector) (*Database, error) {
+    config := doger.MustInvoke[*Config](i)
     return &Database{config: config}, nil
 }
 ```
@@ -152,10 +152,10 @@ err := container.Provide(func() Repository {
 })
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-do.Provide(injector, func(i do.Injector) (Repository, error) {
+doger.Provide(injector, func(i doger.Injector) (Repository, error) {
     return &UserRepository{}, nil
 })
 ```
@@ -164,26 +164,26 @@ Or declare an explicit binding:
 
 ```go
 // Register the concrete implementation
-do.Provide(injector, func(i do.Injector) (*UserRepository, error) {
-    repo := do.MustInvoke[*UserRepository](i)
+doger.Provide(injector, func(i doger.Injector) (*UserRepository, error) {
+    repo := doger.MustInvoke[*UserRepository](i)
     return repo, nil
 })
 
 // Register the interface binding
-do.As[*UserRepository, Repository](i)
+doger.As[*UserRepository, Repository](i)
 ```
 
 Or bind on service loading:
 
 ```go
 // Register the concrete implementation
-do.Provide(injector, func(i do.Injector) (*UserRepository, error) {
-    repo := do.MustInvoke[*UserRepository](i)
+doger.Provide(injector, func(i doger.Injector) (*UserRepository, error) {
+    repo := doger.MustInvoke[*UserRepository](i)
     return repo, nil
 })
 
 // Find the matching concrete type during invocation
-userRepository, err := do.InvokeAs[Repository](i)
+userRepository, err := doger.InvokeAs[Repository](i)
 ```
 
 ## Advanced Migration Patterns {#advanced-migration-patterns}
@@ -209,7 +209,7 @@ func ProvideServices() Result {
 err := container.Provide(ProvideServices)
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
 type Result struct {
@@ -217,9 +217,9 @@ type Result struct {
     Service2 *Service2 `do:""`
 }
 
-do.Provide(injector, NewService1)
-do.Provide(injector, NewService2)
-do.Provide(injector, do.InvokeStruct[*Result])
+doger.Provide(injector, NewService1)
+doger.Provide(injector, NewService2)
+doger.Provide(injector, doger.InvokeStruct[*Result])
 ```
 
 ### Parameter Structs {#parameter-structs}
@@ -241,12 +241,12 @@ func NewUserService(params Params) *UserService {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-func NewUserService(i do.Injector) (*UserService, error) {
-    db := do.MustInvoke[*Database](i)
-    logger := do.MustInvoke[*Logger](i)
+func NewUserService(i doger.Injector) (*UserService, error) {
+    db := doger.MustInvoke[*Database](i)
+    logger := doger.MustInvoke[*Logger](i)
 
     return &UserService{
         db:     db,
@@ -274,12 +274,12 @@ func NewUserService(params Params) *UserService {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-func NewUserService(i do.Injector) (*UserService, error) {
-    db := do.MustInvoke[*Database](i)
-    cache, _ := do.Invoke[*Cache](i) // error is ignored
+func NewUserService(i doger.Injector) (*UserService, error) {
+    db := doger.MustInvoke[*Database](i)
+    cache, _ := doger.Invoke[*Cache](i) // error is ignored
     return &UserService{
         db: db,
         cache: cache,
@@ -287,12 +287,12 @@ func NewUserService(i do.Injector) (*UserService, error) {
 }
 
 // Or use conditional registration
-func RegisterServices(injector do.Injector, useCache bool) {
-    do.Provide(injector, NewDatabase)
+func RegisterServices(injector doger.Injector, useCache bool) {
+    doger.Provide(injector, NewDatabase)
     if useCache {
-        do.Provide(injector, NewCache)
+        doger.Provide(injector, NewCache)
     }
-    do.Provide(injector, NewUserService)
+    doger.Provide(injector, NewUserService)
 }
 ```
 
@@ -320,7 +320,7 @@ type Params struct {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 Should be available starting do v2.1
 
 ## Complete Example {#complete-example}
@@ -362,26 +362,26 @@ func main() {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
 package main
 
 import (
     "log"
-    "github.com/samber/do/v2"
+    "github.com/kartaladev/doger"
 )
 
 func main() {
-    injector := do.New()
+    injector := doger.New()
 
     // Register services
-    do.Provide(injector, NewDatabase)
-    do.Provide(injector, NewUserService)
-    do.Provide(injector, NewApp)
+    doger.Provide(injector, NewDatabase)
+    doger.Provide(injector, NewUserService)
+    doger.Provide(injector, NewApp)
 
     // Get the app and run it
-    app, err := do.Invoke[*App](injector)
+    app, err := doger.Invoke[*App](injector)
     if err != nil {
         log.Fatal(err)
     }
@@ -404,10 +404,10 @@ func main() {
 
 ## Common Pitfalls {#common-pitfalls}
 
-1. **Error handling** - `samber/do` returns errors from `Invoke()`, not `Provide()`
-2. **Circular dependencies** - `samber/do` will detect and report these
-3. **Interface bindings** - Use `do.As` for interface implementations
-4. **Panics vs errors** - Prefer `do.MustInvoke` over `do.Invoke` when a missing service should stop the program immediately instead of being handled as a recoverable error
+1. **Error handling** - `doger` returns errors from `Invoke()`, not `Provide()`
+2. **Circular dependencies** - `doger` will detect and report these
+3. **Interface bindings** - Use `doger.As` for interface implementations
+4. **Panics vs errors** - Prefer `doger.MustInvoke` over `doger.Invoke` when a missing service should stop the program immediately instead of being handled as a recoverable error
 
 ## Testing {#testing}
 
@@ -415,13 +415,13 @@ Your existing tests should work with minimal changes:
 
 ```go
 func TestUserService(t *testing.T) {
-    injector := do.New()
+    injector := doger.New()
 
     // Register test dependencies
-    do.Provide(injector, NewMockDatabase)
-    do.Provide(injector, NewUserService)
+    doger.Provide(injector, NewMockDatabase)
+    doger.Provide(injector, NewUserService)
 
-    service := do.MustInvoke[*UserService](injector)
+    service := doger.MustInvoke[*UserService](injector)
 
     // Your test logic here
 }
@@ -429,7 +429,7 @@ func TestUserService(t *testing.T) {
 
 ## Next Steps {#next-steps}
 
-After migration, consider exploring these `samber/do` features:
+After migration, consider exploring these `doger` features:
 
 - [Interface binding](/docs/service-invocation/accept-interfaces-return-structs.md)
 - [Scoped Services](/docs/container/scope.md)

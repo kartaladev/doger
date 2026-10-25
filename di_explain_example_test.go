@@ -1,10 +1,10 @@
-package do
+package doger
 
 import (
 	"fmt"
 	"time"
 
-	"github.com/samber/do/v2/stacktrace"
+	"github.com/kartaladev/doger/stacktrace"
 )
 
 type explainTestService struct {
@@ -51,13 +51,13 @@ func ExampleExplainService() {
 	fmt.Println(explanation.String())
 	// Output:
 	// true
-	// *github.com/samber/do/v2.explainTestService
+	// *github.com/kartaladev/doger.explainTestService
 	// lazy
 	//
 	// Scope ID: 980e2f60-d340-4776-86dd-6aa1d3c27860
 	// Scope name: [root]
 	//
-	// Service name: *github.com/samber/do/v2.explainTestService
+	// Service name: *github.com/kartaladev/doger.explainTestService
 	// Service type: lazy
 	// Service build time: 10ms
 	// Invoked: di_explain_example_test.go:newExplainTestService:42

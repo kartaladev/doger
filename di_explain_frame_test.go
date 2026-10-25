@@ -1,10 +1,10 @@
-package do_test
+package doger_test
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,7 +13,7 @@ type explainFrameDB struct{}
 
 func (*explainFrameDB) HealthCheck() error { return nil }
 
-func newExplainFrameDB(do.Injector) (*explainFrameDB, error) {
+func newExplainFrameDB(doger.Injector) (*explainFrameDB, error) {
 	return &explainFrameDB{}, nil
 }
 
@@ -22,27 +22,27 @@ func TestExplainService_ProviderFrame(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		register func(t *testing.T, i do.Injector)
-		explain  func(i do.Injector) (do.ExplainServiceOutput, bool)
+		register func(t *testing.T, i doger.Injector)
+		explain  func(i doger.Injector) (doger.ExplainServiceOutput, bool)
 		file     string
 		function string
 	}{
 		{
 			name: "eager",
-			register: func(t *testing.T, i do.Injector) {
-				do.ProvideValue(i, &explainFrameDB{})
+			register: func(t *testing.T, i doger.Injector) {
+				doger.ProvideValue(i, &explainFrameDB{})
 			},
-			explain:  do.ExplainService[*explainFrameDB],
+			explain:  doger.ExplainService[*explainFrameDB],
 			file:     "/service_eager.go",
 			function: "newServiceEager",
 		},
 		{
 			name: "alias",
-			register: func(t *testing.T, i do.Injector) {
-				do.Provide(i, newExplainFrameDB)
-				require.NoError(t, do.As[*explainFrameDB, do.Healthchecker](i))
+			register: func(t *testing.T, i doger.Injector) {
+				doger.Provide(i, newExplainFrameDB)
+				require.NoError(t, doger.As[*explainFrameDB, doger.Healthchecker](i))
 			},
-			explain:  do.ExplainService[do.Healthchecker],
+			explain:  doger.ExplainService[doger.Healthchecker],
 			file:     "/service_alias.go",
 			function: "newServiceAlias",
 		},
@@ -55,7 +55,7 @@ func TestExplainService_ProviderFrame(t *testing.T) {
 			is := assert.New(t)
 			must := require.New(t)
 
-			i := do.New()
+			i := doger.New()
 			tt.register(t, i)
 
 			output, ok := tt.explain(i)

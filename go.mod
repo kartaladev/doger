@@ -1,4 +1,4 @@
-module github.com/samber/do/v2
+module github.com/kartaladev/doger
 
 go 1.18
 

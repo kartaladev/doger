@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 //
@@ -40,99 +40,99 @@ func (s *benchShutdowner) Shutdown() {}
 //
 
 func BenchmarkInvokeLazySteadyState(b *testing.B) {
-	injector := do.New()
-	do.Provide(injector, func(i do.Injector) (*benchSvcA, error) {
+	injector := doger.New()
+	doger.Provide(injector, func(i doger.Injector) (*benchSvcA, error) {
 		return &benchSvcA{}, nil
 	})
-	_ = do.MustInvoke[*benchSvcA](injector)
+	_ = doger.MustInvoke[*benchSvcA](injector)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		_, _ = do.Invoke[*benchSvcA](injector)
+		_, _ = doger.Invoke[*benchSvcA](injector)
 	}
 }
 
 func BenchmarkInvokeLazyParallel(b *testing.B) {
-	injector := do.New()
-	do.Provide(injector, func(i do.Injector) (*benchSvcA, error) {
+	injector := doger.New()
+	doger.Provide(injector, func(i doger.Injector) (*benchSvcA, error) {
 		return &benchSvcA{}, nil
 	})
-	_ = do.MustInvoke[*benchSvcA](injector)
+	_ = doger.MustInvoke[*benchSvcA](injector)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, _ = do.Invoke[*benchSvcA](injector)
+			_, _ = doger.Invoke[*benchSvcA](injector)
 		}
 	})
 }
 
 func BenchmarkInvokeNamed(b *testing.B) {
-	injector := do.New()
-	do.ProvideNamed(injector, "bench-svc", func(i do.Injector) (*benchSvcA, error) {
+	injector := doger.New()
+	doger.ProvideNamed(injector, "bench-svc", func(i doger.Injector) (*benchSvcA, error) {
 		return &benchSvcA{}, nil
 	})
-	_ = do.MustInvokeNamed[*benchSvcA](injector, "bench-svc")
+	_ = doger.MustInvokeNamed[*benchSvcA](injector, "bench-svc")
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		_, _ = do.InvokeNamed[*benchSvcA](injector, "bench-svc")
+		_, _ = doger.InvokeNamed[*benchSvcA](injector, "bench-svc")
 	}
 }
 
 func BenchmarkInvokeTransient(b *testing.B) {
-	injector := do.New()
-	do.ProvideTransient(injector, func(i do.Injector) (*benchSvcA, error) {
+	injector := doger.New()
+	doger.ProvideTransient(injector, func(i doger.Injector) (*benchSvcA, error) {
 		return &benchSvcA{}, nil
 	})
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		_, _ = do.Invoke[*benchSvcA](injector)
+		_, _ = doger.Invoke[*benchSvcA](injector)
 	}
 }
 
 func BenchmarkInvokeAlias(b *testing.B) {
-	injector := do.New()
-	do.Provide(injector, func(i do.Injector) (*benchSvcImpl, error) {
+	injector := doger.New()
+	doger.Provide(injector, func(i doger.Injector) (*benchSvcImpl, error) {
 		return &benchSvcImpl{}, nil
 	})
-	if err := do.As[*benchSvcImpl, benchIface](injector); err != nil {
+	if err := doger.As[*benchSvcImpl, benchIface](injector); err != nil {
 		b.Fatal(err)
 	}
-	_ = do.MustInvoke[benchIface](injector)
+	_ = doger.MustInvoke[benchIface](injector)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		_, _ = do.Invoke[benchIface](injector)
+		_, _ = doger.Invoke[benchIface](injector)
 	}
 }
 
 func BenchmarkInvokeAs(b *testing.B) {
-	injector := do.New()
+	injector := doger.New()
 	for j := 0; j < 19; j++ {
-		do.ProvideNamedValue(injector, fmt.Sprintf("bench-filler-%d", j), &benchSvcA{})
+		doger.ProvideNamedValue(injector, fmt.Sprintf("bench-filler-%d", j), &benchSvcA{})
 	}
-	do.Provide(injector, func(i do.Injector) (*benchSvcImpl, error) {
+	doger.Provide(injector, func(i doger.Injector) (*benchSvcImpl, error) {
 		return &benchSvcImpl{}, nil
 	})
-	_ = do.MustInvokeAs[benchIface](injector)
+	_ = doger.MustInvokeAs[benchIface](injector)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		_, _ = do.InvokeAs[benchIface](injector)
+		_, _ = doger.InvokeAs[benchIface](injector)
 	}
 }
 
 func BenchmarkInvokeNestedScopes(b *testing.B) {
-	injector := do.New()
-	do.Provide(injector, func(i do.Injector) (*benchSvcA, error) {
+	injector := doger.New()
+	doger.Provide(injector, func(i doger.Injector) (*benchSvcA, error) {
 		return &benchSvcA{}, nil
 	})
 
@@ -140,38 +140,38 @@ func BenchmarkInvokeNestedScopes(b *testing.B) {
 	for j := 2; j <= 5; j++ {
 		scope = scope.Scope(fmt.Sprintf("level-%d", j))
 	}
-	_ = do.MustInvoke[*benchSvcA](scope)
+	_ = doger.MustInvoke[*benchSvcA](scope)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		_, _ = do.Invoke[*benchSvcA](scope)
+		_, _ = doger.Invoke[*benchSvcA](scope)
 	}
 }
 
 func BenchmarkProviderChainTransient(b *testing.B) {
-	injector := do.New()
-	do.Provide(injector, func(i do.Injector) (*benchSvcA, error) {
+	injector := doger.New()
+	doger.Provide(injector, func(i doger.Injector) (*benchSvcA, error) {
 		return &benchSvcA{}, nil
 	})
-	do.Provide(injector, func(i do.Injector) (*benchSvcB, error) {
+	doger.Provide(injector, func(i doger.Injector) (*benchSvcB, error) {
 		return &benchSvcB{}, nil
 	})
-	do.Provide(injector, func(i do.Injector) (*benchSvcC, error) {
+	doger.Provide(injector, func(i doger.Injector) (*benchSvcC, error) {
 		return &benchSvcC{}, nil
 	})
-	do.ProvideTransient(injector, func(i do.Injector) (*benchSvcTop, error) {
-		_ = do.MustInvoke[*benchSvcA](i)
-		_ = do.MustInvoke[*benchSvcB](i)
-		_ = do.MustInvoke[*benchSvcC](i)
+	doger.ProvideTransient(injector, func(i doger.Injector) (*benchSvcTop, error) {
+		_ = doger.MustInvoke[*benchSvcA](i)
+		_ = doger.MustInvoke[*benchSvcB](i)
+		_ = doger.MustInvoke[*benchSvcC](i)
 		return &benchSvcTop{}, nil
 	})
-	_ = do.MustInvoke[*benchSvcTop](injector)
+	_ = doger.MustInvoke[*benchSvcTop](injector)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		_, _ = do.Invoke[*benchSvcTop](injector)
+		_, _ = doger.Invoke[*benchSvcTop](injector)
 	}
 }
 
@@ -188,9 +188,9 @@ func BenchmarkProvide(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		injector := do.New()
+		injector := doger.New()
 		for j := 0; j < 100; j++ {
-			do.ProvideNamedValue(injector, names[j], &benchSvcA{})
+			doger.ProvideNamedValue(injector, names[j], &benchSvcA{})
 		}
 	}
 }
@@ -199,7 +199,7 @@ func BenchmarkNew(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		_ = do.New()
+		_ = doger.New()
 	}
 }
 
@@ -208,13 +208,13 @@ func BenchmarkNew(b *testing.B) {
 //
 
 func BenchmarkHealthCheck(b *testing.B) {
-	injector := do.New()
+	injector := doger.New()
 	for j := 0; j < 50; j++ {
 		name := fmt.Sprintf("bench-hc-%d", j)
-		do.ProvideNamed(injector, name, func(i do.Injector) (*benchHealthchecker, error) {
+		doger.ProvideNamed(injector, name, func(i doger.Injector) (*benchHealthchecker, error) {
 			return &benchHealthchecker{}, nil
 		})
-		_ = do.MustInvokeNamed[*benchHealthchecker](injector, name)
+		_ = doger.MustInvokeNamed[*benchHealthchecker](injector, name)
 	}
 
 	b.ReportAllocs()
@@ -230,19 +230,19 @@ func BenchmarkShutdown(b *testing.B) {
 	b.StopTimer()
 	for n := 0; n < b.N; n++ {
 		// Build a 20-service dependency chain, fully instantiated.
-		injector := do.New()
-		do.ProvideNamed(injector, "bench-chain-0", func(i do.Injector) (*benchShutdowner, error) {
+		injector := doger.New()
+		doger.ProvideNamed(injector, "bench-chain-0", func(i doger.Injector) (*benchShutdowner, error) {
 			return &benchShutdowner{}, nil
 		})
 		for j := 1; j < 20; j++ {
 			name := fmt.Sprintf("bench-chain-%d", j)
 			dependency := fmt.Sprintf("bench-chain-%d", j-1)
-			do.ProvideNamed(injector, name, func(i do.Injector) (*benchShutdowner, error) {
-				_ = do.MustInvokeNamed[*benchShutdowner](i, dependency)
+			doger.ProvideNamed(injector, name, func(i doger.Injector) (*benchShutdowner, error) {
+				_ = doger.MustInvokeNamed[*benchShutdowner](i, dependency)
 				return &benchShutdowner{}, nil
 			})
 		}
-		_ = do.MustInvokeNamed[*benchShutdowner](injector, "bench-chain-19")
+		_ = doger.MustInvokeNamed[*benchShutdowner](injector, "bench-chain-19")
 
 		b.StartTimer()
 		_ = injector.Shutdown()
@@ -255,11 +255,11 @@ func BenchmarkShutdown(b *testing.B) {
 //
 
 func BenchmarkListProvidedServices(b *testing.B) {
-	injector := do.New()
-	var scope do.Injector = injector
+	injector := doger.New()
+	var scope doger.Injector = injector
 	for level := 0; level < 3; level++ {
 		for j := 0; j < 10; j++ {
-			do.ProvideNamedValue(scope, fmt.Sprintf("bench-svc-%d-%d", level, j), &benchSvcA{})
+			doger.ProvideNamedValue(scope, fmt.Sprintf("bench-svc-%d-%d", level, j), &benchSvcA{})
 		}
 		scope = scope.Scope(fmt.Sprintf("level-%d", level+1))
 	}
@@ -272,7 +272,7 @@ func BenchmarkListProvidedServices(b *testing.B) {
 }
 
 func BenchmarkAncestors(b *testing.B) {
-	injector := do.New()
+	injector := doger.New()
 	scope := injector.Scope("level-1")
 	for j := 2; j <= 10; j++ {
 		scope = scope.Scope(fmt.Sprintf("level-%d", j))

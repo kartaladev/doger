@@ -1,17 +1,13 @@
-module github.com/samber/do/http/fiber/v2
+module github.com/kartaladev/doger/http/fiber
 
 go 1.25
 
-replace github.com/samber/do/v2 => ../../
-
-require (
-	github.com/gofiber/fiber/v2 v2.52.16
-	github.com/samber/do/v2 v2.0.0-00010101000000-000000000000
-)
+require github.com/gofiber/fiber/v2 v2.52.16
 
 require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -23,3 +19,5 @@ require (
 	github.com/valyala/tcplisten v1.0.0 // indirect
 	golang.org/x/sys v0.28.0 // indirect
 )
+
+replace github.com/kartaladev/doger => ../../

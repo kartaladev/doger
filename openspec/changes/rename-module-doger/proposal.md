@@ -24,7 +24,7 @@ This repository is now an independent fork that is allowed to diverge from upstr
 
 ### Modified Capabilities
 
-None at planning time. `service-source-tracking` (from `fix-stacktrace-frame-filter`, archived before this change is applied) names the old module path and `do.` qualifiers in its scenarios; task 7.3 adds its MODIFIED delta once that main spec exists, so the archived specs agree with `module-identity`.
+- `service-source-tracking` (from `fix-stacktrace-frame-filter`, archived before this change): its scenarios named the old module path and `do.` qualifiers. The MODIFIED delta (task 7.3) moves the requirements "Caller frame skips the stacktrace package's own frames", "Own-package classification is independent of file location and module path" and "GOROOT frames are identified by path prefix" to `github.com/kartaladev/doger` and `doger.`, so the archived specs agree with `module-identity`. The classification rows keep their module-path independence evidence through `own_module_cache_renamed`, which now uses a module path other than the library's own (`example.com/fork`). The matching `stacktrace/stacktrace_internal_test.go` rows move with the spec, so spec rows and subtests stay 1:1.
 
 ## Impact
 

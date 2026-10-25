@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Go library: fork of `github.com/samber/do/v2` (generics-based dependency injection). The public API is the product.
+Go library `github.com/kartaladev/doger` (package `doger`): a fork of `github.com/samber/do/v2` (generics-based dependency injection). The public API is the product.
 
 ## Commands
 

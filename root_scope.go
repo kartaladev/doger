@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"context"
@@ -30,8 +30,8 @@ var noOpLogf = func(format string, args ...any) {}
 //
 // Example:
 //
-//	injector := do.New()
-//	do.Provide(injector, func(i do.Injector) (*MyService, error) {
+//	injector := doger.New()
+//	doger.Provide(injector, func(i doger.Injector) (*MyService, error) {
 //	    return &MyService{}, nil
 //	})
 func New(packages ...func(Injector)) *RootScope {
@@ -51,13 +51,13 @@ func New(packages ...func(Injector)) *RootScope {
 //
 // Example:
 //
-//	opts := &do.InjectorOpts{
+//	opts := &doger.InjectorOpts{
 //	    Logf: func(format string, args ...any) {
 //	        log.Printf(format, args...)
 //	    },
 //	    HealthCheckParallelism: 10,
 //	}
-//	injector := do.NewWithOpts(opts)
+//	injector := doger.NewWithOpts(opts)
 func NewWithOpts(opts *InjectorOpts, packages ...func(Injector)) *RootScope {
 	if opts == nil {
 		opts = &InjectorOpts{}

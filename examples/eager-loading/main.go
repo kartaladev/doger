@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 func main() {
 	// Create injector with detailed logging for demonstration
-	injector := do.NewWithOpts(&do.InjectorOpts{
+	injector := doger.NewWithOpts(&doger.InjectorOpts{
 		Logf: func(format string, args ...any) {
 			fmt.Printf("[DI] "+format+"\n", args...)
 		},
@@ -22,7 +22,7 @@ func main() {
 
 	// Step 1: Register Configuration (eager)
 	fmt.Println("Step 1: Registering Configuration (eager)")
-	do.ProvideValue(injector, &Configuration{
+	doger.ProvideValue(injector, &Configuration{
 		AppName:   "MyApp",
 		Port:      8080,
 		Debug:     true,
@@ -31,15 +31,15 @@ func main() {
 
 	// Step 2: Register Database (eager with dependency injection)
 	fmt.Println("Step 2: Registering Database (eager with config dependency)")
-	do.ProvideValue(injector, &Database{
-		Config: do.MustInvoke[*Configuration](injector),
+	doger.ProvideValue(injector, &Database{
+		Config: doger.MustInvoke[*Configuration](injector),
 		URL:    "postgres://localhost:5432/mydb",
 	})
 
 	// Step 3: Register Logger (eager with dependency injection)
 	fmt.Println("Step 3: Registering Logger (eager with config dependency)")
-	do.ProvideValue(injector, &Logger{
-		Config: do.MustInvoke[*Configuration](injector),
+	doger.ProvideValue(injector, &Logger{
+		Config: doger.MustInvoke[*Configuration](injector),
 		Level:  "INFO",
 	})
 
@@ -48,16 +48,16 @@ func main() {
 
 	// Step 4: Register Application (lazy - for comparison)
 	fmt.Println("\nStep 4: Registering Application (lazy - for comparison)")
-	do.Provide(injector, func(i do.Injector) (*Application, error) {
+	doger.Provide(injector, func(i doger.Injector) (*Application, error) {
 		return &Application{
-			Config: do.MustInvoke[*Configuration](i),
-			DB:     do.MustInvoke[*Database](i),
-			Logger: do.MustInvoke[*Logger](i),
+			Config: doger.MustInvoke[*Configuration](i),
+			DB:     doger.MustInvoke[*Database](i),
+			Logger: doger.MustInvoke[*Logger](i),
 		}, nil
 	})
 
 	fmt.Println("\n=== Starting Application ===")
-	app := do.MustInvoke[*Application](injector)
+	app := doger.MustInvoke[*Application](injector)
 	app.Start()
 
 	fmt.Println("\n=== Eager Loading Benefits ===")

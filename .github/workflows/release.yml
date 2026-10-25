@@ -10,12 +10,25 @@ on:
 
 jobs:
   release:
-    if: github.triggering_actor == 'samber'
+    # forks of this repository cannot cut releases of github.com/kartaladev/doger
+    if: github.repository == 'kartaladev/doger'
     runs-on: ubuntu-latest
     # required to push the release tag and create the GitHub release
     permissions:
       contents: write
     steps:
+    # the module path has no /vN suffix, so only v0 and v1 versions are valid;
+    # pre-releases such as v0.2.0-rc.1 are allowed
+    - name: Check semver
+      env:
+        SEMVER: ${{ inputs.semver }}
+      run: |
+          re='^v[01]\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if ! [[ "$SEMVER" =~ $re ]]; then
+            echo "::error::semver '$SEMVER' must be a v0 or v1 version such as v0.1.0 or v0.2.0-rc.1 (module path github.com/kartaladev/doger has no major-version suffix)"
+            exit 1
+          fi
+
     - uses: actions/checkout@v7
 
     - name: Set up Go
@@ -37,6 +50,17 @@ jobs:
     - name: Cleanup dependencies
       run: go mod tidy
 
+    # consumers ignore the adapters' local replace directives, so each adapter
+    # must require the root module at the version being released
+    - name: Pin HTTP adapters to the released root version
+      env:
+        SEMVER: ${{ inputs.semver }}
+      run: |
+          for dir in http/*/; do
+            [ -f "${dir}go.mod" ] || continue
+            (cd "$dir" && go mod edit -require="github.com/kartaladev/doger@${SEMVER}")
+          done
+
     - name: List files
       run: tree -Cfi
     - name: Write new go.mod into logs
@@ -44,15 +68,26 @@ jobs:
     - name: Write new go.sum into logs
       run: cat go.sum
 
-    - name: Create tag
+    # the root module is tagged <semver>, each HTTP adapter http/<x>/<semver>
+    - name: Create tags
+      env:
+        SEMVER: ${{ inputs.semver }}
+        ACTOR: ${{ github.triggering_actor }}
       run: |
-          git config --global user.name '${{ github.triggering_actor }}'
-          git config --global user.email "${{ github.triggering_actor}}@users.noreply.github.com"
+          git config --global user.name "$ACTOR"
+          git config --global user.email "${ACTOR}@users.noreply.github.com"
 
           git add .
-          git commit --allow-empty -m 'bump ${{ inputs.semver }}'
-          git tag ${{ inputs.semver }}
-          git push origin ${{ inputs.semver }}
+          git commit --allow-empty -m "bump ${SEMVER}"
+          tags=("$SEMVER")
+          for dir in http/*/; do
+            [ -f "${dir}go.mod" ] || continue
+            tags+=("${dir%/}/${SEMVER}")
+          done
+          for tag in "${tags[@]}"; do
+            git tag "$tag"
+          done
+          git push origin "${tags[@]}"
 
     - name: Release
       uses: softprops/action-gh-release@v3

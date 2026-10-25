@@ -1,4 +1,4 @@
-package dohttp
+package dogerhttp
 
 const (
 	keyBasePath         = "BasePath"

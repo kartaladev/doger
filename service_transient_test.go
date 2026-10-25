@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"context"
@@ -83,7 +83,7 @@ func TestNewServiceTransient(t *testing.T) {
 	}
 	service3 := newServiceTransient("struct-service", provider3)
 	is.Equal("struct-service", service3.name)
-	is.Equal("github.com/samber/do/v2.transientTest", service3.typeName)
+	is.Equal("github.com/kartaladev/doger.transientTest", service3.typeName)
 	is.NotNil(service3.provider)
 
 	// Test with pointer provider
@@ -92,7 +92,7 @@ func TestNewServiceTransient(t *testing.T) {
 	}
 	service4 := newServiceTransient("pointer-service", provider4)
 	is.Equal("pointer-service", service4.name)
-	is.Equal("*github.com/samber/do/v2.transientTest", service4.typeName)
+	is.Equal("*github.com/kartaladev/doger.transientTest", service4.typeName)
 	is.NotNil(service4.provider)
 
 	// Test with interface provider
@@ -101,7 +101,7 @@ func TestNewServiceTransient(t *testing.T) {
 	}
 	service5 := newServiceTransient("interface-service", provider5)
 	is.Equal("interface-service", service5.name)
-	is.Equal("github.com/samber/do/v2.Healthchecker", service5.typeName)
+	is.Equal("github.com/kartaladev/doger.Healthchecker", service5.typeName)
 	is.NotNil(service5.provider)
 
 	// Test with slice provider
@@ -181,7 +181,7 @@ func TestServiceTransient_getTypeName(t *testing.T) {
 	is.Equal("int", service1.getTypeName())
 
 	service2 := newServiceTransient("foobar2", provider2)
-	is.Equal("github.com/samber/do/v2.transientTest", service2.getTypeName())
+	is.Equal("github.com/kartaladev/doger.transientTest", service2.getTypeName())
 }
 
 func TestServiceTransient_getServiceType(t *testing.T) {
@@ -592,14 +592,14 @@ func TestServiceTransient_clone(t *testing.T) {
 		return transientTest{foobar: "foobar"}, nil
 	})
 	is.Equal("foobar", service1.getName())
-	is.Equal("github.com/samber/do/v2.transientTest", service1.getTypeName())
+	is.Equal("github.com/kartaladev/doger.transientTest", service1.getTypeName())
 	is.NotNil(service1.provider)
 
 	// clone
 	service2, ok := service1.clone(nil).(*serviceTransient[transientTest])
 	is.True(ok)
 	is.Equal("foobar", service2.getName())
-	is.Equal("github.com/samber/do/v2.transientTest", service2.getTypeName())
+	is.Equal("github.com/kartaladev/doger.transientTest", service2.getTypeName())
 	is.NotNil(service2.provider)
 
 	// change initial and check clone
@@ -610,7 +610,7 @@ func TestServiceTransient_clone(t *testing.T) {
 	// Test that clone is independent
 	service1.typeName = "changed"
 	is.Equal("changed", service1.getTypeName())
-	is.Equal("github.com/samber/do/v2.transientTest", service2.getTypeName())
+	is.Equal("github.com/kartaladev/doger.transientTest", service2.getTypeName())
 
 	// Test with different types
 	service3 := newServiceTransient("int-service", func(i Injector) (int, error) {
@@ -628,7 +628,7 @@ func TestServiceTransient_clone(t *testing.T) {
 	service6, ok := service5.clone(nil).(*serviceTransient[Healthchecker])
 	is.True(ok)
 	is.Equal("interface-service", service6.getName())
-	is.Equal("github.com/samber/do/v2.Healthchecker", service6.getTypeName())
+	is.Equal("github.com/kartaladev/doger.Healthchecker", service6.getTypeName())
 
 	// Test that cloned services can be used independently
 	i := New()

@@ -1,17 +1,17 @@
 ---
 title: Scope tree
-description: Print a samber/do injector's scope tree with do.ExplainInjector to visualize scopes, service types, and which services implement Healthchecker or Shutdowner.
+description: Print a doger injector's scope tree with doger.ExplainInjector to visualize scopes, service types, and which services implement Healthchecker or Shutdowner.
 sidebar_position: 1
 ---
 
 # Scope tree
 
-`do.ExplainInjector` prints the full tree of scopes attached to an injector — every child scope, the services registered in each one, their loading type (lazy, eager, transient), and whether they implement `Healthchecker` or `Shutdowner`. Use it to debug an unexpected dependency resolution or to understand an unfamiliar codebase's module layout.
+`doger.ExplainInjector` prints the full tree of scopes attached to an injector — every child scope, the services registered in each one, their loading type (lazy, eager, transient), and whether they implement `Healthchecker` or `Shutdowner`. Use it to debug an unexpected dependency resolution or to understand an unfamiliar codebase's module layout.
 
 ## Spec {#spec}
 
 ```go
-do.ExplainInjector(do.Injector) do.ExplainInjectorOutput
+doger.ExplainInjector(doger.Injector) doger.ExplainInjectorOutput
 ```
 
 ## Print scope tree {#print-scope-tree}
@@ -19,7 +19,7 @@ do.ExplainInjector(do.Injector) do.ExplainInjectorOutput
 **Play: https://go.dev/play/p/mRs4Q7TJ5jj**
 
 ```go
-debug := do.ExplainInjector(scope)
+debug := doger.ExplainInjector(scope)
 println(debug.String())
 ```
 

@@ -1,7 +1,7 @@
-package dohttp
+package dogerhttp
 
 import (
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 // ServiceHTML generates an HTML page that displays detailed information about a specific service.
@@ -31,13 +31,13 @@ import (
 //	    log.Fatal(err)
 //	}
 //	fmt.Fprint(w, html)
-func ServiceHTML(basePath string, injector do.Injector, scopeID string, serviceName string) (string, error) {
+func ServiceHTML(basePath string, injector doger.Injector, scopeID string, serviceName string) (string, error) {
 	scope, ok := getScopeByID(injector, scopeID)
 	if !ok {
 		return ServiceListHTML(basePath, injector)
 	}
 
-	service, ok := do.ExplainNamedService(scope.Scope, serviceName)
+	service, ok := doger.ExplainNamedService(scope.Scope, serviceName)
 	if !ok {
 		return ServiceListHTML(basePath, injector)
 	}
@@ -51,7 +51,7 @@ func ServiceHTML(basePath string, injector do.Injector, scopeID string, serviceN
 		`<!DOCTYPE html>
 <html>
 <head>
-	<title>Inspect service - samber/do</title>
+	<title>Inspect service - doger</title>
 	<style>
 	</style>
 </head>
@@ -115,7 +115,7 @@ func ServiceHTML(basePath string, injector do.Injector, scopeID string, serviceN
 //
 // Each service is rendered as a clickable link that navigates to the service
 // detail page, with recursive dependencies shown as nested lists.
-func serviceToHTML(basePath string, services []do.ExplainServiceDependencyOutput) string {
+func serviceToHTML(basePath string, services []doger.ExplainServiceDependencyOutput) string {
 	output, _ := fromTemplate(
 		`
 		<ul class="services">
@@ -133,7 +133,7 @@ func serviceToHTML(basePath string, services []do.ExplainServiceDependencyOutput
 	`,
 		map[string]any{
 			keyBasePath: basePath,
-			keyServices: mAp(services, func(service do.ExplainServiceDependencyOutput) map[string]any {
+			keyServices: mAp(services, func(service doger.ExplainServiceDependencyOutput) map[string]any {
 				return map[string]any{
 					keyScopeID:     service.ScopeID,
 					keyServiceName: service.Service,
@@ -168,14 +168,14 @@ func serviceToHTML(basePath string, services []do.ExplainServiceDependencyOutput
 //	    log.Fatal(err)
 //	}
 //	fmt.Fprint(w, html)
-func ServiceListHTML(basePath string, injector do.Injector) (string, error) {
+func ServiceListHTML(basePath string, injector doger.Injector) (string, error) {
 	scopes := getAllScopes(injector)
 
 	return fromTemplate(
 		`<!DOCTYPE html>
 <html>
 	<head>
-		<title>Inspect service - samber/do</title>
+		<title>Inspect service - doger</title>
 		<style>
 		.scope {
 			padding-top: 10px;
@@ -205,14 +205,14 @@ func ServiceListHTML(basePath string, injector do.Injector) (string, error) {
 </html>`,
 		map[string]any{
 			keyBasePath: basePath,
-			keyScopes: mAp(scopes, func(item do.ExplainInjectorScopeOutput) string {
+			keyScopes: mAp(scopes, func(item doger.ExplainInjectorScopeOutput) string {
 				return serviceListScopeToHTML(basePath, item)
 			}),
 		},
 	)
 }
 
-func serviceListScopeToHTML(basePath string, description do.ExplainInjectorScopeOutput) string {
+func serviceListScopeToHTML(basePath string, description doger.ExplainInjectorScopeOutput) string {
 	html, _ := fromTemplate(
 		`
 			Scope:
@@ -234,7 +234,7 @@ func serviceListScopeToHTML(basePath string, description do.ExplainInjectorScope
 			keyBasePath:  basePath,
 			keyScopeID:   description.ScopeID,
 			keyScopeName: description.ScopeName,
-			keyServices: mAp(description.Services, func(item do.ExplainInjectorServiceOutput) string {
+			keyServices: mAp(description.Services, func(item doger.ExplainInjectorServiceOutput) string {
 				return serviceListServiceToHTML(basePath, description.ScopeID, item)
 			}),
 		},
@@ -242,7 +242,7 @@ func serviceListScopeToHTML(basePath string, description do.ExplainInjectorScope
 	return html
 }
 
-func serviceListServiceToHTML(basePath string, scopeID string, description do.ExplainInjectorServiceOutput) string {
+func serviceListServiceToHTML(basePath string, scopeID string, description doger.ExplainInjectorServiceOutput) string {
 	featuresIcons := ""
 
 	if description.IsHealthchecker {

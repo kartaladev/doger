@@ -1,18 +1,12 @@
-module github.com/samber/do/v2/examples/http/echo
+module github.com/kartaladev/doger/examples/http/echo
 
 go 1.26.0
 
-replace github.com/samber/do/v2 => ../../../
-
-replace github.com/samber/do/http/echo/v2 => ../../../http/echo
+require github.com/labstack/echo/v4 v4.16.2
 
 require (
-	github.com/labstack/echo/v4 v4.16.2
-	github.com/samber/do/http/echo/v2 v2.0.0-00010101000000-000000000000
-	github.com/samber/do/v2 v2.0.0-00010101000000-000000000000
-)
-
-require (
+	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
+	github.com/kartaladev/doger/http/echo v0.0.0-00010101000000-000000000000
 	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
@@ -24,3 +18,7 @@ require (
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
+
+replace github.com/kartaladev/doger => ../../../
+
+replace github.com/kartaladev/doger/http/echo => ../../../http/echo

@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/samber/do/v2/stacktrace"
+	"github.com/kartaladev/doger/stacktrace"
 )
 
 /////////////////////////////////////////////////////////////////////////////
@@ -168,10 +168,10 @@ func (sdd *ExplainServiceDependencyOutput) String() string {
 // Example:
 //
 //	// First invoke the service to ensure it's registered
-//		db := do.MustInvoke[*Database](injector)
+//		db := doger.MustInvoke[*Database](injector)
 //
 //	// Then explain it
-//		explanation, found := do.ExplainService[*Database](injector)
+//		explanation, found := doger.ExplainService[*Database](injector)
 //		if found {
 //			fmt.Println(explanation.String())
 //		}
@@ -199,10 +199,10 @@ func ExplainService[T any](i Injector) (description ExplainServiceOutput, ok boo
 // Example:
 //
 //	// First invoke the service to ensure it's registered
-//		db := do.MustInvokeNamed[*Database](injector, "main-db")
+//		db := doger.MustInvokeNamed[*Database](injector, "main-db")
 //
 //	// Then explain it
-//		explanation, found := do.ExplainNamedService(injector, "main-db")
+//		explanation, found := doger.ExplainNamedService(injector, "main-db")
 //		if found {
 //		    fmt.Println(explanation.String())
 //		}
@@ -456,7 +456,7 @@ func (idss *ExplainInjectorServiceOutput) String() string {
 //
 // Example:
 //
-//	explanation := do.ExplainInjector(injector)
+//	explanation := doger.ExplainInjector(injector)
 //	fmt.Println(explanation.String())
 //
 // Play: https://go.dev/play/p/mRs4Q7TJ5jj

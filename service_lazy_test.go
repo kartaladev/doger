@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2/stacktrace"
+	"github.com/kartaladev/doger/stacktrace"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -137,7 +137,7 @@ func TestNewServiceLazy(t *testing.T) {
 	service2 := newServiceLazy("test-service-2", provider2)
 	is.NotNil(service2)
 	is.Equal("test-service-2", service2.getName())
-	is.Equal("github.com/samber/do/v2.lazyTest", service2.getTypeName())
+	is.Equal("github.com/kartaladev/doger.lazyTest", service2.getTypeName())
 	is.Equal(ServiceTypeLazy, service2.getServiceType())
 	is.False(service2.built)
 	is.Equal(lazyTest{}, service2.instance) // Zero value for struct
@@ -149,7 +149,7 @@ func TestNewServiceLazy(t *testing.T) {
 	service3 := newServiceLazy("test-service-3", provider3)
 	is.NotNil(service3)
 	is.Equal("test-service-3", service3.getName())
-	is.Equal("*github.com/samber/do/v2.lazyTest", service3.getTypeName())
+	is.Equal("*github.com/kartaladev/doger.lazyTest", service3.getTypeName())
 	is.Equal(ServiceTypeLazy, service3.getServiceType())
 
 	// Test creating a lazy service with interface provider
@@ -159,7 +159,7 @@ func TestNewServiceLazy(t *testing.T) {
 	service4 := newServiceLazy("test-service-4", provider4)
 	is.NotNil(service4)
 	is.Equal("test-service-4", service4.getName())
-	is.Equal("github.com/samber/do/v2.Healthchecker", service4.getTypeName())
+	is.Equal("github.com/kartaladev/doger.Healthchecker", service4.getTypeName())
 	is.Equal(ServiceTypeLazy, service4.getServiceType())
 
 	// Test that services are not built initially
@@ -208,7 +208,7 @@ func TestServiceLazy_getTypeName(t *testing.T) {
 	is.Equal("int", service1.getTypeName())
 
 	service2 := newServiceLazy("foobar2", provider2)
-	is.Equal("github.com/samber/do/v2.lazyTest", service2.getTypeName())
+	is.Equal("github.com/kartaladev/doger.lazyTest", service2.getTypeName())
 }
 
 func TestServiceLazy_getServiceType(t *testing.T) {

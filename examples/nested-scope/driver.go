@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 /**
@@ -21,12 +21,12 @@ func (d *Driver) Shutdown() {
 	println("driver leaves the car")
 }
 
-func bootDriverModule(injector do.Injector) {
+func bootDriverModule(injector doger.Injector) {
 	// provide driver
-	do.Provide(injector, func(i do.Injector) (*Driver, error) {
+	doger.Provide(injector, func(i doger.Injector) (*Driver, error) {
 		return &Driver{
-			Seat:   do.MustInvokeNamed[*Seat](i, "seat-1"),
-			Engine: do.MustInvoke[*Engine](i),
+			Seat:   doger.MustInvokeNamed[*Seat](i, "seat-1"),
+			Engine: doger.MustInvoke[*Engine](i),
 		}, nil
 	})
 }

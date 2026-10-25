@@ -1,21 +1,21 @@
 ---
 title: Container options
-description: Configure a samber/do injector — default options, the global container, package initialization, custom hooks, and health check timeouts.
+description: Configure a doger injector — default options, the global container, package initialization, custom hooks, and health check timeouts.
 sidebar_position: 2
 ---
 
 # Container options
 
-The DI container in `samber/do` is called an injector (`do.Injector`, implemented by `*do.RootScope`). It can be created with sensible defaults via `do.New()`, or tuned with `do.NewWithOpts()` for hooks, logging, and health check behavior.
+The DI container in `doger` is called an injector (`doger.Injector`, implemented by `*doger.RootScope`). It can be created with sensible defaults via `doger.New()`, or tuned with `doger.NewWithOpts()` for hooks, logging, and health check behavior.
 
 ## Default options {#default-options}
 
 The simplest way to start is to use the default parameters:
 
 ```go
-import "github.com/samber/do/v2"
+import "github.com/kartaladev/doger"
 
-injector := do.New()
+injector := doger.New()
 ```
 
 ## Global container {#global-container}
@@ -23,15 +23,15 @@ injector := do.New()
 For a quick start, you may use the default global container. This is highly discouraged in production.
 
 ```go
-import "github.com/samber/do/v2"
+import "github.com/kartaladev/doger"
 
-do.Provide(nil, ...)
-do.Invoke(nil, ...)
+doger.Provide(nil, ...)
+doger.Invoke(nil, ...)
 
 // equivalent to:
 
-do.Provide(do.DefaultRootScope, ...)
-do.Invoke(do.DefaultRootScope, ...)
+doger.Provide(doger.DefaultRootScope, ...)
+doger.Invoke(doger.DefaultRootScope, ...)
 ```
 
 ## Register services on container initialization {#register-services-on-container-initialization}
@@ -41,11 +41,11 @@ The services can be assembled into a package, and then, imported all at once int
 ```go
 // pkg/stores/package.go
 
-var Package = do.Package(
-    do.Lazy(NewPostgreSQLConnectionService),
-    do.Lazy(NewUserRepository),
-    do.Lazy(NewArticleRepository),
-    do.EagerNamed("repository.logger", slog.New(slog.NewTextHandler(os.Stdout, nil))),
+var Package = doger.Package(
+    doger.Lazy(NewPostgreSQLConnectionService),
+    doger.Lazy(NewUserRepository),
+    doger.Lazy(NewArticleRepository),
+    doger.EagerNamed("repository.logger", slog.New(slog.NewTextHandler(os.Stdout, nil))),
 )
 ```
 
@@ -54,21 +54,21 @@ var Package = do.Package(
 
 import "example/pkg/stores"
 
-injector := do.New(stores.Package)
+injector := doger.New(stores.Package)
 ```
 
 ## Custom options {#custom-options}
 
 ```go
-import "github.com/samber/do/v2"
+import "github.com/kartaladev/doger"
 
-injector := do.NewWithOpts(&do.InjectorOpts{
-    HookBeforeRegistration: []func(scope *do.Scope, serviceName string){},
-    HookAfterRegistration:  []func(scope *do.Scope, serviceName string){},
-    HookBeforeInvocation:   []func(scope *do.Scope, serviceName string){},
-    HookAfterInvocation:    []func(scope *do.Scope, serviceName string, err error){},
-    HookBeforeShutdown:     []func(scope *do.Scope, serviceName string){},
-    HookAfterShutdown:      []func(scope *do.Scope, serviceName string, err error){},
+injector := doger.NewWithOpts(&doger.InjectorOpts{
+    HookBeforeRegistration: []func(scope *doger.Scope, serviceName string){},
+    HookAfterRegistration:  []func(scope *doger.Scope, serviceName string){},
+    HookBeforeInvocation:   []func(scope *doger.Scope, serviceName string){},
+    HookAfterInvocation:    []func(scope *doger.Scope, serviceName string, err error){},
+    HookBeforeShutdown:     []func(scope *doger.Scope, serviceName string){},
+    HookAfterShutdown:      []func(scope *doger.Scope, serviceName string, err error){},
 
     Logf: func(format string, args ...any) {
         // ...
@@ -82,34 +82,34 @@ injector := do.NewWithOpts(&do.InjectorOpts{
 
 ### Add hooks at runtime {#add-hooks-at-runtime}
 
-Hooks can also be registered after the injector is created using helper methods on the root scope. These append to the corresponding hook lists in `do.InjectorOpts` and apply to subsequent registrations/invocations/shutdowns.
+Hooks can also be registered after the injector is created using helper methods on the root scope. These append to the corresponding hook lists in `doger.InjectorOpts` and apply to subsequent registrations/invocations/shutdowns.
 
 ```go
-import "github.com/samber/do/v2"
+import "github.com/kartaladev/doger"
 
-injector := do.New()
+injector := doger.New()
 
 // Registration hooks
-injector.AddBeforeRegistrationHook(func(scope *do.Scope, serviceName string) {
+injector.AddBeforeRegistrationHook(func(scope *doger.Scope, serviceName string) {
     // ...
 })
-injector.AddAfterRegistrationHook(func(scope *do.Scope, serviceName string) {
+injector.AddAfterRegistrationHook(func(scope *doger.Scope, serviceName string) {
     // ...
 })
 
 // Invocation hooks
-injector.AddBeforeInvocationHook(func(scope *do.Scope, serviceName string) {
+injector.AddBeforeInvocationHook(func(scope *doger.Scope, serviceName string) {
     // ...
 })
-injector.AddAfterInvocationHook(func(scope *do.Scope, serviceName string, err error) {
+injector.AddAfterInvocationHook(func(scope *doger.Scope, serviceName string, err error) {
     // ...
 })
 
 // Shutdown hooks
-injector.AddBeforeShutdownHook(func(scope *do.Scope, serviceName string) {
+injector.AddBeforeShutdownHook(func(scope *doger.Scope, serviceName string) {
     // ...
 })
-injector.AddAfterShutdownHook(func(scope *do.Scope, serviceName string, err error) {
+injector.AddAfterShutdownHook(func(scope *doger.Scope, serviceName string, err error) {
     // ...
 })
 ```

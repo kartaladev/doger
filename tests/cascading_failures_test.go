@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,31 +16,31 @@ func TestCascadingConstructionFailures(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a chain of services where one fails during construction
-	do.ProvideNamed(root, "service-a", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "service-b")
+	doger.ProvideNamed(root, "service-a", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "service-b")
 		if err != nil {
 			return "", err
 		}
 		return "service-a-value", nil
 	})
 
-	do.ProvideNamed(root, "service-b", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "service-c")
+	doger.ProvideNamed(root, "service-b", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "service-c")
 		if err != nil {
 			return "", err
 		}
 		return "service-b-value", nil
 	})
 
-	do.ProvideNamed(root, "service-c", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "service-c", func(i doger.Injector) (string, error) {
 		return "", fmt.Errorf("construction failure in service-c")
 	})
 
 	// Attempting to invoke service-a should fail due to cascading construction failure
-	_, err := do.InvokeNamed[string](root, "service-a")
+	_, err := doger.InvokeNamed[string](root, "service-a")
 	is.Error(err)
 	is.Contains(err.Error(), "construction failure in service-c")
 }
@@ -50,20 +50,20 @@ func TestCascadingHealthCheckFailures(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services with health checks that can fail
-	do.ProvideNamed(root, "healthy-service", func(i do.Injector) (*cascadingHealthchecker, error) {
+	doger.ProvideNamed(root, "healthy-service", func(i doger.Injector) (*cascadingHealthchecker, error) {
 		return &cascadingHealthchecker{name: "healthy", healthy: true}, nil
 	})
 
-	do.ProvideNamed(root, "unhealthy-service", func(i do.Injector) (*cascadingHealthchecker, error) {
+	doger.ProvideNamed(root, "unhealthy-service", func(i doger.Injector) (*cascadingHealthchecker, error) {
 		return &cascadingHealthchecker{name: "unhealthy", healthy: false}, nil
 	})
 
-	do.ProvideNamed(root, "dependent-service", func(i do.Injector) (*cascadingHealthchecker, error) {
+	doger.ProvideNamed(root, "dependent-service", func(i doger.Injector) (*cascadingHealthchecker, error) {
 		// This service depends on the unhealthy service
-		_, err := do.InvokeNamed[*cascadingHealthchecker](i, "unhealthy-service")
+		_, err := doger.InvokeNamed[*cascadingHealthchecker](i, "unhealthy-service")
 		if err != nil {
 			return nil, err
 		}
@@ -71,11 +71,11 @@ func TestCascadingHealthCheckFailures(t *testing.T) {
 	})
 
 	// Invoke services to ensure they are initialized
-	_, err := do.InvokeNamed[*cascadingHealthchecker](root, "healthy-service")
+	_, err := doger.InvokeNamed[*cascadingHealthchecker](root, "healthy-service")
 	is.NoError(err)
-	_, err = do.InvokeNamed[*cascadingHealthchecker](root, "unhealthy-service")
+	_, err = doger.InvokeNamed[*cascadingHealthchecker](root, "unhealthy-service")
 	is.NoError(err)
-	_, err = do.InvokeNamed[*cascadingHealthchecker](root, "dependent-service")
+	_, err = doger.InvokeNamed[*cascadingHealthchecker](root, "dependent-service")
 	is.NoError(err)
 
 	// Perform health check - should show failures for unhealthy service only
@@ -94,30 +94,30 @@ func TestCascadingShutdownFailures(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services with shutdown tracking
 	shutdownOrder := make([]string, 0)
 	var mu sync.Mutex
 
-	do.ProvideNamed(root, "shutdownable-1", func(i do.Injector) (*cascadingShutdowner, error) {
+	doger.ProvideNamed(root, "shutdownable-1", func(i doger.Injector) (*cascadingShutdowner, error) {
 		return &cascadingShutdowner{name: "service-1", shouldFail: false, shutdownOrder: &shutdownOrder, mu: &mu}, nil
 	})
 
-	do.ProvideNamed(root, "shutdownable-2", func(i do.Injector) (*cascadingShutdowner, error) {
+	doger.ProvideNamed(root, "shutdownable-2", func(i doger.Injector) (*cascadingShutdowner, error) {
 		return &cascadingShutdowner{name: "service-2", shouldFail: true, shutdownOrder: &shutdownOrder, mu: &mu}, nil
 	})
 
-	do.ProvideNamed(root, "shutdownable-3", func(i do.Injector) (*cascadingShutdowner, error) {
+	doger.ProvideNamed(root, "shutdownable-3", func(i doger.Injector) (*cascadingShutdowner, error) {
 		return &cascadingShutdowner{name: "service-3", shouldFail: false, shutdownOrder: &shutdownOrder, mu: &mu}, nil
 	})
 
 	// Invoke services to ensure they are initialized
-	_, err := do.InvokeNamed[*cascadingShutdowner](root, "shutdownable-1")
+	_, err := doger.InvokeNamed[*cascadingShutdowner](root, "shutdownable-1")
 	is.NoError(err)
-	_, err = do.InvokeNamed[*cascadingShutdowner](root, "shutdownable-2")
+	_, err = doger.InvokeNamed[*cascadingShutdowner](root, "shutdownable-2")
 	is.NoError(err)
-	_, err = do.InvokeNamed[*cascadingShutdowner](root, "shutdownable-3")
+	_, err = doger.InvokeNamed[*cascadingShutdowner](root, "shutdownable-3")
 	is.NoError(err)
 
 	// Shutdown should complete but with errors
@@ -137,38 +137,38 @@ func TestCascadingFailuresAcrossScopes(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 	child1 := root.Scope("child1")
 	child2 := child1.Scope("child2")
 
 	// Services in different scopes
-	do.ProvideNamedValue(root, "root-service", "root-value")
-	do.ProvideNamed(child1, "child1-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamedValue(root, "root-service", "root-value")
+	doger.ProvideNamed(child1, "child1-service", func(i doger.Injector) (string, error) {
 		// This service depends on a service that will fail
-		_, err := do.InvokeNamed[string](i, "failing-service")
+		_, err := doger.InvokeNamed[string](i, "failing-service")
 		if err != nil {
 			return "", err
 		}
 		return "child1-value", nil
 	})
-	do.ProvideNamedValue(child2, "child2-service", "child2-value")
+	doger.ProvideNamedValue(child2, "child2-service", "child2-value")
 
 	// Service that fails
-	do.ProvideNamed(child2, "failing-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(child2, "failing-service", func(i doger.Injector) (string, error) {
 		return "", fmt.Errorf("service failure in child2")
 	})
 
 	// Service in child2 that depends on services in parent scopes
-	do.ProvideNamed(child2, "dependent-service", func(i do.Injector) (string, error) {
-		rootVal, err := do.InvokeNamed[string](i, "root-service")
+	doger.ProvideNamed(child2, "dependent-service", func(i doger.Injector) (string, error) {
+		rootVal, err := doger.InvokeNamed[string](i, "root-service")
 		if err != nil {
 			return "", err
 		}
-		child1Val, err := do.InvokeNamed[string](i, "child1-service")
+		child1Val, err := doger.InvokeNamed[string](i, "child1-service")
 		if err != nil {
 			return "", err
 		}
-		child2Val, err := do.InvokeNamed[string](i, "child2-service")
+		child2Val, err := doger.InvokeNamed[string](i, "child2-service")
 		if err != nil {
 			return "", err
 		}
@@ -176,7 +176,7 @@ func TestCascadingFailuresAcrossScopes(t *testing.T) {
 	})
 
 	// Attempting to invoke the dependent service should fail due to cascading failure
-	_, err := do.InvokeNamed[string](child2, "dependent-service")
+	_, err := doger.InvokeNamed[string](child2, "dependent-service")
 	is.Error(err)
 	is.Contains(err.Error(), "could not find service")
 }
@@ -186,24 +186,24 @@ func TestPartialFailureScenarios(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a mix of successful and failing services
-	do.ProvideNamed(root, "successful-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "successful-service", func(i doger.Injector) (string, error) {
 		return "successful-value", nil
 	})
 
-	do.ProvideNamed(root, "failing-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "failing-service", func(i doger.Injector) (string, error) {
 		return "", fmt.Errorf("service failure")
 	})
 
-	do.ProvideNamed(root, "mixed-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "mixed-service", func(i doger.Injector) (string, error) {
 		// This service depends on both successful and failing services
-		successVal, err := do.InvokeNamed[string](i, "successful-service")
+		successVal, err := doger.InvokeNamed[string](i, "successful-service")
 		if err != nil {
 			return "", err
 		}
-		_, err = do.InvokeNamed[string](i, "failing-service")
+		_, err = doger.InvokeNamed[string](i, "failing-service")
 		if err != nil {
 			return "", err
 		}
@@ -211,17 +211,17 @@ func TestPartialFailureScenarios(t *testing.T) {
 	})
 
 	// Successful service should work
-	result, err := do.InvokeNamed[string](root, "successful-service")
+	result, err := doger.InvokeNamed[string](root, "successful-service")
 	is.NoError(err)
 	is.Equal("successful-value", result)
 
 	// Failing service should fail
-	_, err = do.InvokeNamed[string](root, "failing-service")
+	_, err = doger.InvokeNamed[string](root, "failing-service")
 	is.Error(err)
 	is.Contains(err.Error(), "service failure")
 
 	// Mixed service should fail due to dependency on failing service
-	_, err = do.InvokeNamed[string](root, "mixed-service")
+	_, err = doger.InvokeNamed[string](root, "mixed-service")
 	is.Error(err)
 	is.Contains(err.Error(), "service failure")
 }
@@ -231,11 +231,11 @@ func TestErrorRecoveryScenarios(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that can recover from errors
 	recoveryAttempts := 0
-	do.ProvideNamed(root, "recovery-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "recovery-service", func(i doger.Injector) (string, error) {
 		recoveryAttempts++
 		if recoveryAttempts < 3 {
 			return "", fmt.Errorf("temporary failure, attempt %d", recoveryAttempts)
@@ -244,16 +244,16 @@ func TestErrorRecoveryScenarios(t *testing.T) {
 	})
 
 	// First two attempts should fail
-	_, err := do.InvokeNamed[string](root, "recovery-service")
+	_, err := doger.InvokeNamed[string](root, "recovery-service")
 	is.Error(err)
 	is.Contains(err.Error(), "temporary failure, attempt 1")
 
-	_, err = do.InvokeNamed[string](root, "recovery-service")
+	_, err = doger.InvokeNamed[string](root, "recovery-service")
 	is.Error(err)
 	is.Contains(err.Error(), "temporary failure, attempt 2")
 
 	// Third attempt should succeed
-	result, err := do.InvokeNamed[string](root, "recovery-service")
+	result, err := doger.InvokeNamed[string](root, "recovery-service")
 	is.NoError(err)
 	is.Equal("recovered-value", result)
 }
@@ -263,16 +263,16 @@ func TestContextCancellationDuringFailures(t *testing.T) {
 	testWithTimeout(t, 450*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that takes a long time to fail
-	do.ProvideNamed(root, "slow-failing-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "slow-failing-service", func(i doger.Injector) (string, error) {
 		time.Sleep(100 * time.Millisecond)
 		return "", fmt.Errorf("slow failure")
 	})
 
 	// Try to invoke the service - it should fail due to service failure
-	_, err := do.InvokeNamed[string](root, "slow-failing-service")
+	_, err := doger.InvokeNamed[string](root, "slow-failing-service")
 	is.Error(err)
 	// The service should still fail, but the context cancellation doesn't affect the virtual scope
 	is.Contains(err.Error(), "slow failure")
@@ -283,7 +283,7 @@ func TestCascadingMemoryLeaks(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create many services that can fail
 	const numServices = 100
@@ -291,7 +291,7 @@ func TestCascadingMemoryLeaks(t *testing.T) {
 	for i := 0; i < numServices; i++ {
 		serviceName := fmt.Sprintf("service-%d", i)
 		serviceIndex := i
-		do.ProvideNamed(root, serviceName, func(i do.Injector) (string, error) {
+		doger.ProvideNamed(root, serviceName, func(i doger.Injector) (string, error) {
 			if serviceIndex%10 == 0 {
 				return "", fmt.Errorf("failure in service %d", serviceIndex)
 			}
@@ -305,7 +305,7 @@ func TestCascadingMemoryLeaks(t *testing.T) {
 
 	for i := 0; i < numServices; i++ {
 		serviceName := fmt.Sprintf("service-%d", i)
-		_, err := do.InvokeNamed[string](root, serviceName)
+		_, err := doger.InvokeNamed[string](root, serviceName)
 		if err != nil {
 			failureCount++
 		} else {
@@ -319,7 +319,7 @@ func TestCascadingMemoryLeaks(t *testing.T) {
 	is.Equal(numServices, failureCount+successCount)
 
 	// Try to invoke a successful service again to ensure no memory leaks
-	result, err := do.InvokeNamed[string](root, "service-1")
+	result, err := doger.InvokeNamed[string](root, "service-1")
 	is.NoError(err)
 	is.Equal("value-1", result)
 }

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,16 +16,16 @@ func TestComplexServiceLifecycle(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services with complex lifecycle dependencies
 	shutdownOrder := make([]string, 0)
 	var mu sync.Mutex
 
 	// Service that depends on another service
-	do.ProvideNamed(root, "service-a", func(i do.Injector) (*complexLifecycleService, error) {
+	doger.ProvideNamed(root, "service-a", func(i doger.Injector) (*complexLifecycleService, error) {
 		// This service depends on service-b
-		_, err := do.InvokeNamed[*complexLifecycleService](i, "service-b")
+		_, err := doger.InvokeNamed[*complexLifecycleService](i, "service-b")
 		if err != nil {
 			return nil, err
 		}
@@ -33,9 +33,9 @@ func TestComplexServiceLifecycle(t *testing.T) {
 	})
 
 	// Service that depends on service-a (creates dependency chain)
-	do.ProvideNamed(root, "service-b", func(i do.Injector) (*complexLifecycleService, error) {
+	doger.ProvideNamed(root, "service-b", func(i doger.Injector) (*complexLifecycleService, error) {
 		// This service depends on service-c
-		_, err := do.InvokeNamed[*complexLifecycleService](i, "service-c")
+		_, err := doger.InvokeNamed[*complexLifecycleService](i, "service-c")
 		if err != nil {
 			return nil, err
 		}
@@ -43,12 +43,12 @@ func TestComplexServiceLifecycle(t *testing.T) {
 	})
 
 	// Base service with no dependencies
-	do.ProvideNamed(root, "service-c", func(i do.Injector) (*complexLifecycleService, error) {
+	doger.ProvideNamed(root, "service-c", func(i doger.Injector) (*complexLifecycleService, error) {
 		return &complexLifecycleService{name: "service-c", shutdownOrder: &shutdownOrder, mu: &mu}, nil
 	})
 
 	// Invoke service-a to initialize the entire chain
-	_, err := do.InvokeNamed[*complexLifecycleService](root, "service-a")
+	_, err := doger.InvokeNamed[*complexLifecycleService](root, "service-a")
 	is.NoError(err)
 
 	// Shutdown the root scope
@@ -68,17 +68,17 @@ func TestComplexConcurrentAccess(t *testing.T) {
 	testWithTimeout(t, 450*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that can be accessed concurrently
-	do.ProvideNamed(root, "concurrent-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "concurrent-service", func(i doger.Injector) (string, error) {
 		time.Sleep(5 * time.Millisecond) // Simulate some work
 		return "concurrent-value", nil
 	})
 
 	// Service that depends on the concurrent service
-	do.ProvideNamed(root, "dependent-service", func(i do.Injector) (string, error) {
-		concurrentVal, err := do.InvokeNamed[string](i, "concurrent-service")
+	doger.ProvideNamed(root, "dependent-service", func(i doger.Injector) (string, error) {
+		concurrentVal, err := doger.InvokeNamed[string](i, "concurrent-service")
 		if err != nil {
 			return "", err
 		}
@@ -95,7 +95,7 @@ func TestComplexConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			result, err := do.InvokeNamed[string](root, "dependent-service")
+			result, err := doger.InvokeNamed[string](root, "dependent-service")
 			results[index] = result
 			errors[index] = err
 		}(i)
@@ -115,32 +115,32 @@ func TestComplexNestedScopes(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 	child1 := root.Scope("child1")
 	child2 := child1.Scope("child2")
 	child3 := child2.Scope("child3")
 
 	// Services in different scopes
-	do.ProvideNamedValue(root, "root-service", "root-value")
-	do.ProvideNamedValue(child1, "child1-service", "child1-value")
-	do.ProvideNamedValue(child2, "child2-service", "child2-value")
-	do.ProvideNamedValue(child3, "child3-service", "child3-value")
+	doger.ProvideNamedValue(root, "root-service", "root-value")
+	doger.ProvideNamedValue(child1, "child1-service", "child1-value")
+	doger.ProvideNamedValue(child2, "child2-service", "child2-value")
+	doger.ProvideNamedValue(child3, "child3-service", "child3-value")
 
 	// Service in deepest scope that depends on all parent services
-	do.ProvideNamed(child3, "deep-dependent", func(i do.Injector) (string, error) {
-		rootVal, err := do.InvokeNamed[string](i, "root-service")
+	doger.ProvideNamed(child3, "deep-dependent", func(i doger.Injector) (string, error) {
+		rootVal, err := doger.InvokeNamed[string](i, "root-service")
 		if err != nil {
 			return "", err
 		}
-		child1Val, err := do.InvokeNamed[string](i, "child1-service")
+		child1Val, err := doger.InvokeNamed[string](i, "child1-service")
 		if err != nil {
 			return "", err
 		}
-		child2Val, err := do.InvokeNamed[string](i, "child2-service")
+		child2Val, err := doger.InvokeNamed[string](i, "child2-service")
 		if err != nil {
 			return "", err
 		}
-		child3Val, err := do.InvokeNamed[string](i, "child3-service")
+		child3Val, err := doger.InvokeNamed[string](i, "child3-service")
 		if err != nil {
 			return "", err
 		}
@@ -148,7 +148,7 @@ func TestComplexNestedScopes(t *testing.T) {
 	})
 
 	// Invoke the dependent service
-	result, err := do.InvokeNamed[string](child3, "deep-dependent")
+	result, err := doger.InvokeNamed[string](child3, "deep-dependent")
 	is.NoError(err)
 	is.Equal("root-value-child1-value-child2-value-child3-value", result)
 }
@@ -158,31 +158,31 @@ func TestComplexErrorHandling(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a chain of services where one fails
-	do.ProvideNamed(root, "service-a", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "service-b")
+	doger.ProvideNamed(root, "service-a", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "service-b")
 		if err != nil {
 			return "", err
 		}
 		return "service-a-value", nil
 	})
 
-	do.ProvideNamed(root, "service-b", func(i do.Injector) (string, error) {
-		_, err := do.InvokeNamed[string](i, "service-c")
+	doger.ProvideNamed(root, "service-b", func(i doger.Injector) (string, error) {
+		_, err := doger.InvokeNamed[string](i, "service-c")
 		if err != nil {
 			return "", err
 		}
 		return "service-b-value", nil
 	})
 
-	do.ProvideNamed(root, "service-c", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "service-c", func(i doger.Injector) (string, error) {
 		return "", fmt.Errorf("service-c failed")
 	})
 
 	// Attempting to invoke service-a should fail due to cascading failure
-	_, err := do.InvokeNamed[string](root, "service-a")
+	_, err := doger.InvokeNamed[string](root, "service-a")
 	is.Error(err)
 	is.Contains(err.Error(), "service-c failed")
 }
@@ -192,17 +192,17 @@ func TestComplexTimeoutScenarios(t *testing.T) {
 	testWithTimeout(t, 450*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that takes a long time to resolve
-	do.ProvideNamed(root, "slow-service", func(i do.Injector) (string, error) {
+	doger.ProvideNamed(root, "slow-service", func(i doger.Injector) (string, error) {
 		time.Sleep(50 * time.Millisecond)
 		return "slow-value", nil
 	})
 
 	// Service that depends on the slow service
-	do.ProvideNamed(root, "dependent-on-slow", func(i do.Injector) (string, error) {
-		slowVal, err := do.InvokeNamed[string](i, "slow-service")
+	doger.ProvideNamed(root, "dependent-on-slow", func(i doger.Injector) (string, error) {
+		slowVal, err := doger.InvokeNamed[string](i, "slow-service")
 		if err != nil {
 			return "", err
 		}
@@ -210,7 +210,7 @@ func TestComplexTimeoutScenarios(t *testing.T) {
 	})
 
 	// Invoke the dependent service
-	result, err := do.InvokeNamed[string](root, "dependent-on-slow")
+	result, err := doger.InvokeNamed[string](root, "dependent-on-slow")
 	is.NoError(err)
 	is.Equal("dependent-slow-value", result)
 }
@@ -220,7 +220,7 @@ func TestComplexMemoryManagement(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create many services to test memory management
 	const numServices = 500
@@ -228,7 +228,7 @@ func TestComplexMemoryManagement(t *testing.T) {
 	for i := 0; i < numServices; i++ {
 		serviceName := fmt.Sprintf("service-%d", i)
 		serviceIndex := i // Capture the loop variable
-		do.ProvideNamed(root, serviceName, func(i do.Injector) (string, error) {
+		doger.ProvideNamed(root, serviceName, func(i doger.Injector) (string, error) {
 			return fmt.Sprintf("value-%d", serviceIndex), nil
 		})
 	}
@@ -238,13 +238,13 @@ func TestComplexMemoryManagement(t *testing.T) {
 	for i := 0; i < numInvocations; i++ {
 		serviceIndex := i % numServices
 		serviceName := fmt.Sprintf("service-%d", serviceIndex)
-		result, err := do.InvokeNamed[string](root, serviceName)
+		result, err := doger.InvokeNamed[string](root, serviceName)
 		is.NoError(err)
 		is.Equal(fmt.Sprintf("value-%d", serviceIndex), result)
 	}
 
 	// Test that services still work after many invocations
-	result, err := do.InvokeNamed[string](root, "service-0")
+	result, err := doger.InvokeNamed[string](root, "service-0")
 	is.NoError(err)
 	is.Equal("value-0", result)
 }
@@ -254,21 +254,21 @@ func TestComplexServiceTypes(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create services of different types with complex dependencies
-	do.ProvideNamedValue(root, "eager-base", "eager-base-value")
+	doger.ProvideNamedValue(root, "eager-base", "eager-base-value")
 
-	do.ProvideNamed(root, "lazy-dependent", func(i do.Injector) (string, error) {
-		eagerVal, err := do.InvokeNamed[string](i, "eager-base")
+	doger.ProvideNamed(root, "lazy-dependent", func(i doger.Injector) (string, error) {
+		eagerVal, err := doger.InvokeNamed[string](i, "eager-base")
 		if err != nil {
 			return "", err
 		}
 		return "lazy-" + eagerVal, nil
 	})
 
-	do.ProvideNamedTransient(root, "transient-dependent", func(i do.Injector) (string, error) {
-		lazyVal, err := do.InvokeNamed[string](i, "lazy-dependent")
+	doger.ProvideNamedTransient(root, "transient-dependent", func(i doger.Injector) (string, error) {
+		lazyVal, err := doger.InvokeNamed[string](i, "lazy-dependent")
 		if err != nil {
 			return "", err
 		}
@@ -276,11 +276,11 @@ func TestComplexServiceTypes(t *testing.T) {
 	})
 
 	// Invoke the transient service multiple times
-	result1, err := do.InvokeNamed[string](root, "transient-dependent")
+	result1, err := doger.InvokeNamed[string](root, "transient-dependent")
 	is.NoError(err)
 	is.Contains(result1, "transient-lazy-eager-base-value")
 
-	result2, err := do.InvokeNamed[string](root, "transient-dependent")
+	result2, err := doger.InvokeNamed[string](root, "transient-dependent")
 	is.NoError(err)
 	is.Contains(result2, "transient-lazy-eager-base-value")
 
@@ -293,15 +293,15 @@ func TestComplexContextHandling(t *testing.T) {
 	testWithTimeout(t, 450*time.Millisecond)
 	is := assert.New(t)
 
-	root := do.New()
+	root := doger.New()
 
 	// Create a service that can be shut down with context
-	do.ProvideNamed(root, "context-aware-service", func(i do.Injector) (*contextAwareService, error) {
+	doger.ProvideNamed(root, "context-aware-service", func(i doger.Injector) (*contextAwareService, error) {
 		return &contextAwareService{name: "context-aware"}, nil
 	})
 
 	// Invoke the service
-	_, err := do.InvokeNamed[*contextAwareService](root, "context-aware-service")
+	_, err := doger.InvokeNamed[*contextAwareService](root, "context-aware-service")
 	is.NoError(err)
 
 	// Shutdown with context

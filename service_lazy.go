@@ -1,4 +1,4 @@
-package do
+package doger
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/samber/do/v2/stacktrace"
+	"github.com/kartaladev/doger/stacktrace"
 )
 
 var (

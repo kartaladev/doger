@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/samber/do/v2"
+	"github.com/kartaladev/doger"
 )
 
 /**
@@ -23,21 +23,21 @@ func (p *Passenger) Shutdown() {
 /**
  * Run example
  */
-func bootPassengerModule(injector do.Injector) {
+func bootPassengerModule(injector doger.Injector) {
 	// provide passenger
-	do.ProvideNamed(injector, "passenger-1", func(i do.Injector) (*Passenger, error) {
+	doger.ProvideNamed(injector, "passenger-1", func(i doger.Injector) (*Passenger, error) {
 		return &Passenger{
-			Seat: do.MustInvokeNamed[*Seat](i, "seat-2"),
+			Seat: doger.MustInvokeNamed[*Seat](i, "seat-2"),
 		}, nil
 	})
-	do.ProvideNamed(injector, "passenger-2", func(i do.Injector) (*Passenger, error) {
+	doger.ProvideNamed(injector, "passenger-2", func(i doger.Injector) (*Passenger, error) {
 		return &Passenger{
-			Seat: do.MustInvokeNamed[*Seat](i, "seat-3"),
+			Seat: doger.MustInvokeNamed[*Seat](i, "seat-3"),
 		}, nil
 	})
-	do.ProvideNamed(injector, "passenger-3", func(i do.Injector) (*Passenger, error) {
+	doger.ProvideNamed(injector, "passenger-3", func(i doger.Injector) (*Passenger, error) {
 		return &Passenger{
-			Seat: do.MustInvokeNamed[*Seat](i, "seat-4"),
+			Seat: doger.MustInvokeNamed[*Seat](i, "seat-4"),
 		}, nil
 	})
 }
