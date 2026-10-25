@@ -1,6 +1,6 @@
 ---
 title: Service health check
-description: Check the health of samber/do services individually or globally by implementing the Healthchecker interface, with configurable parallelism and timeouts.
+description: Check the health of doger services individually or globally by implementing the Healthchecker interface, with configurable parallelism and timeouts.
 sidebar_position: 1
 ---
 
@@ -8,7 +8,7 @@ sidebar_position: 1
 
 A health check verifies that a service's dependencies (a database, a cache, an external API...) are still reachable, on demand. If your service relies on a dependency, you might want to periodically check its state.
 
-When the `do.HealthCheck[type]()` or the `injector.HealthCheck()` function is called, the framework triggers the `HealthCheck` method of each service implementing the `do.Healthchecker` interface, in reverse invocation order.
+When the `doger.HealthCheck[type]()` or the `injector.HealthCheck()` function is called, the framework triggers the `HealthCheck` method of each service implementing the `doger.Healthchecker` interface, in reverse invocation order.
 
 🕵️ Service health can be checked individually or globally. Requesting a health check on a nested scope will run checks on ancestors.
 
@@ -28,10 +28,10 @@ injector.HealthCheckWithContext(context.Context) map[string]error
 
 ```go
 // returns error on failure
-do.HealthCheck[T any](do.Injector) error
-do.HealthCheckWithContext[T any](context.Context, do.Injector) error
-do.HealthCheckNamed[T any](do.Injector, string) error
-do.HealthCheckNamedWithContext[T any](context.Context, do.Injector, string) error
+doger.HealthCheck[T any](doger.Injector) error
+doger.HealthCheckWithContext[T any](context.Context, doger.Injector) error
+doger.HealthCheckNamed[T any](doger.Injector, string) error
+doger.HealthCheckNamedWithContext[T any](context.Context, doger.Injector, string) error
 ```
 
 ## Healthchecker interfaces {#healthchecker-interfaces}
@@ -51,8 +51,8 @@ type HealthcheckerWithContext interface {
 ### Example {#example}
 
 ```go
-// Ensure at compile-time MyService implements do.HealthcheckerWithContext
-var _ do.HealthcheckerWithContext = (*MyService)(nil)
+// Ensure at compile-time MyService implements doger.HealthcheckerWithContext
+var _ doger.HealthcheckerWithContext = (*MyService)(nil)
 
 type MyService struct {}
 
@@ -61,10 +61,10 @@ func (*MyService) HealthCheck(context.Context) error {
     return nil
 }
 
-i := do.New()
+i := doger.New()
 
-do.Provide(i, ...)
-do.Invoke(i, ...)
+doger.Provide(i, ...)
+doger.Invoke(i, ...)
 
 ctx := context.WithTimeout(10 * time.Second)
 i.HealthCheckWithContext(ctx)
@@ -77,7 +77,7 @@ i.HealthCheckWithContext(ctx)
 The root scope can be created with health check parameters, for controlling parallelism or timeouts.
 
 ```go
-do.InjectorOpts{
+doger.InjectorOpts{
     // ...
 
     // By default, health checks are triggered concurrently.
@@ -101,14 +101,14 @@ func (pg *MyPostgreSQLConnection) HealthCheck() error {
     return pg.DB.Ping() // <- might be very slow
 }
 
-i := do.NewWithOpts(&do.InjectorOpts{
+i := doger.NewWithOpts(&doger.InjectorOpts{
     HealthCheckParallelism:   100,
     HealthCheckGlobalTimeout: 1 * time.Second,
     HealthCheckTimeout:       100 * time.Millisecond,
 })
 
-do.Provide(i, NewMyPostgreSQLConnection)
-_ = do.MustInvoke[*MyPostgreSQLConnection](i)
+doger.Provide(i, NewMyPostgreSQLConnection)
+_ = doger.MustInvoke[*MyPostgreSQLConnection](i)
 
 status := i.HealthCheckWithContext(ctx)
 // {

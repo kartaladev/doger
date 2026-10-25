@@ -1,6 +1,6 @@
 ---
 title: ✌️ Dependency Injection in Go
-description: samber/do is a type-safe dependency injection toolkit for Go, built on 1.18+ generics instead of reflection or code generation. Compare it to uber/dig, uber/fx, and google/wire.
+description: doger is a type-safe dependency injection toolkit for Go, built on 1.18+ generics instead of reflection or code generation. Compare it to uber/dig, uber/fx, and google/wire.
 sidebar_position: 0
 ---
 
@@ -12,26 +12,32 @@ import Head from '@docusaurus/Head';
       '@context': 'https://schema.org',
       '@type': 'TechArticle',
       headline: 'Dependency Injection in Go',
-      description: 'samber/do is a type-safe dependency injection toolkit for Go, built on 1.18+ generics instead of reflection or code generation.',
-      about: {'@id': 'https://do.samber.dev/#software'},
-      author: {'@id': 'https://do.samber.dev/#person-samber'},
-      mainEntityOfPage: 'https://do.samber.dev/docs/about',
+      description: 'doger is a type-safe dependency injection toolkit for Go, built on 1.18+ generics instead of reflection or code generation.',
+      about: {'@id': 'https://kartaladev.github.io/doger/#software'},
+      author: {'@id': 'https://kartaladev.github.io/doger/#person-samber'},
+      mainEntityOfPage: 'https://kartaladev.github.io/doger/docs/about',
     })}
   </script>
 </Head>
 
 # ✌️ Dependency Injection in Go
 
-Dependency injection (DI) in Go is the practice of supplying a component with the services it depends on, instead of letting it construct them itself — making code easier to test, swap, and reason about. `samber/do` is a DI toolkit for Go that implements this pattern using **1.18+ generics** instead of reflection, giving you a type-safe API with **no code generation** and **zero external dependencies**.
+:::info Fork notice
+
+doger is a fork of [samber/do](https://github.com/samber/do) by Samuel Berthe. Coming from `samber/do`? See [Migrating from samber/do](./migrating/migrating-from-samber-do.md).
+
+:::
+
+Dependency injection (DI) in Go is the practice of supplying a component with the services it depends on, instead of letting it construct them itself — making code easier to test, swap, and reason about. `doger` is a DI toolkit for Go that implements this pattern using **1.18+ generics** instead of reflection, giving you a type-safe API with **no code generation** and **zero external dependencies**.
 
 <img
-  src="/img/cover.webp"
-  srcSet="/img/cover-640.webp 640w, /img/cover.webp 1200w"
-  sizes="(max-width: 640px) 100vw, 1200px"
-  width={1200}
-  height={404}
-  decoding="async"
-  alt="samber/do — type-safe dependency injection for Go using generics"
+src={require('@site/static/img/cover.webp').default}
+srcSet={`${require('@site/static/img/cover-640.webp').default} 640w, ${require('@site/static/img/cover.webp').default} 1200w`}
+sizes="(max-width: 640px) 100vw, 1200px"
+width={1200}
+height={404}
+decoding="async"
+alt="doger — type-safe dependency injection for Go using generics"
 />
 
 **See also:**
@@ -41,11 +47,11 @@ Dependency injection (DI) in Go is the practice of supplying a component with th
 
 **Why this name?**
 
-I love the **short name** for such a utility library. This name is the sum of `DI` and `Go` and no Go package uses this name.
+Upstream's short name `do` is the sum of `DI` and `Go`. `doger` keeps it as its prefix.
 
-## samber/do vs uber/dig vs uber/fx vs google/wire {#samberdo-vs-uberdig-vs-uberfx-vs-googlewire}
+## doger vs uber/dig vs uber/fx vs google/wire {#samberdo-vs-uberdig-vs-uberfx-vs-googlewire}
 
-|                           | `samber/do`                             | `uber/dig`    | `uber/fx`                 | `google/wire`                 | Manual DI    |
+|                           | `doger`                                 | `uber/dig`    | `uber/fx`                 | `google/wire`                 | Manual DI    |
 | ------------------------- | --------------------------------------- | ------------- | ------------------------- | ----------------------------- | ------------ |
 | **Mechanism**             | Generics                                | Reflection    | Reflection (built on dig) | Code generation               | Hand-written |
 | **Type safety**           | Compile-time                            | Runtime       | Runtime                   | Compile-time                  | Compile-time |
@@ -55,11 +61,11 @@ I love the **short name** for such a utility library. This name is the sum of `D
 | **Debugging tools**       | Scope tree, dependency graph, Web UI    | None built-in | `fx.WithLogger`           | None (inspect generated code) | N/A          |
 | **External dependencies** | None                                    | None          | Several (dig, zap, ...)   | `wire` build tool             | None         |
 
-**When to use `samber/do`**: you want compile-time-checked service resolution without a build step, plus built-in health checks and graceful shutdown for production services. See the detailed comparisons: [do vs uber/fx](./comparison/samber-do-vs-uber-fx.md), [do vs google/wire](./comparison/samber-do-vs-google-wire.md), and [do vs uber/dig](./comparison/samber-do-vs-uber-dig.md). Already using one of these? Check the [migration guides](./migrating/migrating-from-dig.md).
+**When to use `doger`**: you want compile-time-checked service resolution without a build step, plus built-in health checks and graceful shutdown for production services. See the detailed comparisons: [do vs uber/fx](./comparison/samber-do-vs-uber-fx.md), [do vs google/wire](./comparison/samber-do-vs-google-wire.md), and [do vs uber/dig](./comparison/samber-do-vs-uber-dig.md). Already using one of these? Check the [migration guides](./migrating/migrating-from-dig.md).
 
 ## 💡 Features {#-features}
 
-`samber/do` is built with high attention to the developer and contributor experience.
+`doger` is built with high attention to the developer and contributor experience.
 
 - **📒 [Service registration](./service-registration/lazy-loading.md)**
   - Register by type
@@ -96,7 +102,7 @@ I love the **short name** for such a utility library. This name is the sum of `D
 
 ## Where to go next {#where-to-go-next}
 
-- New to `samber/do`? Start with [Getting started](./getting-started.md).
+- New to `doger`? Start with [Getting started](./getting-started.md).
 - Coming from another DI library? Read the [migration guides](./migrating/migrating-from-dig.md) or the [comparison pages](./comparison/samber-do-vs-uber-fx.md).
 - Have a specific question? Check the [FAQ](./faq.md) or the [glossary](./glossary.md).
 - Upgrading from v1? See the [v1 to v2 upgrade guide](./upgrading/from-v1-x-to-v2.md).

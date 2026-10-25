@@ -91,4 +91,4 @@ Allow: /
 Disallow: /search
 Disallow: /tags/
 
-Sitemap: https://do.samber.dev/sitemap.xml
+Sitemap: https://kartaladev.github.io/doger/sitemap.xml

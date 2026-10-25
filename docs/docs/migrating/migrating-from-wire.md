@@ -1,23 +1,23 @@
 ---
 title: From Google Wire
-description: Migrate your dependency injection from Google Wire to samber/do
+description: Migrate your dependency injection from Google Wire to doger
 sidebar_position: 2
 ---
 
 # Migrating from Google Wire
 
-This guide will help you migrate your dependency injection setup from Google Wire to `samber/do`.
+This guide will help you migrate your dependency injection setup from Google Wire to `doger`.
 
 ## Overview {#overview}
 
-Google Wire and `samber/do` are both dependency injection libraries for Go, but they have different approaches:
+Google Wire and `doger` are both dependency injection libraries for Go, but they have different approaches:
 
 - **Google Wire**: Uses code generation with `//go:build wire` directives
-- **samber/do**: Uses runtime dependency injection with a fluent API
+- **doger**: Uses runtime dependency injection with a fluent API
 
 ## Key Differences {#key-differences}
 
-| Feature               | Google Wire             | samber/do                 |
+| Feature               | Google Wire             | doger                     |
 | --------------------- | ----------------------- | ------------------------- |
 | **Approach**          | Code generation         | Runtime injection         |
 | **Build time**        | Requires `wire` command | No build tools needed     |
@@ -61,26 +61,26 @@ func InitializeApp() (*App, error) {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
 package main
 
 import (
-    "github.com/samber/do/v2"
+    "github.com/kartaladev/doger"
     "myapp/services"
 )
 
 func InitializeApp() (*App, error) {
-    injector := do.New()
+    injector := doger.New()
 
     // Register services
-    do.Provide(injector, services.NewDatabase)
-    do.Provide(injector, services.NewUserService)
-    do.Provide(injector, services.NewApp)
+    doger.Provide(injector, services.NewDatabase)
+    doger.Provide(injector, services.NewUserService)
+    doger.Provide(injector, services.NewApp)
 
     // Invoke the app
-    app, err := do.Invoke[*App](injector)
+    app, err := doger.Invoke[*App](injector)
     if err != nil {
         return nil, err
     }
@@ -91,7 +91,7 @@ func InitializeApp() (*App, error) {
 
 ### 3. Update Service Constructors {#3-update-service-constructors}
 
-Wire provider functions need to be updated for `samber/do`. Service constructors receive `do.Injector` as the first parameter and return an additional error:
+Wire provider functions need to be updated for `doger`. Service constructors receive `doger.Injector` as the first parameter and return an additional error:
 
 **Before (Wire):**
 
@@ -105,16 +105,16 @@ func NewDatabase(config *Config) *Database {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-func NewUserService(i do.Injector) (*UserService, error) {
-    db := do.MustInvoke[*Database](i)
+func NewUserService(i doger.Injector) (*UserService, error) {
+    db := doger.MustInvoke[*Database](i)
     return &UserService{db: db}, nil
 }
 
-func NewDatabase(i do.Injector) (*Database, error) {
-    config := do.MustInvoke[*Config](i)
+func NewDatabase(i doger.Injector) (*Database, error) {
+    config := doger.MustInvoke[*Config](i)
     return &Database{config: config}, nil
 }
 ```
@@ -131,12 +131,12 @@ var Set = wire.NewSet(
 )
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-injector := do.New()
+injector := doger.New()
 
-do.Provide(injector, func(i do.Injector) (Repository, error) {
+doger.Provide(injector, func(i doger.Injector) (Repository, error) {
     return &UserRepository{}, nil
 })
 ```
@@ -145,25 +145,25 @@ Or declare an explicit binding:
 
 ```go
 // Register the concrete implementation
-do.Provide(injector, func(i do.Injector) (*UserRepository, error) {
+doger.Provide(injector, func(i doger.Injector) (*UserRepository, error) {
     return &UserRepository{}, nil
 })
 
 // Register the interface binding
-do.As[*UserRepository, Repository](i)
+doger.As[*UserRepository, Repository](i)
 ```
 
 Or bind on service loading:
 
 ```go
 // Register the concrete implementation
-do.Provide(injector, func(i do.Injector) (*UserRepository, error) {
-    repo := do.MustInvoke[*UserRepository](i)
+doger.Provide(injector, func(i doger.Injector) (*UserRepository, error) {
+    repo := doger.MustInvoke[*UserRepository](i)
     return repo, nil
 })
 
 // Find the matching concrete type during invocation
-userRepository, err := do.InvokeAs[Repository](i)
+userRepository, err := doger.InvokeAs[Repository](i)
 ```
 
 ### 5. Update Main Function {#5-update-main-function}
@@ -180,7 +180,7 @@ func main() {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
 func main() {
@@ -215,18 +215,18 @@ var AppSet = wire.NewSet(
 )
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
-var UserPackage = do.Package(
-    do.Lazy(NewUserRepository),
-    do.Lazy(NewUserService),
+var UserPackage = doger.Package(
+    doger.Lazy(NewUserRepository),
+    doger.Lazy(NewUserService),
 )
 
-var AppPackage = do.Package(
-    do.Lazy(UserPackage),
-    do.Lazy(NewDatabase),
-    do.Lazy(NewApp),
+var AppPackage = doger.Package(
+    doger.Lazy(UserPackage),
+    doger.Lazy(NewDatabase),
+    doger.Lazy(NewApp),
 )
 ```
 
@@ -245,11 +245,11 @@ func InitializeApp(env string) (*App, error) {
 }
 ```
 
-**After (samber/do):**
+**After (doger):**
 
 ```go
 func InitializeApp(env string) (*App, error) {
-    injector := do.New()
+    injector := doger.New()
 
     if env == "test" {
         RegisterTestServices(injector)
@@ -257,7 +257,7 @@ func InitializeApp(env string) (*App, error) {
         RegisterProdServices(injector)
     }
 
-    app := do.MustInvoke[*App](injector)
+    app := doger.MustInvoke[*App](injector)
     return app, nil
 }
 ```
@@ -274,9 +274,9 @@ func InitializeApp(env string) (*App, error) {
 ## Common Pitfalls {#common-pitfalls}
 
 1. **Missing dependencies** - Ensure all required services are registered
-2. **Circular dependencies** - `samber/do` will detect and report these
-3. **Interface bindings** - Use `do.As` for interface implementations
-4. **Panics vs errors** - Prefer `do.MustInvoke` over `do.Invoke` when a missing service should stop the program immediately instead of being handled as a recoverable error
+2. **Circular dependencies** - `doger` will detect and report these
+3. **Interface bindings** - Use `doger.As` for interface implementations
+4. **Panics vs errors** - Prefer `doger.MustInvoke` over `doger.Invoke` when a missing service should stop the program immediately instead of being handled as a recoverable error
 
 ## Testing {#testing}
 
@@ -287,9 +287,9 @@ func TestUserService(t *testing.T) {
     injector := testInjector.Clone()
 
     // NewMockUserService is a provider returning *UserService wired with test doubles
-    do.Override(injector, NewMockUserService)
+    doger.Override(injector, NewMockUserService)
 
-    service := do.MustInvoke[*UserService](injector)
+    service := doger.MustInvoke[*UserService](injector)
 
     // Your test logic here
 }
@@ -297,7 +297,7 @@ func TestUserService(t *testing.T) {
 
 ## Next Steps {#next-steps}
 
-After migration, consider exploring these `samber/do` features:
+After migration, consider exploring these `doger` features:
 
 - [Interface binding](/docs/service-invocation/accept-interfaces-return-structs.md)
 - [Scoped Services](/docs/container/scope.md)

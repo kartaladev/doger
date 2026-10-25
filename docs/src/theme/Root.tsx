@@ -9,7 +9,7 @@ function getOutboundLinkType(href: string): string | null {
     return 'playground';
   if (href.includes('pkg.go.dev')) return 'godoc';
   if (
-    href.includes('github.com/samber/do') &&
+    href.includes('github.com/kartaladev/doger') &&
     !href.includes('github.com/sponsors')
   )
     return 'source';

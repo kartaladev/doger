@@ -20,10 +20,10 @@ The services can be assembled into a package, and then, exported all at once.
     ```go
     package stores
 
-    var Package = do.Package(
-        do.Lazy(NewPostgreSQLConnectionService),
-        do.Lazy(NewUserRepository),
-        do.Lazy(NewArticleRepository),
+    var Package = doger.Package(
+        doger.Lazy(NewPostgreSQLConnectionService),
+        doger.Lazy(NewUserRepository),
+        doger.Lazy(NewArticleRepository),
     )
     ```
 
@@ -32,9 +32,9 @@ The services can be assembled into a package, and then, exported all at once.
     ```go
     package observability
 
-    var Package = do.Package(
-        do.Eager(slog.New(slog.NewTextHandler(os.Stdout, nil))),
-        do.EagerNamed("prometheus.collector", DefaultMetricCollector),
+    var Package = doger.Package(
+        doger.Eager(slog.New(slog.NewTextHandler(os.Stdout, nil))),
+        doger.EagerNamed("prometheus.collector", DefaultMetricCollector),
     )
     ```
 
@@ -50,12 +50,12 @@ The services can be assembled into a package, and then, exported all at once.
     )
 
     func main() {
-        injector := do.New()
+        injector := doger.New()
         stores.Package(injector)
         observability.Package(injector)
 
         // could be replaced by:
-        // injector := do.New(
+        // injector := doger.New(
         //     stores.Package,
         //     observability.Package,
         // )
@@ -96,8 +96,8 @@ This requires each service to be exposed through an interface (see [Interface bi
         FindByID(id string) (*User, error)
     }
 
-    func newUserRepository(i do.Injector) (UserRepository, error) {
-        pool := do.MustInvoke[*pgxpool.Pool](i)
+    func newUserRepository(i doger.Injector) (UserRepository, error) {
+        pool := doger.MustInvoke[*pgxpool.Pool](i)
         return &userRepository{pool: pool}, nil
     }
 
@@ -117,7 +117,7 @@ This requires each service to be exposed through an interface (see [Interface bi
     ```go
     package repositories
 
-    func newUserRepositoryMock(i do.Injector) (UserRepository, error) {
+    func newUserRepositoryMock(i doger.Injector) (UserRepository, error) {
         return &userRepositoryMock{users: map[string]*User{}}, nil
     }
 
@@ -137,15 +137,15 @@ This requires each service to be exposed through an interface (see [Interface bi
     ```go
     package repositories
 
-    var Package = do.Package(
-        do.Lazy(newPostgreSQLPool),
-        do.Lazy(newUserRepository),
-        do.Lazy(newBillingRepository),
+    var Package = doger.Package(
+        doger.Lazy(newPostgreSQLPool),
+        doger.Lazy(newUserRepository),
+        doger.Lazy(newBillingRepository),
     )
 
-    var PackageMock = do.Package(
-        do.Lazy(newUserRepositoryMock),
-        do.Lazy(newBillingRepositoryMock),
+    var PackageMock = doger.Package(
+        doger.Lazy(newUserRepositoryMock),
+        doger.Lazy(newBillingRepositoryMock),
     )
     ```
 
@@ -160,7 +160,7 @@ This requires each service to be exposed through an interface (see [Interface bi
     )
 
     func main() {
-        injector := do.New(
+        injector := doger.New(
             auth.Package,
             repositories.Package,
         )
@@ -179,7 +179,7 @@ This requires each service to be exposed through an interface (see [Interface bi
     )
 
     func TestAuthRegister(t *testing.T) {
-        injector := do.New(
+        injector := doger.New(
             Package,
             repositories.PackageMock,
         )

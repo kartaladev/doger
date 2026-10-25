@@ -1,6 +1,6 @@
 ---
 title: Service registration
-description: List provided and invoked services on a samber/do injector, and inspect the inferred service name for a given type.
+description: List provided and invoked services on a doger injector, and inspect the inferred service name for a given type.
 sidebar_position: 3
 ---
 
@@ -11,8 +11,8 @@ sidebar_position: 3
 ## Spec {#spec}
 
 ```go
-injector.ListProvidedServices() []do.ServiceDescription
-injector.ListInvokedServices() []do.ServiceDescription
+injector.ListProvidedServices() []doger.ServiceDescription
+injector.ListInvokedServices() []doger.ServiceDescription
 
 type ServiceDescription struct {
 	ScopeID   string
@@ -25,20 +25,20 @@ type ServiceDescription struct {
 
 Each service is identified in the DI container by a slug.
 
-When using implicit naming, the `do` framework infers the service name from the type, by using the [go-type-to-string](https://github.com/samber/go-type-to-string) library.
+When using implicit naming, the `doger` framework infers the service name from the type, by using the [go-type-to-string](https://github.com/samber/go-type-to-string) library.
 
 For debugging purposes, you might want to print the service name.
 
 **Play: https://go.dev/play/p/g549GqBbj-n**
 
 ```go
-i := do.New()
+i := doger.New()
 
-do.Provide(i, func(i do.Injector) (*MyService, error) {
+doger.Provide(i, func(i doger.Injector) (*MyService, error) {
     return &MyService{}, nil
 })
 
-println(do.NameOf[*MyService]())
+println(doger.NameOf[*MyService]())
 ```
 
 Output:
@@ -54,12 +54,12 @@ For debugging purposes, the list of services provided to the container can be pr
 **Play: https://go.dev/play/p/e_oxd7b-q9h**
 
 ```go
-i := do.New()
+i := doger.New()
 
-do.Provide(i, func(i do.Injector) (*MyService, error) {
+doger.Provide(i, func(i doger.Injector) (*MyService, error) {
     return &MyService{}, nil
 })
-do.ProvideNamed(i, "a-number", 42)
+doger.ProvideNamed(i, "a-number", 42)
 
 services := i.ListProvidedServices()
 println(services)
@@ -81,12 +81,12 @@ For debugging purposes, the list of invoked services can be printed:
 **Play: https://go.dev/play/p/pJcJGOF5zeK**
 
 ```go
-i := do.New()
+i := doger.New()
 
-do.Provide(i, func(i do.Injector) (*MyService, error) {
+doger.Provide(i, func(i doger.Injector) (*MyService, error) {
     return &MyService{}, nil
 })
-do.ProvideNamed(i, "a-number", 42)
+doger.ProvideNamed(i, "a-number", 42)
 
 services := i.ListInvokedServices()
 println(services)

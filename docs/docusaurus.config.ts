@@ -3,7 +3,7 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'samber/do - Go Dependency Injection',
+  title: 'doger - Go Dependency Injection',
   tagline: 'Type-safe DI for Go using generics',
   favicon: 'img/favicon.ico',
 
@@ -30,15 +30,15 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://do.samber.dev',
+  url: 'https://kartaladev.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/',
+  baseUrl: '/doger/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'samber', // Usually your GitHub org/user name.
-  projectName: 'do', // Usually your repo name.
+  organizationName: 'kartaladev', // Usually your GitHub org/user name.
+  projectName: 'doger', // Usually your repo name.
 
   // Optional: deployment branch
   // deploymentBranch: 'gh-pages',
@@ -75,18 +75,10 @@ const config: Config = {
   headTags: [
     // SEO
     {
-      tagName: 'script',
-      attributes: {
-        async: 'true',
-        src: 'https://analytics.ahrefs.com/analytics.js',
-        'data-key': 'ZlVVDleFCGZPB8Nd2KkKrw',
-      },
-    },
-    {
       tagName: 'meta',
       attributes: {
         property: 'og:image',
-        content: 'https://do.samber.dev/img/cover.png',
+        content: 'https://kartaladev.github.io/doger/img/cover.png',
       },
     },
     {
@@ -100,7 +92,7 @@ const config: Config = {
       tagName: 'meta',
       attributes: {
         name: 'twitter:image',
-        content: 'https://do.samber.dev/img/cover.png',
+        content: 'https://kartaladev.github.io/doger/img/cover.png',
       },
     },
     {
@@ -127,7 +119,7 @@ const config: Config = {
       tagName: 'meta',
       attributes: {
         property: 'og:site_name',
-        content: 'samber/do',
+        content: 'doger',
       },
     },
     {
@@ -144,18 +136,6 @@ const config: Config = {
     // Google to treat all docs pages as non-canonical duplicates.
   ],
 
-  customFields: {
-    sponsors: [
-      {
-        name: 'DBOS',
-        url: 'https://www.dbos.dev/?utm_campaign=gh-smbr',
-        title: 'DBOS - Durable workflow orchestration library for Go',
-        logo_light: '/img/sponsors/dbos-black.webp',
-        logo_dark: '/img/sponsors/dbos-white.webp',
-      },
-    ],
-  },
-
   presets: [
     [
       'classic',
@@ -164,7 +144,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
-          editUrl: 'https://github.com/samber/do/tree/master/docs/',
+          editUrl: 'https://github.com/kartaladev/doger/tree/main/docs/',
           showLastUpdateAuthor: true,
           showLastUpdateTime: true,
           // Enhanced docs features from 3.8+
@@ -196,7 +176,7 @@ const config: Config = {
             // Add custom priority for specific pages
             return items.map((item) => {
               if (
-                item.url === 'https://do.samber.dev/' ||
+                item.url === 'https://kartaladev.github.io/doger/' ||
                 item.url.includes('/docs/getting-started')
               ) {
                 return {...item, priority: 1.0};
@@ -210,10 +190,6 @@ const config: Config = {
         },
         theme: {
           customCss: './src/css/custom.css',
-        },
-        gtag: {
-          trackingID: 'G-ZQ0MR5WG9T',
-          anonymizeIP: false,
         },
       } satisfies Preset.Options,
     ],
@@ -250,9 +226,9 @@ const config: Config = {
     ],
 
     navbar: {
-      title: '⚙️ samber/do',
+      title: '⚙️ doger',
       logo: {
-        alt: 'do - Dependency Injection for Go',
+        alt: 'doger - Dependency Injection for Go',
         src: 'img/icon.png',
         width: 32,
         height: 32,
@@ -272,7 +248,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          to: 'https://pkg.go.dev/github.com/samber/do/v2',
+          to: 'https://pkg.go.dev/github.com/kartaladev/doger',
           label: 'GoDoc',
           position: 'left',
         },
@@ -283,33 +259,27 @@ const config: Config = {
         },
         {
           type: 'dropdown',
-          label: 'v2',
+          label: 'v0',
           position: 'right',
           items: [
-            {label: 'v2', to: '/docs/about', disabled: true},
-            {label: 'v1', href: 'https://github.com/samber/do/tree/v1'},
+            {label: 'v0', to: '/docs/about', disabled: true},
+            {
+              label: 'upstream samber/do v1',
+              href: 'https://github.com/samber/do/tree/v1',
+            },
           ],
         },
         {
-          to: 'https://github.com/samber/do/releases',
+          to: 'https://github.com/kartaladev/doger/releases',
           label: 'Changelog',
           position: 'right',
         },
         {
-          to: 'https://github.com/sponsors/samber',
-          label: '💖 Sponsor',
-          position: 'right',
-        },
-        {
-          href: 'https://github.com/samber/do',
+          href: 'https://github.com/kartaladev/doger',
           // label: 'GitHub',
           position: 'right',
           className: 'header-github-link',
           'aria-label': 'GitHub repository',
-        },
-        {
-          type: 'search',
-          position: 'right',
         },
       ],
     },
@@ -325,19 +295,15 @@ const config: Config = {
             },
             {
               label: 'Changelog',
-              to: 'https://github.com/samber/do/releases',
+              to: 'https://github.com/kartaladev/doger/releases',
             },
             {
               label: 'Godoc',
-              to: 'https://pkg.go.dev/github.com/samber/do/v2',
+              to: 'https://pkg.go.dev/github.com/kartaladev/doger',
             },
             {
               label: 'License',
-              to: 'https://github.com/samber/do/blob/master/LICENSE',
-            },
-            {
-              label: '💖 Sponsor',
-              to: 'https://github.com/sponsors/samber',
+              to: 'https://github.com/kartaladev/doger/blob/main/LICENSE',
             },
           ],
         },
@@ -346,19 +312,11 @@ const config: Config = {
           items: [
             {
               label: 'New issue',
-              to: 'https://github.com/samber/do/issues',
+              to: 'https://github.com/kartaladev/doger/issues',
             },
             {
               label: 'GitHub',
-              to: 'https://github.com/samber/do',
-            },
-            {
-              label: 'Stack Overflow',
-              to: 'https://stackoverflow.com/search?q=samber+do',
-            },
-            {
-              label: 'Twitter',
-              to: 'https://twitter.com/samuelberthe',
+              to: 'https://github.com/kartaladev/doger',
             },
             {
               label: 'Substack',
@@ -384,7 +342,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} do.`,
+      copyright: `Copyright © ${new Date().getFullYear()} doger.`,
     },
     prism: {
       theme: prismThemes.github,
@@ -404,37 +362,11 @@ const config: Config = {
         },
       ],
     },
-    algolia: {
-      appId: '9Q5MHPPFJM',
-      // bearer:disable javascript_lang_hardcoded_secret
-      apiKey: '2f2e0e9a4f2ee85073da2a4357631401',
-      externalUrlRegex: 'do\\.samber\\.dev',
-      indexName: 'do',
-      contextualSearch: true,
-      searchParameters: {
-        // facetFilters: ['type:lvl1'],
-      },
-      searchPagePath: 'search',
-      // Enhanced search features from 3.8+
-      insights: true,
-    },
   } satisfies Preset.ThemeConfig,
 
   themes: ['@docusaurus/theme-mermaid'],
 
   plugins: [
-    [
-      'posthog-docusaurus',
-      {
-        apiKey: 'phc_oP3YQLnt3fvhiBEaAU3rrmQdRNXGJM3hoM8j4oCSayrx',
-        // posthog-docusaurus reads `appUrl`, not `appHost` — the previous
-        // key name was silently ignored and PostHog fell back to its
-        // us.i.posthog.com default instead of this self-hosted proxy.
-        appUrl: 'https://hogpost.samber.dev',
-        enableInDevelopment: false, // optional,
-        disableSessionRecording: true,
-      },
-    ],
     // Add ideal image plugin for better image optimization
     [
       '@docusaurus/plugin-ideal-image',

@@ -6,6 +6,12 @@ sidebar_position: 1
 
 # Upgrade samber/do from v1.x to v2
 
+:::note Upstream history
+
+This page documents the upgrade of upstream `samber/do` from v1 to v2. To move from `samber/do` v2 to doger, see [Migrating from samber/do](../migrating/migrating-from-samber-do.md).
+
+:::
+
 This documentation will help you upgrade your application from `samber/do` v1 to `samber/do` v2.
 
 `samber/do` v2 is a new major version, including breaking changes that require you to adjust your applications accordingly. We will guide you through this process and also mention a few optional recommendations.

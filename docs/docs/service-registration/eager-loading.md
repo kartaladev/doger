@@ -17,10 +17,10 @@ An eager service is simply initialized by you and then injected into the DI cont
 A service can be injected in many ways. Here is the full list of eager loading service injections.
 
 ```go
-func ProvideValue[T any](i do.Injector, value T)
-func ProvideNamedValue[T any](i do.Injector, name string, value T)
-func OverrideValue[T any](i do.Injector, value T)
-func OverrideNamedValue[T any](i do.Injector, name string, value T)
+func ProvideValue[T any](i doger.Injector, value T)
+func ProvideNamedValue[T any](i doger.Injector, name string, value T)
+func OverrideValue[T any](i doger.Injector, value T)
+func OverrideNamedValue[T any](i doger.Injector, name string, value T)
 ```
 
 :::info
@@ -37,18 +37,18 @@ config := &Config{
   Port: os.Getenv("PORT"),
 }
 
-i := do.New()
+i := doger.New()
 
-do.ProvideValue(i, config)
+doger.ProvideValue(i, config)
 // or
-do.ProvideNamedValue(i, "my.really.cool.config", config)
+doger.ProvideNamedValue(i, "my.really.cool.config", config)
 ```
 
 **Play: https://go.dev/play/p/5TOSiI-c17Y**
 
 ## Hot service replacement {#hot-service-replacement}
 
-By default, providing a service twice will panic. Service can be replaced at runtime using `do.Override` helper.
+By default, providing a service twice will panic. Service can be replaced at runtime using `doger.Override` helper.
 
 For test purposes, it can be very useful to override a service given to the DI container.
 
@@ -61,12 +61,12 @@ We strongly discourage using this helper in production. Please use service alias
 ```go
 type CalculatorTestSuite struct {
     suite.Suite
-    i do.Injector
+    i doger.Injector
 }
 
 func (suite *CalculatorTestSuite) SetupSuite() {
-    suite.i = do.New()
-    do.ProvideNamedValue(suite.i, "a-number", 42)
+    suite.i = doger.New()
+    doger.ProvideNamedValue(suite.i, "a-number", 42)
 }
 
 func (suite *CalculatorTestSuite) TearDownSuite() {
@@ -74,7 +74,7 @@ func (suite *CalculatorTestSuite) TearDownSuite() {
 }
 
 func (suite *CalculatorTestSuite) SetupTest() {
-    do.OverrideNamedValue(suite.i, "a-number", 1337)  // <- replace service by mock
+    doger.OverrideNamedValue(suite.i, "a-number", 1337)  // <- replace service by mock
 }
 
 func (suite *CalculatorTestSuite) Test1() {

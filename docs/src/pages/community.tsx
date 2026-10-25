@@ -6,9 +6,11 @@ import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
 
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 function Community() {
   const context = useDocusaurusContext();
+  const headerImg = useBaseUrl('/img/go-community.webp');
 
   return (
     <Layout
@@ -27,10 +29,10 @@ function Community() {
           </div>
           <img
             className={styles.headerImg}
-            src="/img/go-community.webp"
+            src={headerImg}
             width={1200}
             height={431}
-            alt="Gophers collaborating together, illustrating the samber/do community"
+            alt="Gophers collaborating together, illustrating the doger community"
           />
         </div>
       </header>
@@ -47,7 +49,7 @@ function Community() {
                 </div>
                 <div className="card__footer">
                   <Link
-                    to="https://github.com/samber/do/issues"
+                    to="https://github.com/kartaladev/doger/issues"
                     className="button button--outline button--primary button--block"
                   >
                     Open new issue
@@ -66,7 +68,7 @@ function Community() {
                 </div>
                 <div className="card__footer">
                   <Link
-                    to="https://github.com/samber/do?tab=readme-ov-file#-contributing"
+                    to="https://github.com/kartaladev/doger?tab=readme-ov-file#-contributing"
                     className="button button--outline button--primary button--block"
                   >
                     Start contributing!

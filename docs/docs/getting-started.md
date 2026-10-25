@@ -1,6 +1,6 @@
 ---
 title: 🚀 Getting started
-description: Let's discover samber/do in less than 5 minutes.
+description: Let's discover doger in less than 5 minutes.
 sidebar_position: 1
 ---
 
@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 
 # Getting started
 
-Discover **samber/do in less than 5 minutes**.
+Discover **doger in less than 5 minutes**.
 
 ## What you'll need {#what-youll-need}
 
@@ -20,7 +20,7 @@ This library has no dependencies except the Go std lib.
 Import package:
 
 ```sh
-go get -u github.com/samber/do/v2
+go get -u github.com/kartaladev/doger
 ```
 
 **AI Agent Skill:**
@@ -36,9 +36,9 @@ The simplest way to start is to use the default options:
 **Play: https://go.dev/play/p/g549GqBbj-n**
 
 ```go
-import "github.com/samber/do/v2"
+import "github.com/kartaladev/doger"
 
-injector := do.New()
+injector := doger.New()
 ```
 
 ## Service registration and invocation {#service-registration-and-invocation}
@@ -70,15 +70,15 @@ graph LR
   <TabItem value="car" label="car.go" default>
     ```go
     // Provider
-    func NewCar(i do.Injector) (*Car, error) {
+    func NewCar(i doger.Injector) (*Car, error) {
         return &Car{
             // import dependency
-            Engine: do.MustInvoke[*Engine](i),
+            Engine: doger.MustInvoke[*Engine](i),
             Wheels: [4]*Wheel{
-                do.MustInvokeNamed[*Wheel](i, "front-left"),
-                do.MustInvokeNamed[*Wheel](i, "front-right"),
-                do.MustInvokeNamed[*Wheel](i, "back-left"),
-                do.MustInvokeNamed[*Wheel](i, "back-right"),
+                doger.MustInvokeNamed[*Wheel](i, "front-left"),
+                doger.MustInvokeNamed[*Wheel](i, "front-right"),
+                doger.MustInvokeNamed[*Wheel](i, "back-left"),
+                doger.MustInvokeNamed[*Wheel](i, "back-right"),
             },
         }, nil
     }
@@ -98,7 +98,7 @@ graph LR
   <TabItem value="engine" label="engine.go">
     ```go
     // Provider
-    func NewEngine(i do.Injector) (*Engine, error) {
+    func NewEngine(i doger.Injector) (*Engine, error) {
         return &Engine{
             Started: false,
         }, nil
@@ -119,7 +119,7 @@ graph LR
   <TabItem value="wheel" label="wheel.go" default>
     ```go
     // Provider
-    func NewWheel(i do.Injector) (*Wheel, error) {
+    func NewWheel(i doger.Injector) (*Wheel, error) {
         return &Wheel{
             Front: false,
             Left: true,
@@ -146,20 +146,20 @@ graph LR
     ```go
     func main() {
         // Create DI container and inject services
-        injector := do.New()
+        injector := doger.New()
 
-        do.Provide(injector, NewCar)
-        do.Provide(injector, NewEngine)
-        do.ProvideNamed(injector, "front-left", NewWheel)
-        do.ProvideNamed(injector, "front-right", NewWheel)
-        do.ProvideNamed(injector, "back-left", NewWheel)
-        do.ProvideNamed(injector, "back-right", NewWheel)
-        do.ProvideValue(injector, &Config{
+        doger.Provide(injector, NewCar)
+        doger.Provide(injector, NewEngine)
+        doger.ProvideNamed(injector, "front-left", NewWheel)
+        doger.ProvideNamed(injector, "front-right", NewWheel)
+        doger.ProvideNamed(injector, "back-left", NewWheel)
+        doger.ProvideNamed(injector, "back-right", NewWheel)
+        doger.ProvideValue(injector, &Config{
             Port: 4242,
         })
 
         // Invoking Car will instantiate the singleton and its Engine+Wheel dependencies
-        car, err := do.Invoke[*Car](injector)
+        car, err := doger.Invoke[*Car](injector)
         if err != nil {
             log.Fatal(err.Error())
         }
@@ -186,13 +186,13 @@ The services can be assembled into a package, and then, imported all at once int
     package car
 
     // Export every services of a package and make them available in a single big provider
-    var Package = do.Package(
-        do.Lazy(NewCar),
-        do.Lazy(NewEngine),
-        do.LazyNamed("front-left", NewWheel),
-        do.LazyNamed("front-right", NewWheel),
-        do.LazyNamed("back-left", NewWheel),
-        do.LazyNamed("back-right", NewWheel),
+    var Package = doger.Package(
+        doger.Lazy(NewCar),
+        doger.Lazy(NewEngine),
+        doger.LazyNamed("front-left", NewWheel),
+        doger.LazyNamed("front-right", NewWheel),
+        doger.LazyNamed("back-left", NewWheel),
+        doger.LazyNamed("back-right", NewWheel),
     )
     ```
 
@@ -205,15 +205,15 @@ The services can be assembled into a package, and then, imported all at once int
 
     func main() {
         // Create DI container and inject services of the "car" package
-        injector := do.New(car.Package)
+        injector := doger.New(car.Package)
 
         // The traditional DI methods still works
-        do.ProvideValue(injector, &Config{
+        doger.ProvideValue(injector, &Config{
             Port: 4242,
         })
 
         // Invoking Car will instantiate the singleton and its Engine+Wheel dependencies
-        c, err := do.Invoke[*car.Car](injector)
+        c, err := doger.Invoke[*car.Car](injector)
         if err != nil {
             log.Fatal(err.Error())
         }

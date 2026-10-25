@@ -8,7 +8,7 @@ sidebar_position: 2
 
 If your service maintains state such as a connection pool, a buffer, etc., you might want to close or flush it gracefully when the application exits.
 
-When the `do.Shutdown[type]()` or the `injector.Shutdown()` function is called, the framework triggers the `Shutdown` method of each service implementing the `do.Shutdowner` interface, in reverse invocation order.
+When the `doger.Shutdown[type]()` or the `injector.Shutdown()` function is called, the framework triggers the `Shutdown` method of each service implementing the `doger.Shutdowner` interface, in reverse invocation order.
 
 🛑 Services can be shut down properly, in reverse initialization order. Requesting a shutdown on a scope also shuts down its children recursively.
 
@@ -18,28 +18,28 @@ A shutdown can be triggered on a root scope:
 
 ```go
 // on demand
-injector.Shutdown() *do.ShutdownReport
-injector.ShutdownWithContext(context.Context) *do.ShutdownReport
+injector.Shutdown() *doger.ShutdownReport
+injector.ShutdownWithContext(context.Context) *doger.ShutdownReport
 
 // on signal (helper methods on the root scope)
-injector.ShutdownOnSignals(...os.Signal) (os.Signal, *do.ShutdownReport)
-injector.ShutdownOnSignalsWithContext(context.Context, ...os.Signal) (os.Signal, *do.ShutdownReport)
+injector.ShutdownOnSignals(...os.Signal) (os.Signal, *doger.ShutdownReport)
+injector.ShutdownOnSignalsWithContext(context.Context, ...os.Signal) (os.Signal, *doger.ShutdownReport)
 ```
 
 ...on a single service:
 
 ```go
 // returns error on failure
-do.Shutdown[T any](do.Injector) error
-do.ShutdownWithContext[T any](context.Context, do.Injector) error
-do.ShutdownNamed(do.Injector, string) error
-do.ShutdownNamedWithContext(context.Context, do.Injector, string) error
+doger.Shutdown[T any](doger.Injector) error
+doger.ShutdownWithContext[T any](context.Context, doger.Injector) error
+doger.ShutdownNamed(doger.Injector, string) error
+doger.ShutdownNamedWithContext(context.Context, doger.Injector, string) error
 
 // panics on failure
-do.MustShutdown[T any](do.Injector)
-do.MustShutdownWithContext[T any](context.Context, do.Injector)
-do.MustShutdownNamed(do.Injector, string)
-do.MustShutdownNamedWithContext(context.Context, do.Injector, string)
+doger.MustShutdown[T any](doger.Injector)
+doger.MustShutdownWithContext[T any](context.Context, doger.Injector)
+doger.MustShutdownNamed(doger.Injector, string)
+doger.MustShutdownNamedWithContext(context.Context, doger.Injector, string)
 ```
 
 :::info
@@ -73,8 +73,8 @@ type ShutdownerWithContextAndError interface {
 ### Example {#example}
 
 ```go
-// Ensure at compile-time MyService implements do.ShutdownerWithContextAndError
-var _ do.ShutdownerWithContextAndError = (*MyService)(nil)
+// Ensure at compile-time MyService implements doger.ShutdownerWithContextAndError
+var _ doger.ShutdownerWithContextAndError = (*MyService)(nil)
 
 type MyService struct {}
 
@@ -83,7 +83,7 @@ func (*MyService) Shutdown(context.Context) error {
     return nil
 }
 
-i := do.New()
+i := doger.New()
 
 Provide(i, ...)
 Invoke(i, ...)

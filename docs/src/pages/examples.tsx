@@ -6,21 +6,27 @@ import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
 
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 function Examples() {
   const context = useDocusaurusContext();
+  const headerImg = useBaseUrl('/img/go-templates.webp');
 
   return (
-    <Layout title="Examples" description="Projects implementing samber/do">
+    <Layout
+      title="Examples"
+      description="doger examples and upstream samber/do project templates"
+    >
       <header className="hero">
         <div className="container text--center">
           <h1>Examples and templates</h1>
           <div className="hero--subtitle">
-            Here are a few demo projects implementing `samber/do`.
+            Here are doger's examples, and a few project templates from upstream
+            `samber/do`, which doger is forked from.
           </div>
           <img
             className={styles.headerImg}
-            src="/img/go-templates.webp"
+            src={headerImg}
             width={800}
             height={800}
             alt="Gopher mascot holding project templates for samber/do"
@@ -36,11 +42,11 @@ function Examples() {
                   <i className={classnames(styles.icon)}>🚀</i>
                 </div>
                 <div className="card__body">
-                  <p>samber/do &gt; examples</p>
+                  <p>doger &gt; examples</p>
                 </div>
                 <div className="card__footer">
                   <Link
-                    to="https://github.com/samber/do/tree/master/examples"
+                    to="https://github.com/kartaladev/doger/tree/main/examples"
                     className="button button--outline button--primary button--block"
                   >
                     See examples

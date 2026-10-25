@@ -1,17 +1,19 @@
 
-# do - Dependency Injection
+# doger - Dependency Injection
 
-[![tag](https://img.shields.io/github/tag/samber/do.svg)](https://github.com/samber/do/releases)
+[![tag](https://img.shields.io/github/tag/kartaladev/doger.svg)](https://github.com/kartaladev/doger/releases)
 ![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.18-%23007d9c)
-[![GoDoc](https://godoc.org/github.com/samber/do?status.svg)](https://pkg.go.dev/github.com/samber/do)
-![Build Status](https://github.com/samber/do/actions/workflows/test.yml/badge.svg)
-[![Go report](https://goreportcard.com/badge/github.com/samber/do)](https://goreportcard.com/report/github.com/samber/do)
-[![Coverage](https://img.shields.io/codecov/c/github/samber/do)](https://codecov.io/gh/samber/do)
-[![License](https://img.shields.io/github/license/samber/do)](./LICENSE)
+[![GoDoc](https://godoc.org/github.com/kartaladev/doger?status.svg)](https://pkg.go.dev/github.com/kartaladev/doger)
+![Build Status](https://github.com/kartaladev/doger/actions/workflows/test.yml/badge.svg)
+[![Go report](https://goreportcard.com/badge/github.com/kartaladev/doger)](https://goreportcard.com/report/github.com/kartaladev/doger)
+[![Coverage](https://img.shields.io/codecov/c/github/kartaladev/doger)](https://codecov.io/gh/kartaladev/doger)
+[![License](https://img.shields.io/github/license/kartaladev/doger)](./LICENSE)
 
 **⚙️ A dependency injection toolkit based on Go 1.18+ Generics.**
 
-This library implements the Dependency Injection design pattern. It may replace the fantastic `uber/dig` package. `samber/do` uses Go 1.18+ generics and therefore offers a type‑safe API.
+> doger is a fork of [samber/do](https://github.com/samber/do) by Samuel Berthe. Coming from `samber/do`? See [Migrating from samber/do](https://kartaladev.github.io/doger/docs/migrating/migrating-from-samber-do).
+
+This library implements the Dependency Injection design pattern. It may replace the fantastic `uber/dig` package. `doger` uses Go 1.18+ generics and therefore offers a type‑safe API.
 
 ![image](https://github.com/user-attachments/assets/81b91fa7-cdb4-4094-94ba-a0179abc6bf7)
 
@@ -24,24 +26,9 @@ This library implements the Dependency Injection design pattern. It may replace 
 
 ----
 
-<div align="center">
-  <sup><b>💖 Sponsored by:</b></sup>
-  <br>
-  <a href="https://www.dbos.dev/?utm_campaign=gh-smbr">
-    <div>
-	  <img width="200" alt="dbos" src="https://github.com/user-attachments/assets/d583cb62-7735-4d3c-beb7-e6ef1a5faf49" />
-    </div>
-    <div>
-      DBOS - Durable workflow orchestration library for Go
-    </div>
-  </a>
-</div>
-
-----
-
 **Why this name?**
 
-I love the **short name** for such a utility library. This name is the sum of `DI` and `Go` and no Go package uses this name.
+Upstream's short name `do` is the sum of `DI` and `Go`. `doger` keeps it as its prefix.
 
 ## 💡 Features
 
@@ -81,34 +68,30 @@ I love the **short name** for such a utility library. This name is the sum of `D
 ## 🚀 Install
 
 ```sh
-# v2 (latest)
-go get github.com/samber/do/v2@latest
-
-# v1
-go get github.com/samber/do@v1.6.0
+go get github.com/kartaladev/doger@latest
 
 # AI Agent Skill
 npx skills add https://github.com/samber/cc-skills-golang --skill golang-samber-do
 ```
 
-This library is v2 and follows SemVer strictly.
-
-No breaking changes will be made to exported APIs before v3.0.0.
+This library is v0 and follows SemVer: until v1.0.0, a minor release may contain breaking changes.
 
 This library has no dependencies except the Go std lib.
 
-### 🔥 Migration from v1 to v2
+### 🔥 Migration from samber/do
 
-[Documentation here](https://do.samber.dev/docs/upgrading/from-v1-x-to-v2)
+[Documentation here](https://kartaladev.github.io/doger/docs/migrating/migrating-from-samber-do). For upstream's own v1 to v2 upgrade, see [this page](https://kartaladev.github.io/doger/docs/upgrading/from-v1-x-to-v2).
 
 ## 🤠 Documentation
 
-- [GoDoc: https://godoc.org/github.com/samber/do/v2](https://godoc.org/github.com/samber/do/v2)
-- [Documentation](https://do.samber.dev/docs/getting-started)
-- [Examples](https://github.com/samber/do/tree/master/examples)
-- [Project templates](https://do.samber.dev/examples)
+- [GoDoc: https://pkg.go.dev/github.com/kartaladev/doger](https://pkg.go.dev/github.com/kartaladev/doger)
+- [Documentation](https://kartaladev.github.io/doger/docs/getting-started)
+- [Examples](https://github.com/kartaladev/doger/tree/main/examples)
+- [Project templates](https://kartaladev.github.io/doger/examples)
 
 ## 🎬 Project boilerplate
+
+Upstream `samber/do` templates:
 
 - [do-template-api](https://github.com/samber/do-template-api)
 - [do-template-worker](https://github.com/samber/do-template-worker)
@@ -116,9 +99,8 @@ This library has no dependencies except the Go std lib.
 
 ## 🤝 Contributing
 
-- Ping me on Twitter [@samuelberthe](https://twitter.com/samuelberthe) (DMs, mentions, whatever :))
-- Fork the [project](https://github.com/samber/do)
-- Fix [open issues](https://github.com/samber/do/issues) or request new features
+- Fork the [project](https://github.com/kartaladev/doger)
+- Fix [open issues](https://github.com/kartaladev/doger/issues) or request new features
 
 Don't hesitate ;)
 
@@ -134,16 +116,16 @@ make watch-test
 
 ## 👤 Contributors
 
-![Contributors](https://contrib.rocks/image?repo=samber/do)
+![Contributors](https://contrib.rocks/image?repo=kartaladev/doger)
 
 ## 💫 Show your support
 
 Give a ⭐️ if this project helped you!
 
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/samber?style=for-the-badge)](https://github.com/sponsors/samber)
-
 ## 📝 License
 
-Copyright © 2022 [Samuel Berthe](https://github.com/samber).
+Copyright © 2022 [Samuel Berthe](https://github.com/samber) (upstream [samber/do](https://github.com/samber/do)).
+
+Copyright © 2026 kartaladev.
 
 This project is [MIT](./LICENSE) licensed.

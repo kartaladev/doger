@@ -10,13 +10,13 @@ Service invocation in a Dependency Injection (DI) framework refers to the proces
 
 In the context of the Go code you're working with, there are several helper functions provided for service invocation:
 
-- `do.Invoke[T any](do.Injector) (T, error)`: This function invokes a service of type T from the DI container. If the service can be successfully created and returned, it does so. Otherwise, it returns an error.
+- `doger.Invoke[T any](doger.Injector) (T, error)`: This function invokes a service of type T from the DI container. If the service can be successfully created and returned, it does so. Otherwise, it returns an error.
 
-- `do.InvokeNamed[T any](do.Injector, string) (T, error)`: This function is similar to `do.Invoke`, but it allows you to invoke a service by its name. This is useful when you have multiple instances of the same type and you want to distinguish between them.
+- `doger.InvokeNamed[T any](doger.Injector, string) (T, error)`: This function is similar to `doger.Invoke`, but it allows you to invoke a service by its name. This is useful when you have multiple instances of the same type and you want to distinguish between them.
 
-- `do.MustInvoke[T any](do.Injector) T`: This function is a variant of `do.Invoke` that panics if the service cannot be created. This is useful when you're sure that the service should always be available, and if it's not, it's an error that should stop the program.
+- `doger.MustInvoke[T any](doger.Injector) T`: This function is a variant of `doger.Invoke` that panics if the service cannot be created. This is useful when you're sure that the service should always be available, and if it's not, it's an error that should stop the program.
 
-- `do.MustInvokeNamed[T any](do.Injector, string) T`: This function is a variant of `do.InvokeNamed` that also panics if the service cannot be created.
+- `doger.MustInvokeNamed[T any](doger.Injector, string) T`: This function is a variant of `doger.InvokeNamed` that also panics if the service cannot be created.
 
 🚀 Lazy services are loaded in invocation order.
 
@@ -38,16 +38,16 @@ type MyService struct {
 }
 
 func main() {
-    i := do.New()
+    i := doger.New()
 
-    do.ProvideNamedValue(i, "config.ip", "127.0.0.1")
-    do.Provide(i, func(i do.Injector) (*MyService, error) {
+    doger.ProvideNamedValue(i, "config.ip", "127.0.0.1")
+    doger.Provide(i, func(i doger.Injector) (*MyService, error) {
         return &MyService{
-            IP: do.MustInvokeNamed[string](i, "config.ip"),
+            IP: doger.MustInvokeNamed[string](i, "config.ip"),
         }, nil
     })
 
-    myService, err := do.Invoke[*MyService](i)
+    myService, err := doger.Invoke[*MyService](i)
 }
 ```
 
@@ -55,9 +55,9 @@ func main() {
 
 ## Auto-magically load a service {#auto-magically-load-a-service}
 
-You can also use the `do.InvokeStruct` function to auto-magically provide a service with its dependencies. The fields can be either exported or not.
+You can also use the `doger.InvokeStruct` function to auto-magically provide a service with its dependencies. The fields can be either exported or not.
 
-The `do:""` tag indicates the DI must infer the service name from its type (equivalent to `do.Invoke[*logrus.Logger](i)`).
+The `do:""` tag indicates the DI must infer the service name from its type (equivalent to `doger.Invoke[*logrus.Logger](i)`).
 
 ```go
 type MyService struct {
@@ -75,24 +75,24 @@ type MyService struct {
 Then add `*MyService` to the list of available services.
 
 ```go
-do.Provide[*MyService](injector, func (i do.Injector) (*MyService, error) {
-  return do.InvokeStruct[MyService](i)
+doger.Provide[*MyService](injector, func (i doger.Injector) (*MyService, error) {
+  return doger.InvokeStruct[MyService](i)
 })
 // or
-do.Provide[*MyService](i, do.InvokeStruct[MyService])
+doger.Provide[*MyService](i, doger.InvokeStruct[MyService])
 ```
 
 **Play: https://go.dev/play/p/Rqa4RCjThoI**
 
 ### Implicit aliasing behavior with InvokeStruct {#implicit-aliasing-behavior-with-invokestruct}
 
-When a field uses an empty tag value (eg: `do:""`) and no service is registered under the field type, the injector falls back to finding the first service whose type is assignable to the field type (same resolution strategy as `do.InvokeAs[T]`).
+When a field uses an empty tag value (eg: `do:""`) and no service is registered under the field type, the injector falls back to finding the first service whose type is assignable to the field type (same resolution strategy as `doger.InvokeAs[T]`).
 
 Implications:
 
 - Prefer explicit names when multiple assignable services exist to avoid ambiguity.
 - This fallback only applies when the tag key is present and empty; a missing tag does nothing.
-- The struct tag key can be customized via `do.InjectorOpts.StructTagKey`.
+- The struct tag key can be customized via `doger.InjectorOpts.StructTagKey`.
 
 :::info
 
@@ -121,9 +121,9 @@ In this way, if a service is not found, the resolution will report an error on a
 ```go
 // ❌ bad
 type MyService struct {
-    injector do.Injector
+    injector doger.Injector
 }
-func NewMyService(i do.Injector) (*MyService, error) {
+func NewMyService(i doger.Injector) (*MyService, error) {
     return &MyService{
         injector: i,
     }, nil
@@ -133,9 +133,9 @@ func NewMyService(i do.Injector) (*MyService, error) {
 type MyService struct {
   dependency *MyDependency
 }
-func NewMyService(i do.Injector) (*MyService, error) {
+func NewMyService(i doger.Injector) (*MyService, error) {
     return &MyService{
-        dep: do.MustInvoke[*MyDependency](i),   // <- recursive invocation on service construction
+        dep: doger.MustInvoke[*MyDependency](i),   // <- recursive invocation on service construction
     }, nil
 }
 ```

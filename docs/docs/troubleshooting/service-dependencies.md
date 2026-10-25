@@ -1,20 +1,20 @@
 ---
 title: Service dependencies
-description: Print a single service's dependency tree with do.ExplainService to see what it depends on and what depends on it, across scopes.
+description: Print a single service's dependency tree with doger.ExplainService to see what it depends on and what depends on it, across scopes.
 sidebar_position: 2
 ---
 
 # Service dependencies
 
-`do.ExplainService` and `do.ExplainNamedService` print a single service's dependencies (what it needs to be built) and dependents (what would break if it were removed), recursively, across the scope tree. Use them to understand why a service was instantiated, or to assess the blast radius of removing one.
+`doger.ExplainService` and `doger.ExplainNamedService` print a single service's dependencies (what it needs to be built) and dependents (what would break if it were removed), recursively, across the scope tree. Use them to understand why a service was instantiated, or to assess the blast radius of removing one.
 
 ## Dependency tree {#dependency-tree}
 
 ### Spec {#spec}
 
 ```go
-do.ExplainService[T any](do.Injector) (do.ExplainServiceOutput, bool)
-do.ExplainNamedService(do.Injector, string) (do.ExplainServiceOutput, bool)
+doger.ExplainService[T any](doger.Injector) (doger.ExplainServiceOutput, bool)
+doger.ExplainNamedService(doger.Injector, string) (doger.ExplainServiceOutput, bool)
 ```
 
 ### Print tree {#print-tree}
@@ -22,7 +22,7 @@ do.ExplainNamedService(do.Injector, string) (do.ExplainServiceOutput, bool)
 **Play: https://go.dev/play/p/GTcGyPFC8IB**
 
 ```go
-debug, found := do.ExplainNamedService(scope, "SERVICE-E")
+debug, found := doger.ExplainNamedService(scope, "SERVICE-E")
 if found {
     println(debug.String())
 } else {
@@ -88,7 +88,7 @@ graph TD
 **Play: https://go.dev/play/p/GTcGyPFC8IB**
 
 ```go
-description, found := do.ExplainNamedService(scope, "SERVICE-E")
+description, found := doger.ExplainNamedService(scope, "SERVICE-E")
 if found {
     println(description.Dependencies)
 } else {

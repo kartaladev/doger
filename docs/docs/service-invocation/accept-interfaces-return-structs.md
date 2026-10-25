@@ -1,30 +1,30 @@
 ---
 title: Interface binding
-description: Bind and invoke Go interfaces with samber/do using implicit aliasing (do.InvokeAs) or explicit binding (do.As), following "accept interfaces, return structs".
+description: Bind and invoke Go interfaces with doger using implicit aliasing (doger.InvokeAs) or explicit binding (doger.As), following "accept interfaces, return structs".
 sidebar_position: 2
 ---
 
 # Interface binding
 
-Interface binding in `samber/do` lets you register a concrete struct and invoke it through an interface it implements, either implicitly (`do.InvokeAs`) or explicitly (`do.As`). You have probably already heard the Go proverb "Accept interfaces, return structs". The basic idea is to let the consumer define the interfaces it uses while the producer returns concrete types.
+Interface binding in `doger` lets you register a concrete struct and invoke it through an interface it implements, either implicitly (`doger.InvokeAs`) or explicitly (`doger.As`). You have probably already heard the Go proverb "Accept interfaces, return structs". The basic idea is to let the consumer define the interfaces it uses while the producer returns concrete types.
 
 This library offers a great API for assembling a large number of modules with loose coupling and a clear separation of concerns.
 
-Aliases must be Go interfaces. It can be declared explicitly on injection using `do.As()`, or invoked implicitly using `do.InvokeAs()`.
+Aliases must be Go interfaces. It can be declared explicitly on injection using `doger.As()`, or invoked implicitly using `doger.InvokeAs()`.
 
 1. **Implicit alias invocation**:
    - provide struct, invoke interface
-   - `do.InvokeAs()`
+   - `doger.InvokeAs()`
 2. **Explicit alias injection**:
    - provide struct, bind interface, invoke interface
-   - `do.As()`
+   - `doger.As()`
 
 ## Implicit invocation (preferred) {#implicit-invocation-preferred}
 
 2 methods are available for implicit invocation:
 
-- `do.InvokeAs`
-- `do.MustInvokeAs`
+- `doger.InvokeAs`
+- `doger.MustInvokeAs`
 
 Named invocation is not available for now. Feel free to open an issue to discuss your needs.
 
@@ -43,15 +43,15 @@ func (r *RequestPerSecond) Inc() {
     r.counter++
 }
 
-i := do.New()
+i := doger.New()
 
 // inject the struct
-do.Provide(i, func(i do.Injector) (*RequestPerSecond, error) {
+doger.Provide(i, func(i doger.Injector) (*RequestPerSecond, error) {
     return &RequestPerSecond{}, nil
 })
 
 // invoke using the Metric interface
-metric := do.MustInvokeAs[Metric](injector)
+metric := doger.MustInvokeAs[Metric](injector)
 metric.Inc()    // <- r.counter will be incremented
 ```
 
@@ -73,20 +73,20 @@ Eg: `fmt.Stringer` might match dozens of services in a container.
 
 ### InvokeStruct and implicit aliasing {#invokestruct-and-implicit-aliasing}
 
-When using `do.InvokeStruct`, if a field is tagged with an empty tag (eg: `` `do:""` ``) and the inferred name does not match a registered service, the injector will fall back to the first registered service that is assignable to the field type, equivalent to `do.InvokeAs[T]` resolution. Prefer explicit names when multiple assignable services exist.
+When using `doger.InvokeStruct`, if a field is tagged with an empty tag (eg: `` `do:""` ``) and the inferred name does not match a registered service, the injector will fall back to the first registered service that is assignable to the field type, equivalent to `doger.InvokeAs[T]` resolution. Prefer explicit names when multiple assignable services exist.
 
 ## Explicit injection {#explicit-injection}
 
 Explicit injection will be used in rare cases when you need to adapt to legacy code or change the catalog of services at runtime.
 
-If you rely a lot on `do.Scope`, explicit injection might be used to define custom aliases in the scope tree branches.
+If you rely a lot on `doger.Scope`, explicit injection might be used to define custom aliases in the scope tree branches.
 
 4 methods are available for explicit aliasing:
 
-- `do.As`
-- `do.MustAs`
-- `do.AsNamed`
-- `do.MustAsNamed`
+- `doger.As`
+- `doger.MustAs`
+- `doger.AsNamed`
+- `doger.MustAsNamed`
 
 ```go
 type Metric interface {
@@ -101,21 +101,21 @@ func (r *RequestPerSecond) Inc() {
     r.counter++
 }
 
-i := do.New()
+i := doger.New()
 
 // inject the struct
-do.Provide(i, func(i do.Injector) (*RequestPerSecond, error) {
+doger.Provide(i, func(i doger.Injector) (*RequestPerSecond, error) {
     return &RequestPerSecond{}, nil
 })
 
 // explicit aliasing
-err := do.As[*RequestPerSecond, Metric](injector)
+err := doger.As[*RequestPerSecond, Metric](injector)
 if err != nil {
     // ...
 }
 
 // invoke using the explicit alias
-metric := do.MustInvoke[Metric](injector)
+metric := doger.MustInvoke[Metric](injector)
 metric.Inc()    // <- r.counter will be incremented
 ```
 

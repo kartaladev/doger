@@ -2,8 +2,11 @@ import React from 'react';
 import Layout from '@theme/Layout';
 import Translate, {translate} from '@docusaurus/Translate';
 import {PageMetadata} from '@docusaurus/theme-common';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 export default function NotFoundPage(): JSX.Element {
+  const homeUrl = useBaseUrl('/');
+  const docsUrl = useBaseUrl('/docs/getting-started');
   return (
     <>
       <PageMetadata
@@ -42,7 +45,7 @@ export default function NotFoundPage(): JSX.Element {
                 </Translate>
               </p>
               <div className="margin-top--lg">
-                <a href="/" className="button button--primary button--lg">
+                <a href={homeUrl} className="button button--primary button--lg">
                   <Translate
                     id="theme.NotFound.backToHome"
                     description="The label for the back to home button"
@@ -51,7 +54,7 @@ export default function NotFoundPage(): JSX.Element {
                   </Translate>
                 </a>
                 <a
-                  href="/docs/getting-started"
+                  href={docsUrl}
                   className="button button--secondary button--lg margin-left--md"
                 >
                   <Translate

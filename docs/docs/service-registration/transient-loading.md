@@ -13,7 +13,7 @@ Transient loading is similar to lazy loading, but a new instance is provided at 
 A transient service must be defined with a `provider` (kind of constructor). This provider will be called at every invocation.
 
 ```go
-type Provider[T any] func(do.Injector) (T, error)
+type Provider[T any] func(doger.Injector) (T, error)
 ```
 
 Example:
@@ -23,7 +23,7 @@ type MyService struct {
     Hello string
 }
 
-func NewMyService(i do.Injector) (*MyService, error) {
+func NewMyService(i doger.Injector) (*MyService, error) {
     return &MyService{Hello: "world"}, nil
 }
 ```
@@ -33,10 +33,10 @@ func NewMyService(i do.Injector) (*MyService, error) {
 A service can be injected in many ways. Here is the full list of transient loading service injections.
 
 ```go
-func ProvideTransient[T any](i do.Injector, provider do.Provider[T])
-func ProvideNamedTransient[T any](i do.Injector, name string, provider do.Provider[T])
-func OverrideTransient[T any](i do.Injector, provider Provider[T])
-func OverrideNamedTransient[T any](i do.Injector, name string, provider do.Provider[T])
+func ProvideTransient[T any](i doger.Injector, provider doger.Provider[T])
+func ProvideNamedTransient[T any](i doger.Injector, name string, provider doger.Provider[T])
+func OverrideTransient[T any](i doger.Injector, provider Provider[T])
+func OverrideNamedTransient[T any](i doger.Injector, name string, provider doger.Provider[T])
 ```
 
 :::info
@@ -46,11 +46,11 @@ It is highly recommended to use anonymous service invocation to let the framewor
 :::
 
 ```go
-i := do.New()
+i := doger.New()
 
-do.ProvideTransient(i, NewMyService)
+doger.ProvideTransient(i, NewMyService)
 // or
-do.ProvideNamedTransient(i, "my.really.cool.service", NewMyService)
+doger.ProvideNamedTransient(i, "my.really.cool.service", NewMyService)
 ```
 
 **Play: https://go.dev/play/p/j69I52whJr2**
@@ -61,7 +61,7 @@ On invocation, panics are caught by the framework and returned as an error.
 
 ## Hot service replacement {#hot-service-replacement}
 
-By default, providing a service twice will panic. Service can be replaced at runtime using `do.Override` helper.
+By default, providing a service twice will panic. Service can be replaced at runtime using `doger.Override` helper.
 
 For test purposes, it can be very useful to override a service given to the DI container.
 
@@ -74,12 +74,12 @@ We strongly discourage using this helper in production. Please use service alias
 ```go
 type CalculatorTestSuite struct {
     suite.Suite
-    i do.Injector
+    i doger.Injector
 }
 
 func (suite *CalculatorTestSuite) SetupSuite() {
-    suite.i = do.New()
-    do.ProvideTransient(suite.i, NewMyService)
+    suite.i = doger.New()
+    doger.ProvideTransient(suite.i, NewMyService)
 }
 
 func (suite *CalculatorTestSuite) TearDownSuite() {
@@ -87,7 +87,7 @@ func (suite *CalculatorTestSuite) TearDownSuite() {
 }
 
 func (suite *CalculatorTestSuite) SetupTest() {
-    do.OverrideTransient(suite.i, NewMyServiceMock)  // <- replace service by mock
+    doger.OverrideTransient(suite.i, NewMyServiceMock)  // <- replace service by mock
 }
 
 func (suite *CalculatorTestSuite) Test1() {

@@ -19,7 +19,7 @@ A design principle where the flow of control is inverted compared to traditional
 
 In Dependency Injection (DI), an injector is a component that creates instances of classes and manages their dependencies. It's also known as the DI container or IoC (Inversion of Control) container.
 
-`do.Injector` is implemented by `*do.RootScope` and `*do.Scope`. `*do.virtualScope` are internal implementation details.
+`doger.Injector` is implemented by `*doger.RootScope` and `*doger.Scope`. `*doger.virtualScope` are internal implementation details.
 
 ## DI Container {#di-container}
 
@@ -71,7 +71,7 @@ The process of executing a procedure or function through a call.
 
 ## Interface Binding {#interface-binding}
 
-A technique in DI that allows a concrete implementation to be bound to an interface type. This enables loose coupling by allowing services to depend on interfaces rather than concrete implementations. Interface binding can be done explicitly using `do.As()` or implicitly using `do.InvokeAs()`.
+A technique in DI that allows a concrete implementation to be bound to an interface type. This enables loose coupling by allowing services to depend on interfaces rather than concrete implementations. Interface binding can be done explicitly using `doger.As()` or implicitly using `doger.InvokeAs()`.
 
 This pattern follows the Go motto "Accept interfaces, return structs", which means:
 
@@ -102,11 +102,11 @@ A service in DI that is created anew each time it is requested.
 
 ## Healthcheck {#healthcheck}
 
-A mechanism for monitoring the health and status of services in a DI container. Services can implement health check interfaces (`do.Healthchecker` or `do.HealthcheckerWithContext`) to provide status information about their internal state, such as database connectivity or resource availability.
+A mechanism for monitoring the health and status of services in a DI container. Services can implement health check interfaces (`doger.Healthchecker` or `doger.HealthcheckerWithContext`) to provide status information about their internal state, such as database connectivity or resource availability.
 
 ## Graceful Shutdown {#graceful-shutdown}
 
-A shutdown mechanism that allows services to clean up resources and complete ongoing operations before the application terminates. Services can implement shutdown interfaces (`do.Shutdowner`, `do.ShutdownerWithError`, `do.ShutdownerWithContext`, or `do.ShutdownerWithContextAndError`) to define cleanup behavior. The framework ensures shutdown occurs in reverse initialization order.
+A shutdown mechanism that allows services to clean up resources and complete ongoing operations before the application terminates. Services can implement shutdown interfaces (`doger.Shutdowner`, `doger.ShutdownerWithError`, `doger.ShutdownerWithContext`, or `doger.ShutdownerWithContextAndError`) to define cleanup behavior. The framework ensures shutdown occurs in reverse initialization order.
 
 ## Service Alias {#service-alias}
 
@@ -114,4 +114,4 @@ An alternative name given to a service in DI. It allows a service to be accessed
 
 ## Package Loader {#package-loader}
 
-A mechanism that groups multiple service registrations into a single unit that can be imported and registered with a DI container. Package loaders use `do.Package()` to assemble services with different loading strategies (lazy, eager, transient) and can include named services and interface bindings. This allows for modular service organization where related services can be bundled together and imported as a cohesive unit, promoting modularity and reusability across different parts of an application.
+A mechanism that groups multiple service registrations into a single unit that can be imported and registered with a DI container. Package loaders use `doger.Package()` to assemble services with different loading strategies (lazy, eager, transient) and can include named services and interface bindings. This allows for modular service organization where related services can be bundled together and imported as a cohesive unit, promoting modularity and reusability across different parts of an application.
