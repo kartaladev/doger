@@ -4150,11 +4150,11 @@ By following these migration guides, you can successfully transition to the `dog
 
 ## Community and Support
 
-The `doger` library has a vibrant and growing community of developers who contribute to its development, share knowledge, and help each other solve problems. This section provides information about how to get involved and where to find help.
+This section explains how to get involved with the `doger` library and where to find help.
 
 ### Getting Started
 
-- **GitHub Repository**: https://github.com/kartaladev/doger - The main repository containing the source code, issues, and discussions
+- **GitHub Repository**: https://github.com/kartaladev/doger - The main repository containing the source code and issues
 - **Go Documentation**: https://pkg.go.dev/github.com/kartaladev/doger - Official Go documentation with API reference
 - **Examples**: Available in the `/examples` directory of the repository, covering various use cases and patterns
 - **Getting Started Guide**: Comprehensive guide for new users at `/docs/getting-started`
@@ -4185,15 +4185,6 @@ GitHub Issues is the primary place to report bugs, request features, and ask que
   - Code examples
   - What you've tried so far
   - Any error messages
-
-#### GitHub Discussions
-
-GitHub Discussions is a great place for:
-
-- **General Questions**: Ask questions about best practices, patterns, and usage
-- **Show and Tell**: Share your projects and how you're using the `doger` library
-- **Community Help**: Help other developers with their questions
-- **Announcements**: Stay updated on new releases and features
 
 #### Documentation
 
@@ -4276,8 +4267,6 @@ To stay updated with the latest developments:
 
 - **Watch the Repository**: Watch the GitHub repository for updates
 - **Follow Releases**: Check the releases page for new versions
-- **Join Discussions**: Participate in GitHub discussions
-- **Follow the Author**: Follow the maintainer on GitHub and social media
 - **Newsletter**: Subscribe to the project newsletter if available
 
 ### Examples and Showcases
@@ -4293,7 +4282,6 @@ The community has created many examples and showcases:
 ### Support Channels
 
 - **GitHub Issues**: https://github.com/kartaladev/doger/issues
-- **GitHub Discussions**: https://github.com/kartaladev/doger/discussions
 - **Go Documentation**: https://pkg.go.dev/github.com/kartaladev/doger
 - **Stack Overflow**: Tag questions with `go` and `dependency-injection`
 - **Reddit**: r/golang community for general Go questions
@@ -4328,7 +4316,7 @@ The `doger` library is built with modern Go practices and designed for performan
 ### License and Legal
 
 - **License**: MIT License - Very permissive, allows commercial use
-- **Copyright**: Copyright (c) 2023 Samuel Berthe
+- **Copyright**: Copyright (c) 2022 Samuel Berthe (upstream samber/do); Copyright (c) 2026 kartaladev
 - **Contributions**: Contributions are licensed under the same MIT license
 - **Third-party Code**: Any third-party code is properly attributed and licensed
 

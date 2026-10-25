@@ -80,38 +80,17 @@ function Community() {
             <div className="col text--center padding-vert--md">
               <div className="card">
                 <div className="card__header">
-                  <i className={classnames(styles.icon, styles.twitter)}></i>
-                </div>
-                <div className="card__body">
-                  <p>Follow &#64;samuelberthe on Twitter</p>
-                </div>
-                <div className="card__footer">
-                  <Link
-                    to="https://twitter.com/samuelberthe"
-                    className="button button--outline button--primary button--block"
-                  >
-                    Follow &#64;SamuelBerthe
-                  </Link>
-                </div>
-              </div>
-            </div>
-
-            <div className="col text--center padding-vert--md">
-              <div className="card">
-                <div className="card__header">
                   <i className={classnames(styles.icon, styles.email)}></i>
                 </div>
                 <div className="card__body">
-                  <p>
-                    For sensitive or security-related queries, send us an email
-                  </p>
+                  <p>Report a security vulnerability privately</p>
                 </div>
                 <div className="card__footer">
                   <Link
-                    to="mailto:contact@samuel-berthe.fr"
+                    to="https://github.com/kartaladev/doger/security/advisories/new"
                     className="button button--outline button--primary button--block"
                   >
-                    contact&#64;samuel-berthe.fr
+                    Report a vulnerability
                   </Link>
                 </div>
               </div>

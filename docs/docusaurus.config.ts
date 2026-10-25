@@ -95,21 +95,6 @@ const config: Config = {
         content: 'https://kartaladev.github.io/doger/img/cover.png',
       },
     },
-    {
-      tagName: 'meta',
-      attributes: {
-        name: 'twitter:creator',
-        content: '@samuelberthe',
-      },
-    },
-    // twitter:site complements twitter:creator for card attribution
-    {
-      tagName: 'meta',
-      attributes: {
-        name: 'twitter:site',
-        content: '@samuelberthe',
-      },
-    },
     // NOTE: do NOT add a static <meta property="og:locale"> here.
     // Docusaurus already emits one automatically from `i18n.defaultLocale`
     // (rendered as `en`); a second static tag here previously conflicted
@@ -120,13 +105,6 @@ const config: Config = {
       attributes: {
         property: 'og:site_name',
         content: 'doger',
-      },
-    },
-    {
-      tagName: 'meta',
-      attributes: {
-        name: 'msvalidate.01',
-        content: '4576E3F85783A82149A0DB35A150F7EB',
       },
     },
     // NOTE: do NOT add a global <link rel="canonical"> here.
@@ -317,10 +295,6 @@ const config: Config = {
             {
               label: 'GitHub',
               to: 'https://github.com/kartaladev/doger',
-            },
-            {
-              label: 'Substack',
-              to: 'https://samuelberthe.substack.com',
             },
           ],
         },
