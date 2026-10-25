@@ -23,12 +23,6 @@ Import package:
 go get -u github.com/kartaladev/doger
 ```
 
-**AI Agent Skill:**
-
-```bash
-npx skills add https://github.com/samber/cc-skills-golang --skill golang-samber-do
-```
-
 ## Create a DI container {#create-a-di-container}
 
 The simplest way to start is to use the default options:

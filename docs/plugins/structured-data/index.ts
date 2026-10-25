@@ -12,7 +12,9 @@ export default function structuredDataPlugin(
   context: LoadContext,
 ): Plugin<void> {
   const {siteConfig} = context;
-  const siteUrl = siteConfig.url;
+  // the site lives under baseUrl (e.g. https://kartaladev.github.io/doger),
+  // so every @id and URL must include it
+  const siteUrl = `${siteConfig.url}${siteConfig.baseUrl}`.replace(/\/$/, '');
 
   const structuredData = {
     '@context': 'https://schema.org',
@@ -37,15 +39,6 @@ export default function structuredDataPlugin(
         description:
           'Documentation for doger, a type-safe dependency injection toolkit for Go using generics.',
         inLanguage: 'en',
-        publisher: {'@id': `${siteUrl}/#person-samber`},
-        potentialAction: {
-          '@type': 'SearchAction',
-          target: {
-            '@type': 'EntryPoint',
-            urlTemplate: `${siteUrl}/search?q={search_term_string}`,
-          },
-          'query-input': 'required name=search_term_string',
-        },
       },
       {
         '@type': 'SoftwareSourceCode',

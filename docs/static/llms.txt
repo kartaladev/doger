@@ -140,12 +140,6 @@ The API reference provides comprehensive documentation of all public functions a
 - **`doger.HealthCheckAll()`** - Perform health checks on all services that implement the HealthChecker interface in the container and all its scopes.
 - **`doger.ShutdownAll()`** - Gracefully shutdown all services that implement the Shutdowner interface in the container and all its scopes.
 
-## AI Agent Skill:
-
-```bash
-npx skills add https://github.com/samber/cc-skills-golang --skill golang-samber-do
-```
-
 ## Quick Start Example
 
 This comprehensive example demonstrates the fundamental concepts of the `doger` library, showing how to create services, manage dependencies, and use the dependency injection container effectively. The example builds a simple user management system with email notification capabilities.

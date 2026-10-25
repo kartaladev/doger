@@ -69,9 +69,6 @@ Upstream's short name `do` is the sum of `DI` and `Go`. `doger` keeps it as its 
 
 ```sh
 go get github.com/kartaladev/doger@latest
-
-# AI Agent Skill
-npx skills add https://github.com/samber/cc-skills-golang --skill golang-samber-do
 ```
 
 This library is v0 and follows SemVer: until v1.0.0, a minor release may contain breaking changes.
