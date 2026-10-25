@@ -2,7 +2,7 @@ schema: doger-spec-driven
 
 # Project context: constraints an agent cannot infer from the code.
 context: |
-  This is a Go library (fork of github.com/samber/do/v2, a generics-based DI toolkit).
+  This is the Go library github.com/kartaladev/doger (package doger): a fork of `github.com/samber/do/v2`, a generics-based DI toolkit.
   Consumers are other Go programs; the public API is the product.
   Library principle: opinionated, safe defaults that work with zero configuration,
   while consumers keep full control (every opinionated choice is overridable

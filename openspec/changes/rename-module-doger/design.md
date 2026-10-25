@@ -188,7 +188,7 @@ Alternatives:
 - the fork notices, attribution links and the structured-data `isBasedOn`;
 - prose that means upstream (D7) and file slugs or heading IDs kept for link stability;
 - `openspec/`, plus `CLAUDE.md` and `openspec/config.yaml` attribution;
-- the `fix-stacktrace-frame-filter` test data (`stacktrace/stacktrace_internal_test.go` rows) and the `shortFuncName` inputs (D4).
+- the `shortFuncName` inputs (D4). The `stacktrace/stacktrace_internal_test.go` classification rows are not on this list: they move to `github.com/kartaladev/doger` together with the `service-source-tracking` MODIFIED delta (task 7.3), and `own_module_cache_renamed` uses `example.com/fork` as the other module path.
 
 `github.com/samber/go-type-to-string` is a separate dependency and stays.
 
