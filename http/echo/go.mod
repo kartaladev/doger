@@ -5,7 +5,7 @@ go 1.26.0
 require github.com/labstack/echo/v4 v4.16.2
 
 require (
-	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
+	github.com/kartaladev/doger v0.1.0
 	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
