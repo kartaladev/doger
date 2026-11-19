@@ -300,15 +300,15 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 43. Web UI escapes names and links
 
-- [ ] 43.1 RED: add `TestPages_EscapeNames` and `TestPages_BasePathEscaped` in `http/pages_test.go` and `TestWebUI_HostileNamesEscaped`, `TestWebUI_LinkOpensNamedService`, `TestWebUI_LinksResolve` and `TestWebUI_NoReflection` in `http/{std,gin,echo,fiber,chi}/web_ui_test.go` (web-ui escaping scenarios); verify `go test -race ./...` fails on the escape assertions in `http` and each adapter module
-- [ ] 43.2 GREEN: replace `text/template` with one `html/template` set parsed at init using recursive `{{template}}` blocks and `url.Values` links (D12); verify the 43.1 tests pass in every module and `make test-all` (or a per-module loop until group 46) is green
-- [ ] 43.3 REFACTOR: Inline Function `fromTemplate`, Extract Function `scopeLink`/`serviceLink` and Move Function for the page data builders; verify the per-module tests and lint pass
+- [x] 43.1 RED: add `TestPages_EscapeNames` and `TestPages_BasePathEscaped` in `http/pages_test.go` and `TestWebUI_HostileNamesEscaped`, `TestWebUI_LinkOpensNamedService`, `TestWebUI_LinksResolve` and `TestWebUI_NoReflection` in `http/{std,gin,echo,fiber,chi}/web_ui_test.go` (web-ui escaping scenarios); verify `go test -race ./...` fails on the escape assertions in `http` and each adapter module
+- [x] 43.2 GREEN: replace `text/template` with one `html/template` set parsed at init using recursive `{{template}}` blocks and `url.Values` links (D12); verify the 43.1 tests pass in every module and `make test-all` (or a per-module loop until group 46) is green
+- [x] 43.3 REFACTOR: Inline Function `fromTemplate`, Extract Function `scopeLink`/`serviceLink` and Move Function for the page data builders; verify the per-module tests and lint pass
 
 ## 44. Web UI headers, read-only routes and error bodies
 
-- [ ] 44.1 RED: add `TestWebUI_DefensiveHeaders`, `TestWebUI_MiddlewareAddsHeaders`, `TestWebUI_NonGETRejected`, `TestWebUI_RenderFailureGeneric500`, `TestWebUI_ReadOnly` and `TestWebUI_Fallbacks` per adapter (web-ui header/read-only/fallback scenarios); verify each adapter fails on missing headers, std POST returning 200 and chi/std leaking error text
-- [ ] 44.2 GREEN: a shared `dogerhttp.WriteHeaders` helper called on every response and redirect, GET/HEAD-only patterns in std and a generic 500 body; verify the 44.1 tests pass in every module
-- [ ] 44.3 REFACTOR: Extract Function for the per-adapter `response` into the shared helper where the framework allows, and Rename Variable `url`→`target`; verify the per-module tests and lint pass
+- [x] 44.1 RED: add `TestWebUI_DefensiveHeaders`, `TestWebUI_MiddlewareAddsHeaders`, `TestWebUI_NonGETRejected`, `TestWebUI_RenderFailureGeneric500`, `TestWebUI_ReadOnly` and `TestWebUI_Fallbacks` per adapter (web-ui header/read-only/fallback scenarios); verify each adapter fails on missing headers, std POST returning 200 and chi/std leaking error text
+- [x] 44.2 GREEN: a shared `dogerhttp.WriteHeaders` helper called on every response and redirect, GET/HEAD-only patterns in std and a generic 500 body; verify the 44.1 tests pass in every module
+- [x] 44.3 REFACTOR: Extract Function for the per-adapter `response` into the shared helper where the framework allows, and Rename Variable `url`→`target`; verify the per-module tests and lint pass
 
 ## 45. Web UI renders bounded dependency trees
 
@@ -318,9 +318,9 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 46. Web UI source paths and mount options
 
-- [ ] 46.1 RED: add `TestWebUI_SourcePathDisplay` per adapter and `TestPages_ShortenSourcePath`, `FuzzShortenSourcePath` and `TestPages_NeverInvokedNoLocation`, plus `TestWebUI_ErrorHandler` per adapter (scenarios "Source path display follows the option", "Shortening handles unusual paths", "A service never invoked shows no location", "A consumer error handler receives the render failure"); verify they fail to compile only on `dogerhttp.Option`/`WithFullSourcePaths`/`WithErrorHandler` and on full paths shown
-- [ ] 46.2 GREEN: add `type Option`, `WithFullSourcePaths()`, `WithErrorHandler(func(ctx, err))` (last wins, nil means discard; called once per render failure before the generic 500, fiber passing `c.UserContext()`) and variadic `...Option` on each adapter's `Use` and the page functions, plus a shortener for `/` and `\` separators; verify the 46.1 tests pass and `go test -fuzz=FuzzShortenSourcePath -fuzztime=30s ./http` finds no crasher
-- [ ] 46.3 REFACTOR: Introduce Parameter Object `pageOptions` threaded through the page builders; verify the per-module tests and lint pass
+- [x] 46.1 RED: add `TestWebUI_SourcePathDisplay` per adapter and `TestPages_ShortenSourcePath`, `FuzzShortenSourcePath` and `TestPages_NeverInvokedNoLocation`, plus `TestWebUI_ErrorHandler` per adapter (scenarios "Source path display follows the option", "Shortening handles unusual paths", "A service never invoked shows no location", "A consumer error handler receives the render failure"); verify they fail to compile only on `dogerhttp.Option`/`WithFullSourcePaths`/`WithErrorHandler` and on full paths shown
+- [x] 46.2 GREEN: add `type Option`, `WithFullSourcePaths()`, `WithErrorHandler(func(ctx, err))` (last wins, nil means discard; called once per render failure before the generic 500, fiber passing `c.UserContext()`) and variadic `...Option` on each adapter's `Use` and the page functions, plus a shortener for `/` and `\` separators; verify the 46.1 tests pass and `go test -fuzz=FuzzShortenSourcePath -fuzztime=30s ./http` finds no crasher
+- [x] 46.3 REFACTOR: Introduce Parameter Object `pageOptions` threaded through the page builders; verify the per-module tests and lint pass
 
 ## 47. Web UI mounts behind middleware and under concurrency
 

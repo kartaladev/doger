@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/kartaladev/doger"
+	"github.com/kartaladev/doger/http/internal/webuitest"
+	"github.com/kartaladev/doger/stacktrace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -214,4 +216,210 @@ func TestPagesHTML_UpstreamAttributionOnly(t *testing.T) {
 			assert.Equal(t, tt.count, strings.Count(renderPage(t, tt.page), "samber/do"))
 		})
 	}
+}
+
+func TestPages_EscapeNames(t *testing.T) {
+	t.Parallel()
+
+	const basePath = "/debug/doger"
+
+	tests := []struct {
+		name     string
+		function string
+		service  string
+		escaped  string
+	}{
+		{
+			name:     "ServiceListHTML/script",
+			function: "ServiceListHTML",
+			service:  "<script>alert(1)</script>",
+			escaped:  "&lt;script&gt;alert(1)&lt;/script&gt;",
+		},
+		{
+			name:     "ScopeTreeHTML/script",
+			function: "ScopeTreeHTML",
+			service:  "<script>alert(1)</script>",
+			escaped:  "&lt;script&gt;alert(1)&lt;/script&gt;",
+		},
+		{
+			name:     "ServiceHTML/img_onerror",
+			function: "ServiceHTML",
+			service:  `"><img src=x onerror=alert(1)>`,
+			escaped:  "&#34;&gt;&lt;img src=x onerror=alert(1)&gt;",
+		},
+		{
+			name:     "ServiceListHTML/plain",
+			function: "ServiceListHTML",
+			service:  "plain-name",
+			escaped:  "plain-name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			root := doger.New()
+			doger.ProvideNamed(root, tt.service, func(doger.Injector) (string, error) { return "v", nil })
+
+			var (
+				html string
+				err  error
+			)
+			switch tt.function {
+			case "ServiceListHTML":
+				html, err = ServiceListHTML(basePath, root)
+			case "ScopeTreeHTML":
+				html, err = ScopeTreeHTML(basePath, root, root.ID())
+			case "ServiceHTML":
+				html, err = ServiceHTML(basePath, root, root.ID(), tt.service)
+			}
+
+			require.NoError(t, err)
+			if tt.service != tt.escaped {
+				is.NotContains(html, tt.service)
+			}
+			is.Contains(html, tt.escaped)
+			webuitest.AssertNoInjectedMarkup(t, html)
+		})
+	}
+}
+
+func TestPages_ShortenSourcePath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		recorded string
+		shown    string
+	}{
+		{name: "unix", recorded: "/home/ci/work/app/main.go:42", shown: "main.go:42"},
+		{name: "windows", recorded: `C:\Users\ci\app\main.go:42`, shown: "main.go:42"},
+		{name: "base_name", recorded: "main.go:42", shown: "main.go:42"},
+		{name: "empty", recorded: "", shown: ""},
+		{name: "hostile", recorded: "/a/<script>.go:7", shown: "<script>.go:7"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.shown, shortenSourcePath(tt.recorded))
+		})
+	}
+}
+
+func TestPages_HostileSourcePathEscaped(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		options pageOptions
+		shown   string
+	}{
+		{name: "shortened", shown: "&lt;script&gt;.go:7"},
+		{name: "full_source_paths", options: pageOptions{FullSourcePaths: true}, shown: "/a/&lt;script&gt;.go:7"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := doger.New()
+			doger.ProvideNamed(root, "db", func(doger.Injector) (string, error) { return "v", nil })
+			_, err := doger.InvokeNamed[string](root, "db")
+			require.NoError(t, err)
+
+			service, ok := doger.ExplainNamedService(root, "db")
+			require.True(t, ok)
+			service.Invoked = &stacktrace.Frame{File: "/a/<script>.go", Function: "f", Line: 7}
+
+			html, err := render("service", newServicePage("/debug/doger", root, service, tt.options))
+			require.NoError(t, err)
+
+			assert.Contains(t, html, "Invoked at: "+tt.shown)
+			webuitest.AssertNoInjectedMarkup(t, html)
+		})
+	}
+}
+
+func TestPages_RootBasePath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		base  string
+		links []string
+	}{
+		{name: "root", base: "/", links: []string{`href="/"`, `href="/scope"`, `href="/service"`}},
+		{name: "trailing_slash", base: "/debug/doger/", links: []string{`href="/debug/doger"`, `href="/debug/doger/scope"`, `href="/debug/doger/service"`}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := doger.New()
+			html, err := ServiceListHTML(tt.base, root)
+			require.NoError(t, err)
+
+			for _, link := range tt.links {
+				assert.Contains(t, html, link)
+			}
+			assert.NotContains(t, html, `href="//`)
+		})
+	}
+}
+
+func FuzzShortenSourcePath(f *testing.F) {
+	for _, seed := range []string{
+		"/home/ci/work/app/main.go:42", `C:\Users\ci\app\main.go:42`, "main.go:42", "", "/a/<script>.go:7", "/", `\`, "a/b\\c:1",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, recorded string) {
+		shown := shortenSourcePath(recorded)
+
+		assert.True(t, strings.HasSuffix(recorded, shown), "%q is not a suffix of %q", shown, recorded)
+		assert.NotContains(t, shown, "/")
+		assert.NotContains(t, shown, `\`)
+		if !strings.ContainsAny(recorded, `/\`) {
+			assert.Equal(t, recorded, shown)
+		}
+	})
+}
+
+func TestPages_NeverInvokedNoLocation(t *testing.T) {
+	t.Parallel()
+
+	root := doger.New()
+	doger.ProvideNamed(root, "db", func(doger.Injector) (string, error) { return "v", nil })
+
+	html, err := ServiceHTML("/debug/doger", root, root.ID(), "db")
+	require.NoError(t, err)
+
+	assert.Empty(t, webuitest.InvokedAt(t, html))
+}
+
+func TestPages_BasePathEscaped(t *testing.T) {
+	t.Parallel()
+
+	html, err := IndexHTML(`/x"><script>alert(1)</script>`)
+	require.NoError(t, err)
+
+	webuitest.AssertNoInjectedMarkup(t, html)
+
+	internal := 0
+	for _, link := range webuitest.Links(html) {
+		if strings.HasPrefix(link.Href, "https://") {
+			continue // the static links to the project's resources
+		}
+
+		internal++
+		assert.True(t, strings.HasPrefix(link.Href, "/x%22%3E%3Cscript%3Ealert%281%29%3C/script%3E"),
+			"link %q does not start with the escaped base path", link.Href)
+	}
+	assert.Equal(t, 2, internal, "the scope and service links")
 }

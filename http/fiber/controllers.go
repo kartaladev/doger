@@ -1,11 +1,12 @@
 package dogerfiber
 
 import (
-	"fmt"
+	"net/http"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
+	"github.com/kartaladev/doger/http/internal/webui"
 )
 
 // Use integrates the doger library's web-based debugging interface with a Fiber router.
@@ -44,32 +45,30 @@ import (
 // Do not expose this group publicly in production. Protect it with authentication
 // (e.g., Basic Auth) and/or network restrictions, since it reveals internal details
 // about your application's DI graph. Attach auth middleware to the group before Use.
-func Use(router fiber.Router, basePath string, injector doger.Injector) {
-	router.Get("", func(c *fiber.Ctx) error {
-		output, err := dogerhttp.IndexHTML(basePath)
-		if err != nil {
-			return err
-		}
+//
+// opts configure the pages, such as [dogerhttp.WithFullSourcePaths] and
+// [dogerhttp.WithErrorHandler]. The error handler receives c.UserContext().
+func Use(router fiber.Router, basePath string, injector doger.Injector, opts ...dogerhttp.Option) {
+	use(router, basePath, injector, defaultRenderer, opts)
+}
 
-		response(c, output)
-		return nil
+func use(router fiber.Router, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
+	base := webui.Base(basePath)
+
+	router.Get("", func(c *fiber.Ctx) error {
+		output, err := pages.index(base, opts...)
+		return response(c, output, err, opts)
 	})
 
 	router.Get("/scope", func(c *fiber.Ctx) error {
 		scopeID := c.Query("scope_id")
 		if scopeID == "" {
-			url := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
-			c.Redirect(url, 302)
-			return nil
+			writeHeaders(c)
+			return c.Redirect(webui.ScopeLink(base, injector.ID()), http.StatusFound)
 		}
 
-		output, err := dogerhttp.ScopeTreeHTML(basePath, injector, scopeID)
-		if err != nil {
-			return err
-		}
-
-		response(c, output)
-		return nil
+		output, err := pages.scopeTree(base, injector, scopeID, opts...)
+		return response(c, output, err, opts)
 	})
 
 	router.Get("/service", func(c *fiber.Ctx) error {
@@ -77,26 +76,55 @@ func Use(router fiber.Router, basePath string, injector doger.Injector) {
 		serviceName := c.Query("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := dogerhttp.ServiceListHTML(basePath, injector)
-			if err != nil {
-				return err
-			}
-
-			response(c, output)
-			return nil
+			output, err := pages.serviceList(base, injector, opts...)
+			return response(c, output, err, opts)
 		}
 
-		output, err := dogerhttp.ServiceHTML(basePath, injector, scopeID, serviceName)
-		if err != nil {
-			return err
-		}
-
-		response(c, output)
-		return nil
+		output, err := pages.service(base, injector, scopeID, serviceName, opts...)
+		return response(c, output, err, opts)
 	})
 }
 
-func response(c *fiber.Ctx, data string) {
-	c.Response().Header.Set("Content-Type", "text/html; charset=utf-8")
-	c.Status(200).SendString(data)
+// writeHeaders sets the headers of dogerhttp.WriteHeaders on the response
+// of c.
+func writeHeaders(c *fiber.Ctx) {
+	h := http.Header{}
+	dogerhttp.WriteHeaders(h)
+
+	for key := range h {
+		c.Set(key, h.Get(key))
+	}
+}
+
+// response writes data as the page, or a generic 500 when it failed to
+// render: the error text never reaches the client nor Fiber's error
+// handler, only the error handler of opts, with c.UserContext(). The 500 is
+// plain text, as on the other adapters.
+func response(c *fiber.Ctx, data string, err error, opts []dogerhttp.Option) error {
+	writeHeaders(c)
+
+	if err != nil {
+		webui.ReportError(c.UserContext(), err, webui.Resolve(opts))
+		c.Set(fiber.HeaderContentType, "text/plain; charset=utf-8")
+
+		return c.Status(http.StatusInternalServerError).SendString(http.StatusText(http.StatusInternalServerError))
+	}
+
+	return c.Status(http.StatusOK).SendString(data)
+}
+
+// renderer renders the pages of the UI. Tests replace a page to make it fail.
+type renderer struct {
+	index       func(basePath string, opts ...dogerhttp.Option) (string, error)
+	scopeTree   func(basePath string, injector doger.Injector, scopeID string, opts ...dogerhttp.Option) (string, error)
+	service     func(basePath string, injector doger.Injector, scopeID, serviceName string, opts ...dogerhttp.Option) (string, error)
+	serviceList func(basePath string, injector doger.Injector, opts ...dogerhttp.Option) (string, error)
+}
+
+// defaultRenderer renders the pages of package dogerhttp.
+var defaultRenderer = renderer{
+	index:       dogerhttp.IndexHTML,
+	scopeTree:   dogerhttp.ScopeTreeHTML,
+	service:     dogerhttp.ServiceHTML,
+	serviceList: dogerhttp.ServiceListHTML,
 }

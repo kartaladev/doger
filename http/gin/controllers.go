@@ -1,11 +1,12 @@
 package dogergin
 
 import (
-	"fmt"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
+	"github.com/kartaladev/doger/http/internal/webui"
 )
 
 // Use integrates the doger library's web-based debugging interface with a Gin router.
@@ -44,24 +45,31 @@ import (
 // (e.g., Basic Auth) and/or network restrictions, since it can leak internals
 // about your application's DI graph. Attach auth middleware to the router group
 // before calling Use.
-func Use(router *gin.RouterGroup, injector doger.Injector) {
-	basePathDo := router.BasePath()
+//
+// opts configure the pages, such as [dogerhttp.WithFullSourcePaths] and
+// [dogerhttp.WithErrorHandler].
+func Use(router *gin.RouterGroup, injector doger.Injector, opts ...dogerhttp.Option) {
+	use(router, injector, defaultRenderer, opts)
+}
+
+func use(router *gin.RouterGroup, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
+	base := webui.Base(router.BasePath())
 
 	router.Handle("GET", "", func(c *gin.Context) {
-		output, err := dogerhttp.IndexHTML(basePathDo)
-		response(c, output, err)
+		output, err := pages.index(base, opts...)
+		response(c, output, err, opts)
 	})
 
 	router.Handle("GET", "/scope", func(c *gin.Context) {
 		scopeID := c.Query("scope_id")
 		if scopeID == "" {
-			url := fmt.Sprintf("%s/scope?scope_id=%s", basePathDo, injector.ID())
-			c.Redirect(302, url)
+			dogerhttp.WriteHeaders(c.Writer.Header())
+			c.Redirect(http.StatusFound, webui.ScopeLink(base, injector.ID()))
 			return
 		}
 
-		output, err := dogerhttp.ScopeTreeHTML(basePathDo, injector, scopeID)
-		response(c, output, err)
+		output, err := pages.scopeTree(base, injector, scopeID, opts...)
+		response(c, output, err, opts)
 	})
 
 	router.Handle("GET", "/service", func(c *gin.Context) {
@@ -69,22 +77,35 @@ func Use(router *gin.RouterGroup, injector doger.Injector) {
 		serviceName := c.Query("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := dogerhttp.ServiceListHTML(basePathDo, injector)
-			response(c, output, err)
+			output, err := pages.serviceList(base, injector, opts...)
+			response(c, output, err, opts)
 			return
 		}
 
-		output, err := dogerhttp.ServiceHTML(basePathDo, injector, scopeID, serviceName)
-		response(c, output, err)
+		output, err := pages.service(base, injector, scopeID, serviceName, opts...)
+		response(c, output, err, opts)
 	})
 }
 
-func response(c *gin.Context, data string, err error) {
-	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+// response writes data as the page, or a generic 500 when it failed to
+// render: the error text never reaches the client, only the error handler
+// of opts.
+func response(c *gin.Context, data string, err error, opts []dogerhttp.Option) {
+	webui.WritePage(c.Writer, c.Request, data, err, webui.Resolve(opts))
+}
 
-	if err != nil {
-		c.String(500, err.Error())
-	} else {
-		c.String(200, data)
-	}
+// renderer renders the pages of the UI. Tests replace a page to make it fail.
+type renderer struct {
+	index       func(basePath string, opts ...dogerhttp.Option) (string, error)
+	scopeTree   func(basePath string, injector doger.Injector, scopeID string, opts ...dogerhttp.Option) (string, error)
+	service     func(basePath string, injector doger.Injector, scopeID, serviceName string, opts ...dogerhttp.Option) (string, error)
+	serviceList func(basePath string, injector doger.Injector, opts ...dogerhttp.Option) (string, error)
+}
+
+// defaultRenderer renders the pages of package dogerhttp.
+var defaultRenderer = renderer{
+	index:       dogerhttp.IndexHTML,
+	scopeTree:   dogerhttp.ScopeTreeHTML,
+	service:     dogerhttp.ServiceHTML,
+	serviceList: dogerhttp.ServiceListHTML,
 }
