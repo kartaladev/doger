@@ -116,12 +116,12 @@ func (s *serviceLazy[T]) instanceOrBuild(i Injector) (instance T, built bool, er
 			return instance, false, nil
 		}
 
-		run, inFlight := s.state.claimLocked()
+		run, inFlight := s.state.claimLocked(s.name, rootOf(i))
 		s.mu.Unlock()
 		if inFlight {
 			// a waiter gets the builder's failure; on success it reads the
 			// built instance on the next turn
-			if err := waitForBuild(i, s.name, run); err != nil {
+			if err := waitForBuild(s.name, run); err != nil {
 				return empty[T](), false, err
 			}
 			continue
@@ -142,7 +142,7 @@ func (s *serviceLazy[T]) runBuild(i Injector, run *buildRun) (instance T, err er
 			return
 		}
 		if r := recover(); r != nil {
-			_ = s.finishBuild(run, empty[T](), 0, libErrorf("%w: %v", ErrProviderPanic, r)) // the panic goes on
+			_ = s.finishBuild(run, empty[T](), 0, wrapBuildError(i, s.name, buildPanicError(r))) // the panic goes on
 			panic(r)
 		}
 		// runtime.Goexit: the waiters are released, the caller never returns

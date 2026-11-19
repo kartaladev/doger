@@ -108,17 +108,24 @@ func TestConcurrentResolution_DeclaredDependencyCycle(t *testing.T) {
 	testWithTimeout(t, 2*time.Second)
 
 	root := New()
-	ProvideNamed(root, "a", func(Injector) (int, error) { return 1, nil }, DependsOnNamed("b"))
-	ProvideNamed(root, "b", func(i Injector) (int, error) { return InvokeNamed[int](i, "a") })
-	// both goroutines are in flight before either builds "b": the one
-	// invoking "a" resolves "b" as its declared dependency
+	// both goroutines are inside their builds before either resolves the
+	// other: G1 builds "a" and is about to resolve "b" (its declared
+	// dependency), G2 is in the provider of "b"
 	barrier := newResolutionBarrier(2)
-	var once sync.Map
+	var onceB sync.Once
+	ProvideNamed(root, "a", func(Injector) (int, error) { return 1, nil }, DependsOnNamed("b"))
+	ProvideNamed(root, "b", func(i Injector) (int, error) {
+		onceB.Do(barrier.wait)
+		return InvokeNamed[int](i, "a")
+	})
+	var g1 atomic.Value
+	var onceG1 sync.Once
 	root.AddBeforeInvocationHook(func(_ *Scope, name string) {
-		if name == "b" {
-			if _, seen := once.LoadOrStore(goroutineTestKey(), true); !seen {
-				barrier.wait()
-			}
+		switch {
+		case name == "a":
+			onceG1.Do(func() { g1.Store(goroutineTestKey()) })
+		case name == "b" && g1.Load() == goroutineTestKey():
+			barrier.wait()
 		}
 	})
 
@@ -229,8 +236,10 @@ func TestConcurrentResolution_CapturedInjectorNoCycle(t *testing.T) {
 	testWithTimeout(t, 2*time.Second)
 
 	root := New()
-	ProvideNamedValue(root, "b", 2)
+	var callsA, callsB atomic.Int32
+	ProvideNamed(root, "b", func(Injector) (int, error) { callsB.Add(1); return 2, nil })
 	ProvideNamed(root, "a", func(Injector) (int, error) {
+		callsA.Add(1)
 		b, err := InvokeNamed[int](root, "b")
 		return b + 1, err
 	})
@@ -239,15 +248,23 @@ func TestConcurrentResolution_CapturedInjectorNoCycle(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 3, value)
+	assert.Equal(t, int32(1), callsA.Load(), "provider calls of a")
+	assert.Equal(t, int32(1), callsB.Load(), "provider calls of b")
 }
 
 // waitingForBuilds returns how many goroutines wait for a build in flight
 // in root.
 func waitingForBuilds(root *RootScope) int {
-	waits := root.buildWaits()
 	waits.mu.Lock()
 	defer waits.mu.Unlock()
-	return len(waits.edges)
+
+	n := 0
+	for _, run := range waits.edges {
+		if run.root == root && !run.ended() {
+			n++
+		}
+	}
+	return n
 }
 
 // resolutionDB is the instance of "db" in the single-build tests.
@@ -264,24 +281,21 @@ func TestConcurrentResolution_SingleBuild(t *testing.T) {
 
 			root := New()
 			var calls atomic.Int32
-			release := make(chan struct{})
 			ProvideNamed(root, "db", func(Injector) (*resolutionDB, error) {
 				calls.Add(1)
-				<-release
+				// returns once every other caller waits for this build
+				for waitingForBuilds(root) < callers-1 {
+					runtime.Gosched()
+				}
 				return &resolutionDB{}, nil
 			})
 
-			var waiting atomic.Int32
-			root.AddBeforeInvocationHook(func(*Scope, string) { waiting.Add(1) })
 			results := make([]*resolutionDB, callers)
 			errs := make([]error, callers)
 			var wg sync.WaitGroup
 			for n := range callers {
 				wg.Go(func() { results[n], errs[n] = InvokeNamed[*resolutionDB](root, "db") })
 			}
-			require.Eventually(t, func() bool { return waiting.Load() == int32(callers) }, 2*time.Second, time.Millisecond)
-			time.Sleep(10 * time.Millisecond) // let the callers reach the build
-			close(release)
 			wg.Wait()
 
 			for n := range callers {
@@ -372,6 +386,10 @@ func TestConcurrentResolution_WaitersShareFailure(t *testing.T) {
 			t.Helper()
 			assert.ErrorIs(t, err, ErrProviderPanic)
 			assert.ErrorContains(t, err, "runtime.Goexit")
+			var serviceErr *ServiceError
+			if assert.ErrorAs(t, err, &serviceErr) {
+				assert.Equal(t, "db", serviceErr.Service)
+			}
 		}},
 	}
 
@@ -420,4 +438,137 @@ func TestConcurrentResolution_WaitersShareFailure(t *testing.T) {
 			is.Equal(int32(2), calls.Load(), "a later invoke builds again")
 		})
 	}
+}
+
+func TestConcurrentResolution_StaleWaitNoFalseCycle(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 60*time.Second)
+
+	// No cycle: a -> d, then a -> c; c -> d. G1 invokes a (and builds d), G2
+	// invokes c and waits for d; once d is built, G1 goes on to c, which G2
+	// still builds while its wait edge on G1 may still be registered.
+	falseCycles := 0
+	const rounds = 300
+	for range rounds {
+		root := New()
+		ProvideNamed(root, "d", func(Injector) (int, error) {
+			for waitingForBuilds(root) < 1 { // G2 waits for d, owned by G1
+				runtime.Gosched()
+			}
+			return 1, nil
+		})
+		ProvideNamed(root, "c", func(i Injector) (int, error) { return InvokeNamed[int](i, "d") })
+		cStarted := make(chan struct{})
+		var once sync.Once
+		ProvideNamed(root, "a", func(i Injector) (int, error) {
+			<-cStarted
+			if _, err := InvokeNamed[int](i, "d"); err != nil {
+				return 0, err
+			}
+			return InvokeNamed[int](i, "c")
+		})
+		root.AddBeforeInvocationHook(func(_ *Scope, name string) {
+			if name == "c" {
+				once.Do(func() { close(cStarted) })
+			}
+		})
+
+		errs := invokeConcurrently(root, []string{"a", "c"})
+		if errs[0] != nil || errs[1] != nil {
+			falseCycles++
+		}
+	}
+
+	assert.Zero(t, falseCycles, "rounds with a false ErrCircularDependency out of %d", rounds)
+}
+
+func TestConcurrentResolution_CrossContainerCycle(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 3*time.Second)
+
+	r1, r2 := New(), New()
+	barrier := newResolutionBarrier(2)
+	var o1, o2 sync.Once
+	ProvideNamed(r1, "a", func(Injector) (int, error) {
+		o1.Do(barrier.wait)
+		return InvokeNamed[int](r2, "b")
+	})
+	ProvideNamed(r2, "b", func(Injector) (int, error) {
+		o2.Do(barrier.wait)
+		return InvokeNamed[int](r1, "a")
+	})
+
+	var wg sync.WaitGroup
+	var e1, e2 error
+	wg.Go(func() { _, e1 = InvokeNamed[int](r1, "a") })
+	wg.Go(func() { _, e2 = InvokeNamed[int](r2, "b") })
+	wg.Wait()
+
+	assert.ErrorIs(t, e1, ErrCircularDependency)
+	assert.ErrorIs(t, e2, ErrCircularDependency)
+}
+
+func TestConcurrentResolution_HookPanicDuringBuild(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	root := New()
+	ProvideNamed(root, "dep", func(Injector) (int, error) { return 1, nil })
+	ProvideNamed(root, "a", func(Injector) (int, error) { return 1, nil }, DependsOnNamed("dep"))
+	var panicked atomic.Bool
+	root.AddBeforeInvocationHook(func(_ *Scope, name string) {
+		if name == "dep" && panicked.CompareAndSwap(false, true) {
+			for waitingForBuilds(root) < 4 {
+				runtime.Gosched()
+			}
+			panic("hook boom")
+		}
+	})
+
+	errs := make(chan error, 5)
+	recovered := make(chan any, 5)
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					recovered <- r
+				}
+			}()
+			_, err := InvokeNamed[int](root, "a")
+			errs <- err
+		})
+	}
+	wg.Wait()
+	close(errs)
+	close(recovered)
+
+	is.Len(recovered, 1, "the builder re-panics")
+	is.Len(errs, 4, "waiters")
+	for err := range errs {
+		is.ErrorIs(err, ErrProviderPanic)
+		var serviceErr *ServiceError
+		if is.ErrorAs(err, &serviceErr) {
+			is.Equal("a", serviceErr.Service)
+		}
+		is.ErrorContains(err, "hook boom")
+		is.NotContains(err.Error(), "provider panicked", "the provider did not panic")
+	}
+	_, err := InvokeNamed[int](root, "a")
+	is.NoError(err, "a later invocation builds again")
+}
+
+func TestConcurrentResolution_SelfOwnedChainMessage(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 2*time.Second)
+
+	root := New()
+	ProvideNamed(root, "a", func(Injector) (int, error) { return InvokeNamed[int](root, "b") })
+	ProvideNamed(root, "b", func(Injector) (int, error) { return InvokeNamed[int](root, "a") })
+
+	_, err := InvokeNamed[int](root, "a")
+
+	assert.ErrorIs(t, err, ErrCircularDependency)
+	assert.ErrorContains(t, err, "`a` -> `b` -> `a`")
 }

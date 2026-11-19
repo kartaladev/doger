@@ -108,11 +108,11 @@ func (s *serviceEager[T]) resolveDependsOn(i Injector) error {
 			s.depsMu.Unlock()
 			return nil
 		}
-		run, inFlight := s.depsState.claimLocked()
+		run, inFlight := s.depsState.claimLocked(s.name, rootOf(i))
 		s.depsMu.Unlock()
 
 		if inFlight {
-			if err := waitForBuild(i, s.name, run); err != nil {
+			if err := waitForBuild(s.name, run); err != nil {
 				return err
 			}
 			continue
@@ -134,7 +134,7 @@ func (s *serviceEager[T]) runDependsOn(i Injector, run *buildRun) (err error) {
 		r := recover()
 		cause := libErrorMatching(ErrProviderPanic, "provider called runtime.Goexit")
 		if r != nil {
-			cause = libErrorf("%w: %v", ErrProviderPanic, r)
+			cause = buildPanicError(r)
 		}
 		s.endDependsOn(run, wrapBuildError(i, s.name, cause))
 		if r != nil {

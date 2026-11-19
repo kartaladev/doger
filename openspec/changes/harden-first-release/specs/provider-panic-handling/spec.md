@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: A panicking provider yields an invocation error
-When a lazy or transient provider panics during invocation, the invocation SHALL return the zero value and a `*ServiceError` naming the service instead of propagating the panic. Its cause SHALL match `ErrProviderPanic`. An error panic value SHALL also match with `errors.Is`, and a nil panic value with `errors.As` to `*runtime.PanicNilError`. Any other value SHALL appear in the message.
+When a lazy or transient provider panics during invocation, the invocation SHALL return the zero value and a `*ServiceError` naming the service instead of propagating the panic. Its cause SHALL match `ErrProviderPanic`. An error panic value SHALL also match with `errors.Is`, and a nil panic value with `errors.As` to `*runtime.PanicNilError`. Any other value SHALL appear in the message. A lazy provider that exits its goroutine with `runtime.Goexit` SHALL release every caller waiting for its build with a `*ServiceError` naming the service whose cause matches `ErrProviderPanic` and mentions `runtime.Goexit` (D1); the goroutine that called it does not return, and a later invocation builds again.
 
 #### Scenario: Provider panic values become invocation errors
 ```gherkin
@@ -25,6 +25,15 @@ Examples:
   | lazy      | 42                  | doger: service "int" in scope "[root]": provider panicked: 42                                    | errors.As *ServiceError with Service "int" |
 ```
 
+#### Scenario: A provider exiting with runtime.Goexit releases its waiters
+```gherkin
+Given a root scope with lazy "db" whose first provider call waits until 8 other goroutines wait for its build, then calls runtime.Goexit()
+When 9 goroutines invoke "db"
+Then each of the 8 waiting calls returns a *ServiceError with Service "db"
+And each error matches ErrProviderPanic and its message contains "runtime.Goexit"
+And a later invoke of "db" calls the provider again and returns its instance
+```
+
 #### Scenario: Consumers can restore the legacy nil-panic behavior
 ```gherkin
 Given the process runs with GODEBUG "panicnil=1"
@@ -41,7 +50,7 @@ And the error is nil
 <!-- cases: 5 errors: each row states how the error is matched; every row also matches ErrProviderPanic -->
 <!-- cases: N/A 6 not found/duplicate: unrelated to provider panics -->
 <!-- cases: N/A 7 lifecycle: recovery happens per invocation; the retry behavior of a lazy service after a failed build is unchanged and covered by existing tests -->
-<!-- cases: N/A 8 concurrency: waiters sharing a panicked build are covered by concurrent-resolution -->
+<!-- cases: 8 concurrency: waiters sharing a panicked build are covered by concurrent-resolution; the Goexit scenario releases 8 waiters -->
 <!-- cases: 9 panics: this requirement is the panic-recovery contract -->
 <!-- cases: 10 backward compatibility: BREAKING (flagged) - an error panic value is no longer returned as is but wrapped (errors.Is still matches it), and messages gain the doger prefix, the service and the scope -->
 
