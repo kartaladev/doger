@@ -234,7 +234,7 @@ Additional breaks and changes found while writing the specs:
 
 ### D15. Struct injection
 - **Nil interface.** A dependency whose value is a nil interface sets the field to its zero value through `memberValue`, as the collection path already does.
-- **Recursive types.** `deepEmptyMakeValue` tracks the types it has visited. A recursive type returns an error matching `ErrStructInjection` that names the field.
+- **Recursive types.** `deepEmptyMakeValue` tracks the types it has visited. A recursive type returns an error matching `ErrStructInjection` that names the type.
 - **InvokeAs.** It uses a comma-ok assertion, so it returns the zero value for a nil interface.
 
 ### D16. Source tracking

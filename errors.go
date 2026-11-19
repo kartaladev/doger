@@ -67,12 +67,16 @@ var (
 	// *runtime.PanicNilError of panic(nil).
 	ErrProviderPanic = errors.New("doger: provider panicked")
 	// ErrStructInjection is matched by the error of InvokeStruct and the
-	// panic value of MustInvokeStruct when the target cannot be injected:
-	// it is not a struct or a pointer chain to one, it is a recursive
-	// pointer type, a resolved service is not assignable to its field, or a
-	// `*` tag is on a field that is not a slice or map[string]. The message
-	// names the type or field. A dependency that fails to resolve does not
-	// match it.
+	// panic value of MustInvokeStruct when the target cannot be injected.
+	// These errors match it, each naming the type or field:
+	//   - "must be a struct or a pointer to a struct, but got `T`"
+	//   - "must be a pointer to a struct"
+	//   - "recursive pointer type `T` cannot be injected"
+	//   - "field is not addressable `S.F`"
+	//   - "`name` is not assignable to field `S.F`", also for a service
+	//     whose value is a nil interface of a type not assignable to F
+	//   - "tag `*` requires a slice or map[string] field, got `S.F`"
+	// A dependency that fails to resolve does not match it.
 	ErrStructInjection = errors.New("doger: invalid struct injection target")
 )
 

@@ -158,10 +158,13 @@ func invokeByGenericType[T any](i Injector) (T, error) {
 		return empty[T](), err
 	}
 
-	// A nil-interface instance gives the zero value of T.
-	typed, _ := instance.(T)
+	// A nil-interface instance gives the zero value of T. Any other instance
+	// was selected as assignable to T, so a failed assertion is a bug.
+	if instance == nil {
+		return empty[T](), nil
+	}
 
-	return typed, nil
+	return instance.(T), nil //nolint:errcheck,forcetypeassert
 }
 
 // invokeServiceInstance invokes a service already selected by type. Hooks
@@ -814,7 +817,9 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 		dependencyValue := memberValue(dependency, fieldValue.Type())
 
 		// Should be checked before invocation, because we just built something that is not assignable to the field.
-		if !dependencyValue.Type().AssignableTo(fieldValue.Type()) {
+		// A nil interface has no dynamic type: its service's declared type is checked instead.
+		if !dependencyValue.Type().AssignableTo(fieldValue.Type()) ||
+			dependency == nil && !declaredTypeAssignable(injector, name, fieldValue.Type()) {
 			return structInjectionError("`%s` is not assignable to field `%s.%s`", serviceName, structName, field.Name)
 		}
 
@@ -823,6 +828,18 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 	}
 
 	return nil
+}
+
+// declaredTypeAssignable reports whether the declared type of the service
+// named name, as visible from injector, is assignable to fieldType.
+func declaredTypeAssignable(injector Injector, name string, fieldType reflect.Type) bool {
+	service, _, ok := injector.serviceGetRec(name)
+	if !ok {
+		return false
+	}
+	typed, ok := service.(serviceWrapperGetReflectType)
+
+	return ok && typed.getReflectType().AssignableTo(fieldType)
 }
 
 // namedCandidate reports whether a visible service named name, other than

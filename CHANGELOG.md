@@ -44,6 +44,20 @@ Each entry gives the change and its migration.
 | std web UI answered any method | GET and HEAD only; other methods get a 4xx | None for browsers. |
 | chi/std wrote `err.Error()` on a render failure | Generic 500 body on every adapter | None. |
 
+### Changed
+
+- New sentinel `ErrStructInjection`: the errors of `InvokeStruct` and
+  `MustInvokeStruct` for an invalid target (not a struct, a recursive
+  pointer type, a service not assignable to its field, `*` on a field that
+  is not a collection) match it. Their messages are unchanged apart from
+  the prefix. A recursive pointer type used to overflow the stack, and an
+  interface target type used to panic; both now return this error.
+- A service whose value is a nil interface no longer panics in `InvokeAs`
+  or `InvokeStruct`: it gives the zero value, or the "not assignable"
+  error when its type does not fit the field.
+- Not-found errors list at most 10 services, sorted, followed by
+  `and N more`; `ExplainInjector` still lists all of them.
+
 ### Release and supply chain
 
 - Released `go.mod` files carry no test-only requirements: the root module

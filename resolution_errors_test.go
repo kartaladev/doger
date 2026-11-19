@@ -400,8 +400,7 @@ func TestResolutionErrors_NotFoundCapWithChain(t *testing.T) {
 	ProvideNamed(root, "a", func(i Injector) (int, error) { return InvokeNamed[int](i, "missing") })
 
 	// The 13 visible services sort as `a`, `s00` … `s11`: the list keeps
-	// `a` to `s08`. The spec scenario's "`s09` and 3 more" overlooks that
-	// `a` itself is listed.
+	// `a` to `s08`.
 	_, err := InvokeNamed[int](root, "a")
 	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorContains(err, "`s08` and 3 more, path: `a` -> `missing`")
