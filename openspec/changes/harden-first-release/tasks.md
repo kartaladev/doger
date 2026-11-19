@@ -345,7 +345,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 - [x] 50.1 Re-enable the govulncheck job in `security.yml` running `make vuln` and confirm it fails on fiber's brotli v1.1.0 (scenario "A reachable vulnerability fails the gate"); verify the job log or local `make vuln` names GO-2026-6888
 - [x] 50.2 Bump `github.com/andybalholm/brotli` ≥ v1.2.7 in `http/fiber` and its example, and `golang.org/x/net` ≥ v0.62.0 in `http/echo` and `http/gin` (scenario "Released dependency floors"); verify `make vuln` exits 0 and `make test-all` is green
-- [ ] 50.3 Add SECURITY.md with a private reporting channel and "Accepted advisories" listing GO-2026-6875/GO-2026-6872 (scenario "An accepted vulnerability without a fix is recorded"); verify the policy section of `scripts/check-workflows.sh` passes
+- [x] 50.3 Add SECURITY.md with a private reporting channel and "Accepted advisories" listing GO-2026-6875/GO-2026-6872 (scenario "An accepted vulnerability without a fix is recorded"); verify the policy section of `scripts/check-workflows.sh` passes
 
 ## 51. Workflow supply chain
 
@@ -357,10 +357,10 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 52. Release provenance and dry run
 
-- [ ] 52.1 Add `scripts/release-dry-run.sh <semver>` mirroring release.yml post-processing into a file proxy and checking that a clean `GOWORK=off` consumer gets and builds every released module with the root pinned, no `replace` and no test-only requirements; verify it fails on the current tree because `scheduler/gocron` still requires testify and goleak (RED)
+- [x] 52.1 Add `scripts/release-dry-run.sh <semver>` mirroring release.yml post-processing into a file proxy and checking that a clean `GOWORK=off` consumer gets and builds every released module with the root pinned, no `replace` and no test-only requirements; verify it fails on the current tree because `scheduler/gocron` still requires testify and goleak (RED)
 - [ ] 52.2 Change release.yml: job `if: github.ref == 'refs/heads/main'` and `environment: release`, `go mod tidy` in every released module before pinning, `go build`/`go vet` after pinning, `make vuln` before tagging, tag `clock/clockwork`, and `generate_release_notes: true` (scenarios "The release workflow enforces provenance", "A dispatch from another branch is refused", "Test-only requirements are stripped", "Runtime requirements are kept", "Released adapters pin the root release"); verify `scripts/release-dry-run.sh v0.99.0` and the release section of `scripts/check-workflows.sh` pass
 - [ ] 52.3 Add a CI job `release-dry-run` in `test.yml` running `scripts/release-dry-run.sh v0.99.0`, its invalid-version rows and `scripts/check-workflows.sh` (scenarios "A clean consumer builds every released module", "The dry run rejects an invalid version"); verify the job is green
-- [ ] 52.4 Add CHANGELOG.md with an "Unreleased" section listing every BREAKING row of design.md D10/D9 with its migration, and `.github/CODEOWNERS` (scenario "Policy files are present"); verify the policy section of `scripts/check-workflows.sh` passes
+- [x] 52.4 Add CHANGELOG.md with an "Unreleased" section listing every BREAKING row of design.md D10/D9 with its migration, and `.github/CODEOWNERS` (scenario "Policy files are present"); verify the policy section of `scripts/check-workflows.sh` passes
 
 ## 53. Close the audit's test-suite gaps (existing behavior, tests only)
 

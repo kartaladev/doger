@@ -195,27 +195,46 @@ check_release() {
 	grep -Eq '^[[:space:]]+generate_release_notes:[[:space:]]+true' "$f" ||
 		fail "$r: the release action is not called with generate_release_notes: true"
 
-	local tidy pin build vet vuln tags
-	tidy="$(first_line 'go mod tidy' "$f")"
-	pin="$(first_line '^[[:space:]]+- name: Pin adapters' "$f")"
-	build="$(first_line 'go build \./\.\.\.' "$f")"
-	vet="$(first_line 'go vet \./\.\.\.' "$f")"
+	# the steps run scripts/release-steps.sh, shared with the dry run
+	local strip tidy pin verify vuln tags
+	strip="$(first_line 'run:[[:space:]]+scripts/release-steps\.sh strip' "$f")"
+	tidy="$(first_line 'run:[[:space:]]+scripts/release-steps\.sh tidy' "$f")"
+	# shellcheck disable=SC2016 # matches the literal "$SEMVER" of the workflow
+	pin="$(first_line 'run:[[:space:]]+scripts/release-steps\.sh pin "\$SEMVER"' "$f")"
+	verify="$(first_line 'run:[[:space:]]+scripts/release-steps\.sh verify' "$f")"
 	vuln="$(first_line '^[[:space:]]+run:[[:space:]]+make vuln' "$f")"
 	tags="$(first_line '^[[:space:]]+- name: Create tags' "$f")"
-	[ "$pin" -gt 0 ] || fail "$r: no 'Pin adapters' step"
+	[ "$strip" -gt 0 ] || fail "$r: no step strips the tests (release-steps.sh strip)"
+	[ "$pin" -gt 0 ] || fail "$r: no step pins the adapters (release-steps.sh pin \"\$SEMVER\")"
 	[ "$tags" -gt 0 ] || fail "$r: no 'Create tags' step"
-	{ [ "$tidy" -gt 0 ] && [ "$tidy" -lt "$pin" ]; } ||
-		fail "$r: no 'go mod tidy' step before the adapters are pinned"
-	grep -B8 'go mod tidy' "$f" | grep -Eq 'for dir in .*(http|scheduler|clock)' ||
-		fail "$r: 'go mod tidy' does not run in every released module"
-	{ [ "$build" -gt "$pin" ] && [ "$vet" -gt "$pin" ]; } ||
-		fail "$r: no 'go build ./...' and 'go vet ./...' after pinning"
-	{ [ "$vuln" -gt 0 ] && [ "$vuln" -lt "$tags" ]; } ||
-		fail "$r: no 'make vuln' step before 'Create tags'"
-	local loops
-	loops="$(grep -cE 'for dir in http/\*/ scheduler/\*/ clock/\*/' "$f" || true)"
-	[ "$loops" -ge 3 ] ||
-		fail "$r: tidy, pin and tag loops must all cover http/*/ scheduler/*/ clock/*/ (found $loops)"
+	{ [ "$tidy" -gt "$strip" ] && [ "$tidy" -lt "$pin" ]; } ||
+		fail "$r: no 'go mod tidy' step (release-steps.sh tidy) between stripping and pinning"
+	[ "$verify" -gt "$pin" ] ||
+		fail "$r: no build and vet step (release-steps.sh verify) after pinning"
+	{ [ "$vuln" -gt "$tidy" ] && [ "$vuln" -lt "$tags" ]; } ||
+		fail "$r: no 'make vuln' step on the tidied tree before 'Create tags'"
+	# shellcheck disable=SC2016 # matches the literal "$SEMVER" of the workflow
+	sed -n "${tags},\$p" "$f" | grep -q 'scripts/release-steps\.sh tags "\$SEMVER"' ||
+		fail "$r: 'Create tags' does not tag the modules listed by release-steps.sh tags"
+
+	# what each shared step does
+	local s="$root/scripts/release-steps.sh" sr="scripts/release-steps.sh"
+	if [ ! -f "$s" ]; then
+		fail "$sr is missing"
+		return
+	fi
+	grep -Eq 'for dir in http/\*/ scheduler/\*/ clock/\*/' "$s" ||
+		fail "$sr: the released modules must cover http/*/ scheduler/*/ clock/*/"
+	step_body() { awk -v fn="$1" '$0 ~ "^" fn "\\(\\) \\{" {on=1} on {print} on && /^}/ {exit}' "$s"; }
+	{ step_body released | grep -qx '	echo \.' && step_body released | grep -qx '	adapters'; } ||
+		fail "$sr: released does not list the root and every adapter"
+	{ step_body tidy | grep -q 'go mod tidy' && step_body tidy | grep -q '< <(released)'; } ||
+		fail "$sr: tidy does not run 'go mod tidy' in the root and every adapter"
+	step_body pin | grep -q -- '-dropreplace' ||
+		fail "$sr: pin does not drop the adapters' replace directives"
+	{ step_body verify | grep -q 'go build \./\.\.\.' && step_body verify | grep -q 'go vet \./\.\.\.' &&
+		step_body verify | grep -q '< <(released)'; } ||
+		fail "$sr: verify does not run 'go build ./...' and 'go vet ./...' in every released module"
 }
 
 # --- dependabot --------------------------------------------------------------

@@ -1,0 +1,8 @@
+# Owners are requested for review on every pull request that touches their
+# paths. The last matching pattern wins.
+*                     @zakyalvan
+
+# CI, release and supply-chain policy
+/.github/             @zakyalvan
+/scripts/             @zakyalvan
+/SECURITY.md          @zakyalvan
