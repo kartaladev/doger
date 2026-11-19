@@ -379,7 +379,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 54. Performance (behavior-preserving, D17)
 
-- [ ] 54.1 Add benchmarks to `bench/` (`BenchmarkInvokeBuilt` depth 0/5, `BenchmarkInvokeBuiltParallel`, `BenchmarkInvokeTransient`, `BenchmarkInvokeAll` 10 members + 0/1k/10k unrelated, `BenchmarkPerRequestScope`, `BenchmarkProvideValue100`, `BenchmarkHealthCheck50`, `BenchmarkShutdownChain` 1k/4k) and record a baseline; verify `go test -run '^$' -bench . -benchmem -count=10 ./bench > bench/baseline.txt` succeeds
+- [x] 54.1 Add benchmarks to `bench/` (`BenchmarkInvokeBuilt` depth 0/5, `BenchmarkInvokeBuiltParallel`, `BenchmarkInvokeTransient`, `BenchmarkInvokeAll` 10 members + 0/1k/10k unrelated, `BenchmarkPerRequestScope`, `BenchmarkProvideValue100`, `BenchmarkHealthCheck50`, `BenchmarkShutdownChain` 1k/4k) and record a baseline; verify `go test -run '^$' -bench . -benchmem -count=10 ./bench > bench/baseline.txt` succeeds
 - [ ] 54.2 REFACTOR (Split Phase): read lock in `onServiceInvoke` with the write lock only on a first invocation, and the published-instance fast path in `instanceOrBuild`; verify `make test` green before and after and `benchstat` plus a mutex profile show lower contention on `BenchmarkInvokeBuiltParallel`
 - [ ] 54.3 REFACTOR (Replace Algorithm): build `InvokeAll`/`InvokeAllMap` candidates from the per-scope type-match cache; verify `make test` and `BenchmarkInvokeAll` stays flat across 0/1k/10k unrelated
 - [ ] 54.4 REFACTOR (Introduce cache): cache type names by `reflect.Type` and skip the virtual-scope allocation for an already-built service; verify `make test` and `BenchmarkInvokeBuilt` at or below 3 allocs/op

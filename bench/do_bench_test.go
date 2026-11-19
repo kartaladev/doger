@@ -146,7 +146,7 @@ func newCollectionInjector(n int) *doger.RootScope {
 	return injector
 }
 
-func BenchmarkInvokeAll(b *testing.B) {
+func BenchmarkInvokeAllMixed(b *testing.B) {
 	for _, n := range []int{10, 100, 1000} {
 		b.Run(fmt.Sprintf("%d", n), func(b *testing.B) {
 			injector := newCollectionInjector(n)
