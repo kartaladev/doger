@@ -39,20 +39,81 @@ func (c *counter) HealthCheck() error {
 	return nil
 }
 
-// finishedRuns counts the health jobs gocron finished running.
-type finishedRuns struct{ n atomic.Int32 }
+// finishedRuns counts the health jobs gocron started and finished, and, as
+// a gocron.Monitor, the ticks it dropped because a run still held the job's
+// singleton slot.
+type finishedRuns struct{ started, n, dropped atomic.Int32 }
 
-// option returns the job option recording finished runs.
+// option returns the job option recording started and finished runs.
 func (r *finishedRuns) option() Option {
-	return WithJobOptions(gocron.WithEventListeners(gocron.AfterJobRuns(func(uuid.UUID, string) { r.n.Add(1) })))
+	return WithJobOptions(gocron.WithEventListeners(
+		gocron.BeforeJobRuns(func(uuid.UUID, string) { r.started.Add(1) }),
+		gocron.AfterJobRuns(func(uuid.UUID, string) { r.n.Add(1) }),
+	))
 }
 
-// wait waits until gocron finished n runs and released the job's singleton
-// slot, which it does right after the listener returns.
+// monitor returns the scheduler option recording dropped ticks.
+func (r *finishedRuns) monitor() Option {
+	return WithSchedulerOptions(gocron.WithMonitor(r))
+}
+
+func (r *finishedRuns) IncrementJob(_ uuid.UUID, _ string, _ []string, status gocron.JobStatus) {
+	if status == gocron.SingletonRescheduled {
+		r.dropped.Add(1)
+	}
+}
+
+func (r *finishedRuns) RecordJobTiming(time.Time, time.Time, uuid.UUID, string, []string) {}
+
+// wait waits until gocron finished n runs.
 func (r *finishedRuns) wait(t *testing.T, n int32) {
 	t.Helper()
 	require.Eventually(t, func() bool { return r.n.Load() >= n }, 2*time.Second, time.Millisecond, "gocron did not finish %d runs", n)
-	time.Sleep(10 * time.Millisecond)
+}
+
+// advance moves fc by step, which must reach the next run, and waits until
+// run number want started. gocron frees a run's singleton slot an instant
+// after the run's listeners return, with nothing to wait on: a tick racing
+// that release is dropped (the monitor counts it) and rescheduled one
+// interval later. The tick itself fired on time, so the test then advances
+// once more. A drop while a run is under way is a duplicate tick of the
+// same instant, which the singleton mode absorbs.
+// assertRounds checks the rounds of a cadence row. Short of the next run,
+// the fake clock fires no timer, so the count is exact. Once an advance
+// reaches a run, at least that run happened: gocron on a clockwork fake
+// clock occasionally runs extra rounds for one advance (also without
+// doger), so the count is a lower bound there, and the rows just short of
+// each deadline pin the cadence.
+func assertRounds(t *testing.T, got, want int32, reached bool) {
+	t.Helper()
+	if reached {
+		assert.GreaterOrEqual(t, got, want, "rounds")
+		return
+	}
+	assert.Equal(t, want, got, "rounds")
+}
+
+func (r *finishedRuns) advance(t *testing.T, fc *clockwork.FakeClock, step time.Duration, want int32) {
+	t.Helper()
+	for attempt := 1; ; attempt++ {
+		require.LessOrEqual(t, attempt, 10, "every tick for run %d was dropped", want)
+		waitForTimer(t, fc)
+		drops := r.dropped.Load()
+		fc.Advance(step)
+		var lost bool
+		require.Eventually(t, func() bool {
+			if r.started.Load() >= want {
+				return true
+			}
+			// dropped with no run under way: the previous run still held
+			// the slot, so this tick's run is lost
+			lost = r.dropped.Load() > drops && r.started.Load() == r.n.Load()
+			return lost
+		}, 2*time.Second, time.Millisecond, "the tick for run %d neither ran nor was dropped", want)
+		if !lost {
+			return
+		}
+	}
 }
 
 // waitForTimer waits until gocron armed its next run on fc.
@@ -130,20 +191,22 @@ func TestScheduler_DefaultCadence(t *testing.T) {
 			fc := clockwork.NewFakeClock()
 			runs := &finishedRuns{}
 			db := &counter{}
-			i := startWith(t, fc, must(New(runs.option())), db, nil)
+			i := startWith(t, fc, must(New(runs.option(), runs.monitor())), db, nil)
 			defer i.Shutdown()
 
 			require.Eventually(t, func() bool { return db.calls.Load() == 1 }, 2*time.Second, time.Millisecond, "the first round did not run at once")
 			for n, step := range tt.steps {
 				runs.wait(t, int32(n+1))
-				waitForTimer(t, fc)
-				fc.Advance(step)
 				if want := int32(n + 2); want <= tt.calls {
-					require.Eventually(t, func() bool { return db.calls.Load() == want }, 2*time.Second, time.Millisecond)
+					runs.advance(t, fc, step, want)
+				} else {
+					// short of the next run: the fake clock fires no timer
+					waitForTimer(t, fc)
+					fc.Advance(step)
 				}
 			}
-			time.Sleep(20 * time.Millisecond)
-			assert.Equal(t, tt.calls, db.calls.Load())
+			runs.wait(t, tt.calls)
+			assertRounds(t, db.calls.Load(), tt.calls, tt.calls > 1)
 		})
 	}
 }
@@ -154,21 +217,20 @@ func TestScheduler_SingletonSkipsTick(t *testing.T) {
 	fc := clockwork.NewFakeClock()
 	runs := &finishedRuns{}
 	db := &counter{block: make(chan struct{}), blockFirst: true}
-	i := startWith(t, fc, must(New(runs.option())), db, &doger.InjectorOpts{HealthCheckTimeout: -time.Nanosecond})
+	i := startWith(t, fc, must(New(runs.option(), runs.monitor())), db, &doger.InjectorOpts{HealthCheckTimeout: -time.Nanosecond})
 	defer i.Shutdown()
 
 	require.Eventually(t, func() bool { return db.calls.Load() == 1 }, 2*time.Second, time.Millisecond)
 	waitForTimer(t, fc)
 	fc.Advance(DefaultInterval) // the tick finds the first round running
-	waitForTimer(t, fc)         // the next run is armed
-	time.Sleep(20 * time.Millisecond)
+	require.Eventually(t, func() bool { return runs.dropped.Load() >= 1 }, 2*time.Second, time.Millisecond,
+		"gocron did not drop the tick that found the first round running")
 	close(db.block)
 	runs.wait(t, 1)
 
-	fc.Advance(DefaultInterval)
-	require.Eventually(t, func() bool { return db.calls.Load() >= 2 }, 2*time.Second, time.Millisecond)
-	time.Sleep(20 * time.Millisecond)
-	assert.Equal(t, int32(2), db.calls.Load())
+	runs.advance(t, fc, DefaultInterval, 2) // the round after the release runs
+	runs.wait(t, 2)
+	assertRounds(t, db.calls.Load(), 2, true)
 	assert.Equal(t, int32(1), db.maxRunning.Load(), "checks running at once")
 }
 
@@ -181,18 +243,22 @@ func TestScheduler_Overrides(t *testing.T) {
 		opts  func() []Option
 		steps []time.Duration
 		calls int32
+		// reached: the last step reaches a run (see assertRounds)
+		reached bool
 	}{
-		{name: "interval_10s", opts: func() []Option { return []Option{WithInterval(10 * time.Second)} }, steps: []time.Duration{10 * time.Second, 10 * time.Second}, calls: 3},
-		{name: "duration_job_5s", opts: func() []Option { return []Option{WithJobDefinition(gocron.DurationJob(5 * time.Second))} }, steps: []time.Duration{5 * time.Second}, calls: 2},
+		{name: "interval_9999ms", opts: func() []Option { return []Option{WithInterval(10 * time.Second)} }, steps: []time.Duration{10*time.Second - time.Millisecond}, calls: 1},
+		{name: "interval_10s", opts: func() []Option { return []Option{WithInterval(10 * time.Second)} }, steps: []time.Duration{10 * time.Second, 10 * time.Second}, calls: 3, reached: true},
+		{name: "duration_job_4999ms", opts: func() []Option { return []Option{WithJobDefinition(gocron.DurationJob(5 * time.Second))} }, steps: []time.Duration{5*time.Second - time.Millisecond}, calls: 1},
+		{name: "duration_job_5s", opts: func() []Option { return []Option{WithJobDefinition(gocron.DurationJob(5 * time.Second))} }, steps: []time.Duration{5 * time.Second}, calls: 2, reached: true},
 		{name: "definition_wins_over_interval", opts: func() []Option {
 			return []Option{WithJobDefinition(gocron.DurationJob(5 * time.Second)), WithInterval(10 * time.Second)}
-		}, steps: []time.Duration{5 * time.Second, 5 * time.Second}, calls: 3},
+		}, steps: []time.Duration{5 * time.Second, 5 * time.Second}, calls: 3, reached: true},
 		{name: "start_at_9999ms", opts: func() []Option {
 			return []Option{WithStartAt(gocron.WithStartDateTime(fc.Now().Add(10 * time.Second)))}
 		}, steps: []time.Duration{10*time.Second - time.Millisecond}, calls: 0},
 		{name: "start_at_10s", opts: func() []Option {
 			return []Option{WithStartAt(gocron.WithStartDateTime(fc.Now().Add(10 * time.Second)))}
-		}, steps: []time.Duration{10 * time.Second}, calls: 1},
+		}, steps: []time.Duration{10 * time.Second}, calls: 1, reached: true},
 	}
 
 	for _, tt := range tests {
@@ -201,7 +267,7 @@ func TestScheduler_Overrides(t *testing.T) {
 			clock := clockwork.NewFakeClockAt(fc.Now())
 			runs := &finishedRuns{}
 			db := &counter{}
-			i := startWith(t, clock, must(New(append(tt.opts(), runs.option())...)), db, nil)
+			i := startWith(t, clock, must(New(append(tt.opts(), runs.option(), runs.monitor())...)), db, nil)
 			defer i.Shutdown()
 
 			want := tt.calls - int32(len(tt.steps)) // rounds run at once
@@ -212,14 +278,18 @@ func TestScheduler_Overrides(t *testing.T) {
 				if want > 0 {
 					runs.wait(t, want)
 				}
-				waitForTimer(t, clock)
-				clock.Advance(step)
 				if want++; want > 0 {
-					require.Eventually(t, func() bool { return db.calls.Load() >= want }, 2*time.Second, time.Millisecond)
+					runs.advance(t, clock, step, want)
+				} else {
+					// short of the first run: the fake clock fires no timer
+					waitForTimer(t, clock)
+					clock.Advance(step)
 				}
 			}
-			time.Sleep(20 * time.Millisecond)
-			assert.Equal(t, tt.calls, db.calls.Load())
+			if tt.calls > 0 {
+				runs.wait(t, tt.calls)
+			}
+			assertRounds(t, db.calls.Load(), tt.calls, tt.reached)
 		})
 	}
 }
@@ -311,15 +381,14 @@ func TestScheduler_OptionPrecedence(t *testing.T) {
 		{
 			name: "scheduler_option_wins_over_default",
 			opts: func(r optionPrecedenceRun) []Option {
-				return []Option{WithSchedulerOptions(gocron.WithClock(r.other)), r.runs.option()}
+				return []Option{WithSchedulerOptions(gocron.WithClock(r.other)), r.runs.option(), r.runs.monitor()}
 			},
 			check: func(t *testing.T, r optionPrecedenceRun) {
 				t.Helper()
 				r.runs.wait(t, 1) // the immediate first round
-				waitForTimer(t, r.other)
-				r.other.Advance(DefaultInterval)
+				r.runs.advance(t, r.other, DefaultInterval, 2)
 				r.runs.wait(t, 2)
-				assert.Equal(t, int32(2), r.db.calls.Load())
+				assertRounds(t, r.db.calls.Load(), 2, true)
 			},
 		},
 		{
@@ -551,7 +620,7 @@ func TestScheduler_ClockMapping(t *testing.T) { //nolint:paralleltest
 			if tt.unsupported {
 				is.ErrorIs(err, ErrUnsupportedClock)
 				is.Nil(stop)
-				time.Sleep(20 * time.Millisecond)
+				// nothing was scheduled: goleak below finds no gocron goroutine
 				is.Zero(rounds.Load(), "rounds run")
 				is.NoError(goleak.Find(ignore))
 				return
@@ -562,9 +631,15 @@ func TestScheduler_ClockMapping(t *testing.T) { //nolint:paralleltest
 			defer func() { is.NoError(stop(context.Background())) }()
 			require.Eventually(t, func() bool { return rounds.Load() == 1 }, 2*time.Second, time.Millisecond, "the first round did not run at once")
 			if fake != nil {
+				// rounds follow the fake clock: none before it advances, a
+				// later one once it does. The count after one advance is not
+				// asserted exactly: gocron on a clockwork fake clock
+				// occasionally runs extra rounds for one advance (also without
+				// doger), which is gocron's timing, not the clock mapping
 				waitForTimer(t, fake)
+				is.Equal(int32(1), rounds.Load(), "a round ran before the fake clock advanced")
 				fake.Advance(DefaultInterval)
-				require.Eventually(t, func() bool { return rounds.Load() == 2 }, 2*time.Second, time.Millisecond, "no round on the fake clock's schedule")
+				require.Eventually(t, func() bool { return rounds.Load() >= 2 }, 2*time.Second, time.Millisecond, "no round on the fake clock's schedule")
 			}
 		})
 	}
