@@ -69,7 +69,7 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 - [x] 10.5 GREEN: migrate root tests from `clockwork.NewFakeClock()` to a test-only wrapper and update the `TestClock_*` rows (RealClock row, 10s default row, manualClock row) for the MODIFIED container-clock scenarios; verify `go test -race -run TestClock_ .` passes
 - [x] 10.6 REFACTOR: Inline Function `injectorClock` defaults into `RealClock()` and Rename internal clock variables; verify `make test` and `make lint` pass
 - [x] 10.7 Docs: add `ExampleClock` and `dogerclockwork.ExampleWrap`, godoc for `Clock`/`Timer`/`RealClock` and a migration row; verify `go test -run Example . ./clock/clockwork/...` passes
-- [ ] 10.8 Verify scenario "Build list of a consumer": `go list -m all` in a scratch consumer of the root module omits `github.com/jonboulle/clockwork` (via `scripts/release-dry-run.sh` once group 50 exists, or a manual GOWORK=off consumer now)
+- [x] 10.8 Verify scenario "Build list of a consumer": `go list -m all` in a scratch consumer of the root module omits `github.com/jonboulle/clockwork` (via `scripts/release-dry-run.sh` once group 50 exists, or a manual GOWORK=off consumer now)
 
 ## 11. HealthScheduler takes a doger.Clock
 
