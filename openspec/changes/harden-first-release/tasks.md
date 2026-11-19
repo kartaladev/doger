@@ -168,28 +168,28 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 24. Explanation is free of data races
 
-- [ ] 24.1 RED: add `TestExplain_ConcurrentWithLazyBuild` and `TestExplain_ConcurrentWithShutdown` (scenarios "Explain concurrently with a lazy build", "Explain concurrently with shutdown"); verify `go test -race -run TestExplain_Concurrent .` fails with `WARNING: DATA RACE` at `getBuildTime`
-- [ ] 24.2 GREEN: read build time and built state under the read lock or from the published atomic state in lazy/default/eager `getBuildTime`; verify the 24.1 tests pass under `-race` and `make test` is green
-- [ ] 24.3 REFACTOR: Extract Function for the shared build-state snapshot used by explain and the web UI's `inferServiceInfo`; verify `make test` and `make lint` pass
+- [x] 24.1 RED: add `TestExplain_ConcurrentWithLazyBuild` and `TestExplain_ConcurrentWithShutdown` (scenarios "Explain concurrently with a lazy build", "Explain concurrently with shutdown"); verify `go test -race -run TestExplain_Concurrent .` fails with `WARNING: DATA RACE` at `getBuildTime`
+- [x] 24.2 GREEN: read build time and built state under the read lock or from the published atomic state in lazy/default/eager `getBuildTime`; verify the 24.1 tests pass under `-race` and `make test` is green
+- [x] 24.3 REFACTOR: Extract Function for the shared build-state snapshot used by explain and the web UI's `inferServiceInfo`; verify `make test` and `make lint` pass
 
 ## 25. Only successful builds record dependency edges
 
-- [ ] 25.1 RED: add `TestExplain_FailedDependencyNoEdge` (4 path rows) and `TestExplain_RetryRecordsEdgeOnce` (scenarios "A failed dependency records no edge", "A successful retry records the edge once"); verify the `named` and `named_any` rows fail with a recorded dependency
-- [ ] 25.2 GREEN: record the edge only after a successful build in `invokeByName` and `invokeAnyByNameAs`; verify the 25.1 tests pass and `make test` is green
-- [ ] 25.3 REFACTOR: Extract Function `recordDependencyOnSuccess` shared by the by-name and by-type paths; verify `make test` and `make lint` pass
+- [x] 25.1 RED: add `TestExplain_FailedDependencyNoEdge` (4 path rows) and `TestExplain_RetryRecordsEdgeOnce` (scenarios "A failed dependency records no edge", "A successful retry records the edge once"); verify the `named` and `named_any` rows fail with a recorded dependency
+- [x] 25.2 GREEN: record the edge only after a successful build in `invokeByName` and `invokeAnyByNameAs`; verify the 25.1 tests pass and `make test` is green
+- [x] 25.3 REFACTOR: Extract Function `recordDependencyOnSuccess` shared by the by-name and by-type paths; verify `make test` and `make lint` pass
 
 ## 26. Bounded, plain-text explanation
 
-- [ ] 26.1 RED: add `TestExplain_LayeredGraphBounded`, `TestExplain_DependentsBounded`, `TestExplain_RefRendersSingleLine`, `TestExplain_RefJSON` and `TestExplain_PlainText` (service-explanation bounded/plain-text scenarios); verify they fail (121391 vs 45 nodes; `Ref` undefined; `&lt;` in output)
-- [ ] 26.2 GREEN: memoize `newExplainServiceDependencies` per call by (scope, service), emit `Ref: true` nodes (`json:"ref,omitempty"`) with no children rendered as `" (ref)"`, add JSON tags to `ServiceDescription`, and switch `di_explain.go` to `text/template`; verify the 26.1 tests pass and `make test` is green
-- [ ] 26.3 REFACTOR: Introduce Parameter Object for the visited set passed through the recursive builders; verify `make test` and `make lint` pass
-- [ ] 26.4 Add `FuzzExplainText` and run it 60s, and update the godoc of `ExplainServiceDependencyOutput`/`ExplainNamedService` and `ExampleExplainNamedService`; verify `go test -run=^$ -fuzz=FuzzExplainText -fuzztime=60s .` and `go test -run ExampleExplainNamedService .` pass
+- [x] 26.1 RED: add `TestExplain_LayeredGraphBounded`, `TestExplain_DependentsBounded`, `TestExplain_RefRendersSingleLine`, `TestExplain_RefJSON` and `TestExplain_PlainText` (service-explanation bounded/plain-text scenarios); verify they fail (121391 vs 45 nodes; `Ref` undefined; `&lt;` in output)
+- [x] 26.2 GREEN: memoize `newExplainServiceDependencies` per call by (scope, service), emit `Ref: true` nodes (`json:"ref,omitempty"`) with no children rendered as `" (ref)"`, add JSON tags to `ServiceDescription`, and switch `di_explain.go` to `text/template`; verify the 26.1 tests pass and `make test` is green
+- [x] 26.3 REFACTOR: Introduce Parameter Object for the visited set passed through the recursive builders; verify `make test` and `make lint` pass
+- [x] 26.4 Add `FuzzExplainText` and run it 60s, and update the godoc of `ExplainServiceDependencyOutput`/`ExplainNamedService` and `ExampleExplainNamedService`; verify `go test -run=^$ -fuzz=FuzzExplainText -fuzztime=60s .` and `go test -run ExampleExplainNamedService .` pass
 
 ## 27. Registration source is the consumer's call site
 
-- [ ] 27.1 RED: add `TestSourceTracking_RegistrationForms` and `TestSourceTracking_NewCallSite`, and move `TestSourceTracking_ProviderFrame` from `di_explain_frame_test.go` expecting the test file and line (service-source-tracking scenarios); verify they fail with `service_eager.go:39` / `service_alias.go`
-- [ ] 27.2 GREEN: the provider frame of value and alias registrations skips non-test frames of the root `doger` package (invocation frames unchanged); verify the 27.1 tests pass, the alias invocation-frame test stays green and `make test` is green
-- [ ] 27.3 REFACTOR: Replace Loop with one `runtime.Callers` pass into a fixed array in `stacktrace` (D16/D17) keeping the classifier; verify `make test`, `make lint` and `go test ./stacktrace` pass
+- [x] 27.1 RED: add `TestSourceTracking_RegistrationForms` and `TestSourceTracking_NewCallSite`, and move `TestSourceTracking_ProviderFrame` from `di_explain_frame_test.go` expecting the test file and line (service-source-tracking scenarios); verify they fail with `service_eager.go:39` / `service_alias.go`
+- [x] 27.2 GREEN: the provider frame of value and alias registrations skips non-test frames of the root `doger` package (invocation frames unchanged); verify the 27.1 tests pass, the alias invocation-frame test stays green and `make test` is green
+- [x] 27.3 REFACTOR: Replace Loop with one `runtime.Callers` pass into a fixed array in `stacktrace` (D16/D17) keeping the classifier; verify `make test`, `make lint` and `go test ./stacktrace` pass
 
 ## 28. A yielded default follows its target by name
 

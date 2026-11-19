@@ -73,38 +73,46 @@ func ExampleExplainNamedService() {
 
 	ProvideNamedValue(injector, "value", 42)
 	ProvideNamed(injector, "my-service", newExplainTestService)
-	_, _ = InvokeNamed[*explainTestService](injector, "my-service")
+	// "api" depends on "value" directly and through "my-service"
+	ProvideNamed(injector, "api", func(i Injector) (string, error) {
+		_ = MustInvokeNamed[*explainTestService](i, "my-service")
+		return fmt.Sprint(MustInvokeNamed[int](i, "value")), nil
+	})
+	_, _ = InvokeNamed[string](injector, "api")
 
-	explanation, found := ExplainNamedService(injector, "my-service")
+	explanation, found := ExplainNamedService(injector, "api")
 
 	// to prevent flakiness
 	explanation.ScopeID = "980e2f60-d340-4776-86dd-6aa1d3c27860"
 	explanation.ServiceBuildTime = 10 * time.Millisecond
 	explanation.Invoked = &stacktrace.Frame{
-		Function: "newExplainTestService",
+		Function: "ExampleExplainNamedService.func1",
 		File:     "di_explain_example_test.go", // remove absolute path
-		Line:     42,
+		Line:     76,
 	}
 
 	fmt.Println(found)
 	fmt.Println(explanation.ServiceName)
 	fmt.Println(explanation.ServiceType)
+	// "value" is expanded once: its second occurrence is a reference
 	fmt.Println(explanation.String())
 	// Output:
 	// true
-	// my-service
+	// api
 	// lazy
 	//
 	// Scope ID: 980e2f60-d340-4776-86dd-6aa1d3c27860
 	// Scope name: [root]
 	//
-	// Service name: my-service
+	// Service name: api
 	// Service type: lazy
 	// Service build time: 10ms
-	// Invoked: di_explain_example_test.go:newExplainTestService:42
+	// Invoked: di_explain_example_test.go:ExampleExplainNamedService.func1:76
 	//
 	// Dependencies:
-	// * value from scope [root]
+	// * my-service from scope [root]
+	//   * value from scope [root]
+	// * value from scope [root] (ref)
 	//
 	// Dependents:
 }

@@ -49,10 +49,6 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 		}
 	}
 
-	if isVirtualScope {
-		vScope.addDependency(injector, name, serviceScope, source)
-	}
-
 	service, ok := serviceAny.(serviceWrapperAny)
 	if !ok {
 		return nil, serviceNotFound(injector, ErrServiceNotFound, chainTo(vScope, name))
@@ -65,6 +61,8 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 	if err != nil {
 		return nil, err
 	}
+
+	recordDependencyOnSuccess(injector, vScope, name, serviceScope, source)
 
 	serviceScope.onServiceInvoke(name)
 
@@ -104,10 +102,6 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 		}
 	}
 
-	if isVirtualScope {
-		vScope.addDependency(injector, name, serviceScope, DependencySourceInvoked)
-	}
-
 	service, ok := serviceAny.(serviceWrapper[T])
 	if !ok {
 		return empty[T](), serviceTypeMismatch(inferServiceName[T](), serviceAny.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert
@@ -121,6 +115,8 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 	if err != nil {
 		return empty[T](), err
 	}
+
+	recordDependencyOnSuccess(injector, vScope, name, serviceScope, DependencySourceInvoked)
 
 	serviceScope.onServiceInvoke(name)
 
@@ -181,15 +177,23 @@ func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, re
 		return nil, err
 	}
 
-	if vScope != nil {
-		vScope.addDependency(injector, realName, scope, DependencySourceInvoked)
-	}
+	recordDependencyOnSuccess(injector, vScope, realName, scope, DependencySourceInvoked)
 
 	scope.onServiceInvoke(realName)
 
 	scope.log(slog.LevelDebug, "service invoked", slog.String("service", hookName))
 
 	return instance, nil
+}
+
+// recordDependencyOnSuccess records the edge from the service whose provider
+// runs in vScope to the service name of scope, with source. Every resolution
+// path calls it only once that dependency built, so a failed resolution
+// records no edge. vScope is nil outside a provider: nothing is recorded.
+func recordDependencyOnSuccess(injector Injector, vScope *virtualScope, name string, scope *Scope, source DependencySource) {
+	if vScope != nil {
+		vScope.addDependency(injector, name, scope, source)
+	}
 }
 
 // collectionSource is where a collection read finds and builds its members.

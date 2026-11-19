@@ -309,11 +309,7 @@ func (s *serviceDefault[T]) source() (stacktrace.Frame, []stacktrace.Frame) {
 // getBuildTime forwards to the inner wrapper; a wrapper without a build time
 // reports none, as if the method were missing.
 func (s *serviceDefault[T]) getBuildTime() (time.Duration, bool) {
-	if timed, ok := s.inner.(serviceWrapperBuildTime); ok {
-		return timed.getBuildTime()
-	}
-
-	return 0, false
+	return buildStateOf(s.inner)
 }
 
 func (s *serviceDefault[T]) getRegistrationIndex() uint64 { return s.inner.getRegistrationIndex() }

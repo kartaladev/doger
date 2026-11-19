@@ -62,14 +62,14 @@ func TestInferServiceProviderStacktrace(t *testing.T) {
 			service: newServiceEager("eager-service", func(i Injector) (int, error) {
 				return 42, nil
 			}),
-			wantFile:     "service_eager.go",
-			wantFunction: "newServiceEager",
+			wantFile:     "service_test.go", // the consumer's call site
+			wantFunction: "TestInferServiceProviderStacktrace",
 		},
 		{
 			name:         "alias",
 			service:      newServiceAlias[int, int]("alias-service", i, "int"),
-			wantFile:     "service_alias.go", // Provider frame points to the service_alias.go file
-			wantFunction: "newServiceAlias",
+			wantFile:     "service_test.go", // the consumer's call site
+			wantFunction: "TestInferServiceProviderStacktrace",
 		},
 	}
 
