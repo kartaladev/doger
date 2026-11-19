@@ -8,6 +8,9 @@ on:
         description: 'Semver (eg: v1.2.3)'
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   release:
     # forks of this repository cannot cut releases of github.com/kartaladev/doger
@@ -29,10 +32,10 @@ jobs:
             exit 1
           fi
 
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Set up Go
-      uses: actions/setup-go@v7
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         go-version-file: 'go.work'
 
@@ -92,7 +95,7 @@ jobs:
           git push origin "${tags[@]}"
 
     - name: Release
-      uses: softprops/action-gh-release@v3
+      uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
       with:
         name: ${{ inputs.semver }}
         tag_name: ${{ inputs.semver }}

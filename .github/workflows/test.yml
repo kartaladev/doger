@@ -6,38 +6,52 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        go:
-          - "1.27"
-          - "stable"
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ["1.27.x", "stable"]
+    defaults:
+      run:
+        # the make targets loop over the modules with bash, on Windows too
+        shell: bash
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Set up Go
-      uses: actions/setup-go@v7
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         go-version: ${{ matrix.go }}
+        cache-dependency-path: '**/go.sum'
+
+    - name: Install make (Windows)
+      if: runner.os == 'Windows'
+      run: command -v make || choco install make --no-progress -y
 
     - name: Build
       run: make build
 
+    # go test -race in every go.work module (root, adapters, examples)
     - name: Test
-      run: make test
+      run: make test-all
 
     - name: Test coverage
       run: make coverage
-      if: matrix.go == 'stable'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
 
     - name: Codecov
-      uses: codecov/codecov-action@v7
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         flags: unittests
         verbose: true
-      if: matrix.go == 'stable'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
