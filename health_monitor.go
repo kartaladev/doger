@@ -46,6 +46,19 @@ type HealthScheduler interface {
 	ScheduleHealthRounds(clock clockwork.Clock, round func(ctx context.Context)) (stop func(ctx context.Context) error, err error)
 }
 
+// schedulerClock is the clockwork clock passed to the HealthScheduler for
+// clock: the real clockwork clock for RealClock(), and the clock a test
+// wrapper unwraps to otherwise.
+//
+// Deprecated: interim bridge until HealthScheduler takes a Clock.
+func schedulerClock(clock Clock) clockwork.Clock {
+	if u, ok := clock.(interface{ Clockwork() clockwork.Clock }); ok {
+		return u.Clockwork()
+	}
+
+	return clockwork.NewRealClock()
+}
+
 // startScheduling calls the HealthScheduler, if any, for a container that
 // became ready. It holds no lock while the scheduler runs.
 func (s *RootScope) startScheduling() {
@@ -163,7 +176,7 @@ func (s *RootScope) callScheduler(scheduler HealthScheduler) (stop func(context.
 				recovered, panicked = r, true
 			}
 		}()
-		stop, err = scheduler.ScheduleHealthRounds(s.opts.Clock, s.healthRound)
+		stop, err = scheduler.ScheduleHealthRounds(schedulerClock(s.opts.Clock), s.healthRound)
 	}()
 
 	switch {

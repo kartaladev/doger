@@ -618,7 +618,7 @@ func TestHealthCheck_JoinerOwnBound(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				i := NewWithOpts(&InjectorOpts{
 					Clock:                    fc,
 					HealthCheckTimeout:       tt.timeout,
@@ -696,7 +696,7 @@ var healthRunTestJoinedChecks = []struct {
 func healthRunTestJoinAfterStarterBound(t *testing.T, check healthRunTestJoinedCheck) (*RootScope, error) {
 	t.Helper()
 
-	fc := clockwork.NewFakeClock()
+	fc := newFakeClock()
 	i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckGlobalTimeout: 30 * time.Millisecond})
 	ProvideNamedValue(i, "db", check.service)
 
@@ -1300,7 +1300,7 @@ func TestHealthCheck_BoundStartsAtSlot(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckParallelism: 1, HealthCheckTimeout: tt.timeout})
 				for n, takes := range tt.takes {
 					ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), &healthCheckTestOnClock{clock: fc, duration: takes})
@@ -1354,7 +1354,7 @@ func TestHealthCheck_GlobalTimeoutBoundsSlotWait(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				i := NewWithOpts(&InjectorOpts{
 					Clock:                    fc,
 					HealthCheckParallelism:   1,

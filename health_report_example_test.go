@@ -22,7 +22,7 @@ func ExampleScope_HealthReport() {
 	// Without a HealthScheduler, a read checks the services whose result is
 	// missing or older than HealthReportCacheTTL (1s by default), and reuses
 	// the others: many readers cost the same as one.
-	clock := clockwork.NewFakeClock()
+	clock := newExampleClock()
 	injector := NewWithOpts(&InjectorOpts{
 		Clock:                clock,
 		HealthReportCacheTTL: 5 * time.Second,

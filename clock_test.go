@@ -2,6 +2,8 @@ package doger
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -24,6 +26,9 @@ func TestClock_DefaultRealClock(t *testing.T) {
 		{name: "timeout_10ms_check_5ms", build: func() *RootScope { return NewWithOpts(&InjectorOpts{HealthCheckTimeout: 10 * time.Millisecond}) }, sleep: 5 * time.Millisecond},
 		{name: "timeout_10ms_nil_clock_check_20ms", build: func() *RootScope {
 			return NewWithOpts(&InjectorOpts{HealthCheckTimeout: 10 * time.Millisecond, Clock: nil})
+		}, sleep: 20 * time.Millisecond, want: healthCheckTestDeadlineMessage},
+		{name: "timeout_10ms_real_clock_check_20ms", build: func() *RootScope {
+			return NewWithOpts(&InjectorOpts{HealthCheckTimeout: 10 * time.Millisecond, Clock: RealClock()})
 		}, sleep: 20 * time.Millisecond, want: healthCheckTestDeadlineMessage},
 		{name: "new_no_timeout_check_20ms", build: func() *RootScope { return New() }, sleep: 20 * time.Millisecond},
 		{name: "nil_opts_no_timeout_check_20ms", build: func() *RootScope { return NewWithOpts(nil) }, sleep: 20 * time.Millisecond},
@@ -53,7 +58,7 @@ func TestClock_DefaultRealClock(t *testing.T) {
 // clockTestAdvancer advances a fake clock when it is built and when it is
 // shut down.
 type clockTestAdvancer struct {
-	clock    *clockwork.FakeClock
+	clock    *fakeClock
 	shutdown time.Duration
 }
 
@@ -109,7 +114,7 @@ func TestClock_ReportedDurations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			fc := clockwork.NewFakeClock()
+			fc := newFakeClock()
 			i := NewWithOpts(&InjectorOpts{Clock: fc})
 			ProvideNamed(i, "svc", func(Injector) (*clockTestAdvancer, error) {
 				fc.Advance(tt.buildAdvance)
@@ -128,10 +133,13 @@ func TestClock_TimeoutErrorSameOnAnyClock(t *testing.T) {
 
 	tests := []struct {
 		name string
-		fake bool
+		// clock returns the injector clock and how to advance it; a nil
+		// advance lets wall time pass inside the synctest bubble.
+		clock func() (Clock, func(time.Duration))
 	}{
-		{name: "nil_real_clock", fake: false},
-		{name: "fake_clock", fake: true},
+		{name: "nil_real_clock", clock: func() (Clock, func(time.Duration)) { return nil, nil }},
+		{name: "fake_clock", clock: func() (Clock, func(time.Duration)) { fc := newFakeClock(); return fc, fc.Advance }},
+		{name: "consumer_clock", clock: func() (Clock, func(time.Duration)) { m := newManualClock(); return m, m.Advance }},
 	}
 
 	for _, tt := range tests {
@@ -141,19 +149,15 @@ func TestClock_TimeoutErrorSameOnAnyClock(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				opts := &InjectorOpts{HealthCheckTimeout: 10 * time.Millisecond}
-				fc := clockwork.NewFakeClock()
-				if tt.fake {
-					opts.Clock = fc
-				}
-				i := NewWithOpts(opts)
+				clock, advance := tt.clock()
+				i := NewWithOpts(&InjectorOpts{Clock: clock, HealthCheckTimeout: 10 * time.Millisecond})
 				check := newHealthCheckTestBlocking()
 				ProvideNamedValue(i, "svc", check)
 
 				result := healthCheckTestAsync(context.Background(), i)
 				synctest.Wait()
-				if tt.fake {
-					fc.Advance(10 * time.Millisecond)
+				if advance != nil {
+					advance(10 * time.Millisecond)
 				}
 				err := (<-result)["svc"]
 
@@ -173,12 +177,12 @@ func TestClock_TimeoutWaitsForClock(t *testing.T) {
 
 	tests := []struct {
 		name string
-		opts func(clockwork.Clock) *InjectorOpts
+		opts func(Clock) *InjectorOpts
 	}{
-		{name: "health_check_timeout", opts: func(c clockwork.Clock) *InjectorOpts {
+		{name: "health_check_timeout", opts: func(c Clock) *InjectorOpts {
 			return &InjectorOpts{Clock: c, HealthCheckTimeout: 10 * time.Millisecond}
 		}},
-		{name: "health_check_global_timeout", opts: func(c clockwork.Clock) *InjectorOpts {
+		{name: "health_check_global_timeout", opts: func(c Clock) *InjectorOpts {
 			return &InjectorOpts{Clock: c, HealthCheckGlobalTimeout: 10 * time.Millisecond}
 		}},
 	}
@@ -192,7 +196,7 @@ func TestClock_TimeoutWaitsForClock(t *testing.T) {
 				is := assert.New(t)
 				must := require.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				i := NewWithOpts(tt.opts(fc))
 				check := newHealthCheckTestBlocking()
 				defer close(check.release)
@@ -221,12 +225,12 @@ func TestClock_DerivedInjectors(t *testing.T) {
 		// target registers "svc" (blocking until released) and returns the
 		// injector to check, plus a clock to advance to finish the check
 		// when F does not.
-		target       func(root *RootScope, check Healthchecker) (Injector, *clockwork.FakeClock)
+		target       func(root *RootScope, check Healthchecker) (Injector, *fakeClock)
 		stillRunning bool
 	}{
 		{
 			name: "service_in_child_scope",
-			target: func(root *RootScope, check Healthchecker) (Injector, *clockwork.FakeClock) {
+			target: func(root *RootScope, check Healthchecker) (Injector, *fakeClock) {
 				child := root.Scope("c")
 				ProvideNamedValue(child, "svc", check)
 				return child, nil
@@ -234,23 +238,23 @@ func TestClock_DerivedInjectors(t *testing.T) {
 		},
 		{
 			name: "inherited_service_from_child_scope",
-			target: func(root *RootScope, check Healthchecker) (Injector, *clockwork.FakeClock) {
+			target: func(root *RootScope, check Healthchecker) (Injector, *fakeClock) {
 				ProvideNamedValue(root, "svc", check)
 				return root.Scope("c"), nil
 			},
 		},
 		{
 			name: "clone",
-			target: func(root *RootScope, check Healthchecker) (Injector, *clockwork.FakeClock) {
+			target: func(root *RootScope, check Healthchecker) (Injector, *fakeClock) {
 				ProvideNamedValue(root, "svc", check)
 				return root.Clone(), nil
 			},
 		},
 		{
 			name: "clone_with_opts_own_fake_clock",
-			target: func(root *RootScope, check Healthchecker) (Injector, *clockwork.FakeClock) {
+			target: func(root *RootScope, check Healthchecker) (Injector, *fakeClock) {
 				ProvideNamedValue(root, "svc", check)
-				g := clockwork.NewFakeClock()
+				g := newFakeClock()
 				return root.CloneWithOpts(&InjectorOpts{Clock: g, HealthCheckTimeout: 10 * time.Millisecond}), g
 			},
 			stillRunning: true,
@@ -264,7 +268,7 @@ func TestClock_DerivedInjectors(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				f := clockwork.NewFakeClock()
+				f := newFakeClock()
 				root := NewWithOpts(&InjectorOpts{Clock: f, HealthCheckTimeout: 10 * time.Millisecond})
 				check := newHealthCheckTestBlocking()
 				target, g := tt.target(root, check)
@@ -294,7 +298,7 @@ func TestClock_HealthReportTimes(t *testing.T) {
 	testWithTimeout(t, 5*time.Second)
 	is := assert.New(t)
 
-	fc := clockwork.NewFakeClockAt(healthReportTestEpoch)
+	fc := newFakeClockAt(healthReportTestEpoch)
 	i := NewWithOpts(&InjectorOpts{Clock: fc})
 	ProvideNamed(i, "svc", func(Injector) (*healthReportTestOnClock, error) {
 		return &healthReportTestOnClock{clock: fc, takes: 4 * time.Second}, nil
@@ -313,7 +317,7 @@ func TestClock_HealthCacheOnClock(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		is := assert.New(t)
 
-		fc := clockwork.NewFakeClock()
+		fc := newFakeClock()
 		i := NewWithOpts(&InjectorOpts{Clock: fc, HealthReportCacheTTL: 10 * time.Second})
 		svc := &healthReportTestSwitch{}
 		ProvideNamedValue(i, "svc", svc)
@@ -332,13 +336,13 @@ func TestClock_HealthCacheOnClock(t *testing.T) {
 func TestClock_HealthSchedulerClock(t *testing.T) {
 	t.Parallel()
 
-	fake := clockwork.NewFakeClock()
+	fake := newFakeClock()
 	tests := []struct {
 		name  string
-		clock clockwork.Clock
+		clock Clock
 		check func(t *testing.T, got clockwork.Clock)
 	}{
-		{name: "fake", clock: fake, check: func(t *testing.T, got clockwork.Clock) { t.Helper(); assert.Same(t, fake, got) }},
+		{name: "fake", clock: fake, check: func(t *testing.T, got clockwork.Clock) { t.Helper(); assert.Same(t, fake.FakeClock, got) }},
 		{name: "default_real", check: func(t *testing.T, got clockwork.Clock) {
 			t.Helper()
 			assert.IsType(t, clockwork.NewRealClock(), got)
@@ -360,3 +364,203 @@ func TestClock_HealthSchedulerClock(t *testing.T) {
 		})
 	}
 }
+
+func TestRealClock(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		check func(t *testing.T, c Clock)
+	}{
+		{name: "now_follows_time_now", check: func(t *testing.T, c Clock) {
+			t.Helper()
+			assert.Equal(t, time.Now(), c.Now())
+		}},
+		{name: "since_after_3s", check: func(t *testing.T, c Clock) {
+			t.Helper()
+			start := time.Now()
+			time.Sleep(3 * time.Second)
+			assert.Equal(t, 3*time.Second, c.Since(start))
+		}},
+		{name: "after_func_5ms_runs_once", check: func(t *testing.T, c Clock) {
+			t.Helper()
+			var runs atomic.Int32
+			c.AfterFunc(5*time.Millisecond, func() { runs.Add(1) })
+			time.Sleep(5 * time.Millisecond)
+			synctest.Wait()
+			assert.Equal(t, int32(1), runs.Load())
+		}},
+		{name: "after_func_stopped_at_once_never_runs", check: func(t *testing.T, c Clock) {
+			t.Helper()
+			var runs atomic.Int32
+			stopped := c.AfterFunc(5*time.Millisecond, func() { runs.Add(1) }).Stop()
+			time.Sleep(10 * time.Millisecond)
+			synctest.Wait()
+			assert.True(t, stopped)
+			assert.Equal(t, int32(0), runs.Load())
+		}},
+		{name: "after_func_zero_runs_at_once", check: func(t *testing.T, c Clock) {
+			t.Helper()
+			var runs atomic.Int32
+			c.AfterFunc(0, func() { runs.Add(1) })
+			synctest.Wait()
+			assert.Equal(t, int32(1), runs.Load())
+		}},
+		{name: "every_call_returns_an_equal_value", check: func(t *testing.T, c Clock) {
+			t.Helper()
+			assert.Equal(t, RealClock(), c)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				tt.check(t, RealClock())
+			})
+		})
+	}
+}
+
+// manualClock is a consumer-written Clock: AfterFunc records f, and Advance
+// moves the time and runs the functions it reached.
+type manualClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	timers map[*manualTimer]struct{}
+	armed  int
+}
+
+type manualTimer struct {
+	clock *manualClock
+	at    time.Time
+	f     func()
+}
+
+func newManualClock() *manualClock {
+	return &manualClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), timers: map[*manualTimer]struct{}{}}
+}
+
+func (m *manualClock) Now() time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.now
+}
+
+func (m *manualClock) Since(t time.Time) time.Duration { return m.Now().Sub(t) }
+
+func (m *manualClock) AfterFunc(d time.Duration, f func()) Timer {
+	m.mu.Lock()
+	timer := &manualTimer{clock: m, at: m.now.Add(d), f: f}
+	m.timers[timer] = struct{}{}
+	m.armed++
+	m.mu.Unlock()
+
+	if d <= 0 {
+		m.Advance(0)
+	}
+	return timer
+}
+
+// Advance moves the clock by d and runs, outside its lock, every function
+// whose time it reached.
+func (m *manualClock) Advance(d time.Duration) {
+	m.mu.Lock()
+	m.now = m.now.Add(d)
+	var due []func()
+	for timer := range m.timers {
+		if !timer.at.After(m.now) {
+			delete(m.timers, timer)
+			due = append(due, timer.f)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, f := range due {
+		f()
+	}
+}
+
+// counts returns how many timers were armed, and how many of them were
+// neither stopped nor fired.
+func (m *manualClock) counts() (armed, pending int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.armed, len(m.timers)
+}
+
+func (t *manualTimer) Stop() bool {
+	t.clock.mu.Lock()
+	defer t.clock.mu.Unlock()
+	_, ok := t.clock.timers[t]
+	delete(t.clock.timers, t)
+	return ok
+}
+
+func TestClock_ConsumerClock(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		advance  time.Duration
+		returned bool
+	}{
+		{name: "9ms_before_the_bound", advance: 9 * time.Millisecond},
+		{name: "10ms_at_the_bound", advance: 10 * time.Millisecond, returned: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				m := newManualClock()
+				i := NewWithOpts(&InjectorOpts{Clock: m, HealthCheckTimeout: 10 * time.Millisecond})
+				check := newHealthCheckTestBlocking()
+				ProvideNamedValue(i, "svc", check)
+
+				result := make(chan error, 1)
+				go func() { result <- HealthCheckNamed(i, "svc") }()
+				synctest.Wait()
+				m.Advance(tt.advance)
+				synctest.Wait()
+
+				select {
+				case err := <-result:
+					is.True(tt.returned, "returned before the bound")
+					is.ErrorIs(err, ErrHealthCheckTimeout)
+					is.ErrorIs(err, context.DeadlineExceeded)
+				default:
+					is.False(tt.returned, "has not returned at the bound")
+					m.Advance(time.Millisecond)
+					err := <-result
+					is.ErrorIs(err, ErrHealthCheckTimeout)
+					is.ErrorIs(err, context.DeadlineExceeded)
+				}
+
+				close(check.release)
+				synctest.Wait()
+				armed, pending := m.counts()
+				is.Positive(armed)
+				is.Zero(pending, "every armed timer was stopped or fired")
+			})
+		})
+	}
+}
+
+// fakeClock is a test-only Clock over a clockwork fake clock. The root
+// tests cannot use dogerclockwork.Wrap: that package imports this one.
+type fakeClock struct{ *clockwork.FakeClock }
+
+func newFakeClock() *fakeClock { return &fakeClock{clockwork.NewFakeClock()} }
+
+func newFakeClockAt(t time.Time) *fakeClock { return &fakeClock{clockwork.NewFakeClockAt(t)} }
+
+func (c *fakeClock) AfterFunc(d time.Duration, f func()) Timer { return c.FakeClock.AfterFunc(d, f) }
+
+// Clockwork returns the clockwork clock, for the interim scheduler bridge.
+func (c *fakeClock) Clockwork() clockwork.Clock { return c.FakeClock }

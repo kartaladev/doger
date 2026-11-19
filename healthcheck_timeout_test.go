@@ -8,7 +8,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +36,7 @@ func (h *healthCheckTestUntilDone) HealthCheck(ctx context.Context) error {
 // healthCheckTestOnClock is a Healthchecker that returns a fixed result after
 // a duration on its clock, ignoring its context.
 type healthCheckTestOnClock struct {
-	clock    clockwork.Clock
+	clock    interface{ Sleep(d time.Duration) }
 	duration time.Duration
 	err      error
 }
@@ -364,7 +363,7 @@ func TestHealthCheck_TimeoutOptionsOnClock(t *testing.T) {
 			var firstErr error
 			synctest.Test(t, func(t *testing.T) {
 				for range runs {
-					fc := clockwork.NewFakeClock()
+					fc := newFakeClock()
 					i := NewWithOpts(&InjectorOpts{
 						Clock:                    fc,
 						HealthCheckTimeout:       tt.perCheck,
@@ -409,7 +408,7 @@ func TestHealthCheck_SequentialChecksShareGlobalTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		is := assert.New(t)
 
-		fc := clockwork.NewFakeClock()
+		fc := newFakeClock()
 		i := NewWithOpts(&InjectorOpts{
 			Clock:                    fc,
 			HealthCheckParallelism:   1,
@@ -455,7 +454,7 @@ func TestHealthCheck_NotBeforeClockReachesTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		is := assert.New(t)
 
-		fc := clockwork.NewFakeClock()
+		fc := newFakeClock()
 		i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckTimeout: 10 * time.Millisecond})
 		check := newHealthCheckTestBlocking()
 		ProvideNamedValue(i, "svc", check)
@@ -494,7 +493,7 @@ func TestHealthCheck_ConsumerDeadlineOnContextOnly(t *testing.T) {
 			testWithTimeout(t, 5*time.Second)
 			must := require.New(t)
 
-			fc := clockwork.NewFakeClock()
+			fc := newFakeClock()
 			i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckTimeout: tt.perCheck})
 			ProvideNamedValue(i, "svc", &healthCheckTestOnClock{clock: fc, duration: 2 * time.Hour})
 
@@ -548,7 +547,7 @@ func TestHealthCheck_PerServiceTimeout(t *testing.T) {
 			var firstErr error
 			synctest.Test(t, func(t *testing.T) {
 				for range runs {
-					fc := clockwork.NewFakeClock()
+					fc := newFakeClock()
 					i := NewWithOpts(&InjectorOpts{
 						Clock:                    fc,
 						HealthCheckTimeout:       tt.timeout,
@@ -643,7 +642,7 @@ func TestHealthCheckSingleTimeout(t *testing.T) {
 			var firstErr error
 			synctest.Test(t, func(t *testing.T) {
 				for range runs {
-					fc := clockwork.NewFakeClock()
+					fc := newFakeClock()
 					i := NewWithOpts(&InjectorOpts{
 						Clock:                    fc,
 						HealthCheckTimeout:       tt.timeout,

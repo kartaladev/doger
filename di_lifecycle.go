@@ -3,8 +3,6 @@ package doger
 import (
 	"context"
 	"time"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // Healthchecker is an interface that services can implement to provide health checking capabilities.
@@ -319,13 +317,13 @@ func (o *InjectorOpts) singleHealthCheckTimeout() time.Duration {
 
 // healthCheckContextWithin bounds ctx by timeout on clock when timeout is
 // greater than zero, and leaves it unbounded otherwise.
-func healthCheckContextWithin(ctx context.Context, clock clockwork.Clock, timeout time.Duration) (context.Context, context.CancelFunc) {
+func healthCheckContextWithin(ctx context.Context, clock Clock, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
 		return ctx, func() {}
 	}
 
 	ctx = withHealthCheckDeadline(ctx, clock.Now().Add(timeout))
-	return clockwork.WithTimeout(ctx, clock, timeout)
+	return withClockTimeout(ctx, clock, timeout)
 }
 
 // Shutdown stops a service, using type inference to determine the service name.

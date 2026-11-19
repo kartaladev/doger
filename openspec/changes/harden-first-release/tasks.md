@@ -62,13 +62,13 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 10. Doger-owned Clock
 
-- [ ] 10.1 RED: add `TestRealClock` and `TestClock_ConsumerClock` (scenarios "RealClock follows the time package", "A consumer-written clock drives the container"); verify `go test -race -run 'TestRealClock|TestClock_ConsumerClock' .` fails to compile naming only `RealClock`/`Clock`/`Timer`
-- [ ] 10.2 GREEN: add `Clock`, `Timer` and `RealClock()`, and switch `InjectorOpts.Clock` and every `Now`/`Since`/`AfterFunc` use to `doger.Clock`; verify the 10.1 tests pass and `make test` is green
-- [ ] 10.3 RED: add `TestUnwrap`, `TestWrap_Delegates` and `TestWrap_NilIsDefault` in `clock/clockwork/clockwork_test.go` (Wrap/Unwrap scenarios); verify `go test -race ./...` in `clock/clockwork` fails on undefined `Wrap`/`Unwrap`
-- [ ] 10.4 GREEN: implement `Wrap`/`Unwrap` (`Wrap(nil)` returns a nil Clock); verify `go test -race ./...` in `clock/clockwork` passes
-- [ ] 10.5 GREEN: migrate root tests from `clockwork.NewFakeClock()` to a test-only wrapper and update the `TestClock_*` rows (RealClock row, 10s default row, manualClock row) for the MODIFIED container-clock scenarios; verify `go test -race -run TestClock_ .` passes
-- [ ] 10.6 REFACTOR: Inline Function `injectorClock` defaults into `RealClock()` and Rename internal clock variables; verify `make test` and `make lint` pass
-- [ ] 10.7 Docs: add `ExampleClock` and `dogerclockwork.ExampleWrap`, godoc for `Clock`/`Timer`/`RealClock` and a migration row; verify `go test -run Example . ./clock/clockwork/...` passes
+- [x] 10.1 RED: add `TestRealClock` and `TestClock_ConsumerClock` (scenarios "RealClock follows the time package", "A consumer-written clock drives the container"); verify `go test -race -run 'TestRealClock|TestClock_ConsumerClock' .` fails to compile naming only `RealClock`/`Clock`/`Timer`
+- [x] 10.2 GREEN: add `Clock`, `Timer` and `RealClock()`, and switch `InjectorOpts.Clock` and every `Now`/`Since`/`AfterFunc` use to `doger.Clock`; verify the 10.1 tests pass and `make test` is green
+- [x] 10.3 RED: add `TestUnwrap`, `TestWrap_Delegates` and `TestWrap_NilIsDefault` in `clock/clockwork/clockwork_test.go` (Wrap/Unwrap scenarios); verify `go test -race ./...` in `clock/clockwork` fails on undefined `Wrap`/`Unwrap`
+- [x] 10.4 GREEN: implement `Wrap`/`Unwrap` (`Wrap(nil)` returns a nil Clock); verify `go test -race ./...` in `clock/clockwork` passes
+- [x] 10.5 GREEN: migrate root tests from `clockwork.NewFakeClock()` to a test-only wrapper and update the `TestClock_*` rows (RealClock row, 10s default row, manualClock row) for the MODIFIED container-clock scenarios; verify `go test -race -run TestClock_ .` passes
+- [x] 10.6 REFACTOR: Inline Function `injectorClock` defaults into `RealClock()` and Rename internal clock variables; verify `make test` and `make lint` pass
+- [x] 10.7 Docs: add `ExampleClock` and `dogerclockwork.ExampleWrap`, godoc for `Clock`/`Timer`/`RealClock` and a migration row; verify `go test -run Example . ./clock/clockwork/...` passes
 - [ ] 10.8 Verify scenario "Build list of a consumer": `go list -m all` in a scratch consumer of the root module omits `github.com/jonboulle/clockwork` (via `scripts/release-dry-run.sh` once group 50 exists, or a manual GOWORK=off consumer now)
 
 ## 11. HealthScheduler takes a doger.Clock

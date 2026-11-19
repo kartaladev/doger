@@ -214,7 +214,7 @@ func TestHealthScheduler_CalledAtReady(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				scheduler := &manualScheduler{}
 				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthScheduler: scheduler})
 				readyCalls := -1
@@ -225,7 +225,7 @@ func TestHealthScheduler_CalledAtReady(t *testing.T) {
 
 				is.Equal(tt.calls, scheduler.callCount())
 				for _, clock := range scheduler.clocks {
-					is.Same(fc, clock)
+					is.Same(fc.FakeClock, clock)
 				}
 				is.Equal(tt.readyCalls, readyCalls, "calls seen by the Ready hook")
 				is.Equal(tt.monitored, i.HealthReport(IgnoreContainerPhase()).Monitored)
@@ -352,7 +352,7 @@ func TestHealthRound_Results(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				scheduler := &manualScheduler{}
 				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthScheduler: scheduler, HealthCheckTimeout: tt.timeout})
 				ProvideNamedValue(i, "a", &healthReportTestSwitch{})

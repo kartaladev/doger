@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/kartaladev/doger/stacktrace"
 )
 
@@ -111,7 +110,12 @@ func (s *serviceLazy[T]) instanceOrBuild(i Injector) (instance T, built bool, er
 }
 
 func (s *serviceLazy[T]) build(i Injector) (err error) {
-	clock := injectorClock(i)
+	// the clock of the injector's root scope, or the real clock when there
+	// is no injector
+	clock := RealClock()
+	if i != nil {
+		clock = i.RootScope().opts.Clock
+	}
 	start := clock.Now()
 
 	if err := resolveDeclaredDependencies(i, s.opts); err != nil {
@@ -168,16 +172,6 @@ func injectorScopeName(i Injector) string {
 	}
 
 	return ""
-}
-
-// injectorClock returns the clock of the injector's root scope, or the real
-// clock when there is no injector.
-func injectorClock(i Injector) clockwork.Clock {
-	if i == nil {
-		return clockwork.NewRealClock()
-	}
-
-	return i.RootScope().opts.Clock
 }
 
 // builtInstance returns the instance and whether it is built, without
