@@ -212,9 +212,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 31. Root shutdown winner test uses the Logger
 
-- [ ] 31.1 RED: rewrite `TestRootScope_ShutdownWinnerPanic` with a Logger whose handler panics on "requested shutdown" (scenario "A panicking first caller still releases the others"); verify `go test -race -run TestRootScope_ShutdownWinnerPanic .` fails because no record is emitted
-- [ ] 31.2 GREEN: emit the "requested shutdown" record through the Logger; verify the 31.1 test passes and `make test` is green
-- [ ] 31.3 REFACTOR: none needed — only the logging call moves; verify `make test` and `make lint` pass
+- [x] 31.1 RED: rewrite `TestRootScope_ShutdownWinnerPanic` with a Logger whose handler panics on "requested shutdown" (scenario "A panicking first caller still releases the others"); verify `go test -race -run TestRootScope_ShutdownWinnerPanic .` fails because no record is emitted
+- [x] 31.2 GREEN: emit the "requested shutdown" record through the Logger; verify the 31.1 test passes and `make test` is green
+- [x] 31.3 REFACTOR: none needed — only the logging call moves; verify `make test` and `make lint` pass
 
 ## 32. Starter auto-detection is opt-in
 

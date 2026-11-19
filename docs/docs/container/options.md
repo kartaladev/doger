@@ -87,7 +87,7 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
 
 | Level | Messages |
 | --- | --- |
-| Debug | `service registered`, `service overridden`, `service invoked`, `service exported`, `health check failed` (with `error`), `property source selected`, `panic value` (with `value`) |
+| Debug | `service registered`, `service overridden`, `service invoked`, `service exported`, `requested shutdown`, `health check failed` (with `error`), `property source selected`, `panic value` (with `value`) |
 | Info | `container started`, `container ready`, `container closing`, `container closed`, `extension disabled`, `container health changed` back to healthy |
 | Warn | `property source unavailable` (with `source_type`), `properties read after extend`, `health scheduler stop failed`, `container health changed` to another state |
 | Error | `service shutdown failed` (with `error`), `health scheduler failed`, `panic recovered` (with `point` and `panic_type`) |
