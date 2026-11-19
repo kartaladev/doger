@@ -3,10 +3,9 @@ package doger
 import (
 	"bytes"
 	"fmt"
-	"html/template"
-	"slices"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/kartaladev/doger/stacktrace"
@@ -16,8 +15,10 @@ import (
 // 								Templating helpers
 /////////////////////////////////////////////////////////////////////////////
 
-func fromTemplate(tpl string, data any) string {
-	t := template.Must(template.New("").Parse(tpl))
+// fromTemplate renders tpl with text/template, so names are never
+// HTML-escaped; a missing key renders as the empty string.
+func fromTemplate(tpl string, data map[string]string) string {
+	t := template.Must(template.New("").Option("missingkey=zero").Parse(tpl))
 	var buf bytes.Buffer
 	must0(t.Execute(&buf, data)) // 🤮
 	return buf.String()
@@ -44,7 +45,7 @@ Dependents:
 `
 
 // @TODO: add service type icon (lazy, eager, transient).
-const explainServiceDependencyTemplate = `* {{.Service}}{{.Source}} from scope {{.ScopeName}}{{.Recursive}}`
+const explainServiceDependencyTemplate = `* {{.Service}}{{.Source}} from scope {{.ScopeName}}{{.Ref}}{{.Recursive}}`
 
 // ExplainServiceOutput contains detailed information about a service for debugging and analysis.
 // This struct provides comprehensive information about a service's location, type, dependencies,
@@ -172,17 +173,23 @@ func (sd *ExplainServiceOutput) String() string {
 //   - Recursive: Nested dependency relationships (for transitive dependencies)
 //   - Source: How the edge was recorded: invoked by a provider, a DependsOn
 //     option, or DeclareDependency
+//   - Ref: true when the service was already expanded earlier in the same
+//     tree; the node then has no Recursive children. JSON omits it when
+//     false. Follow a reference with [ExplainNamedService] on Service.
 type ExplainServiceDependencyOutput struct {
 	ScopeID   string                           `json:"scope_id"`
 	ScopeName string                           `json:"scope_name"`
 	Service   string                           `json:"service"`
 	Recursive []ExplainServiceDependencyOutput `json:"recursive"`
 	Source    DependencySource                 `json:"source"`
+	Ref       bool                             `json:"ref,omitempty"`
 }
 
 // String returns a formatted string representation of the dependency relationship.
 // This method provides a human-readable description of the dependency, including
-// nested recursive dependencies with proper indentation.
+// nested recursive dependencies with proper indentation. A Ref node renders as
+// a single line ending with " (ref)". The text is plain: names are verbatim,
+// not HTML-escaped.
 //
 // Returns a formatted string describing the dependency relationship.
 func (sdd *ExplainServiceDependencyOutput) String() string {
@@ -207,6 +214,11 @@ func (sdd *ExplainServiceDependencyOutput) String() string {
 		source = " (" + sdd.Source.String() + ")"
 	}
 
+	ref := ""
+	if sdd.Ref {
+		ref = " (ref)"
+	}
+
 	return fromTemplate(
 		explainServiceDependencyTemplate,
 		map[string]string{
@@ -214,6 +226,7 @@ func (sdd *ExplainServiceDependencyOutput) String() string {
 			"ScopeName": sdd.ScopeName,
 			"Service":   sdd.Service,
 			"Source":    source,
+			"Ref":       ref,
 			"Recursive": recursive,
 		},
 	)
@@ -263,9 +276,17 @@ func ExplainService[T any](i Injector) (description ExplainServiceOutput, ok boo
 //
 // The service is looked up from scope and its ancestors, and its dependencies
 // are those recorded for it in the scope that registers it, whichever scope
-// explains it. The dependency graph can hold a cycle, closed by a build after
-// a [DeclareDependency] edge: a service repeated along one branch is listed
-// once more, without its own dependencies, so the output stays finite.
+// explains it. Only dependencies that built successfully are recorded.
+//
+// Each of the Dependencies and Dependents trees expands a service once, at
+// its first occurrence (depth first, ordered by scope ID then name). Every
+// later occurrence, including one closing a cycle through a
+// [DeclareDependency] edge, is a node with Ref set to true and no Recursive
+// children: the output grows with the number of edges, not of paths. To see
+// what a referenced service depends on, explain it by name.
+//
+// String renders plain text: names are written verbatim, never HTML-escaped.
+// Escaping for HTML is the caller's responsibility.
 //
 // Note: Please call Invoke[T] before ExplainNamedService[T] to ensure that the service is registered.
 //
@@ -309,8 +330,8 @@ func ExplainNamedService(scope Injector, name string) (description ExplainServic
 		ServiceType:      service.getServiceType(),
 		ServiceBuildTime: buildTime,
 		Invoked:          invoked,
-		Dependencies:     newExplainServiceDependencies(_i, newServiceDescription(serviceScope.ID(), serviceScope.Name(), name), "dependencies", nil),
-		Dependents:       newExplainServiceDependencies(_i, newServiceDescription(serviceScope.ID(), serviceScope.Name(), name), "dependents", nil),
+		Dependencies:     newExplainServiceDependencies(newExplainWalk(_i, "dependencies"), newServiceDescription(serviceScope.ID(), serviceScope.Name(), name)),
+		Dependents:       newExplainServiceDependencies(newExplainWalk(_i, "dependents"), newServiceDescription(serviceScope.ID(), serviceScope.Name(), name)),
 	}
 	if defaultService, ok := serviceAny.(serviceWrapperDefault); ok {
 		switch defaultService.currentState() {
@@ -328,19 +349,31 @@ func ExplainNamedService(scope Injector, name string) (description ExplainServic
 	return output, true
 }
 
-// newExplainServiceDependencies returns the dependencies (or dependents) of
-// desc, each with its own recursively. path holds the services above desc:
-// a service already on it closes a cycle, so it is listed without its own.
-func newExplainServiceDependencies(i Injector, desc ServiceDescription, mode string, path []ServiceDescription) []ExplainServiceDependencyOutput {
-	if slices.Contains(path, desc) {
-		return []ExplainServiceDependencyOutput{}
-	}
-	path = append(slices.Clone(path), desc)
+// explainWalk is the state of one tree of an explanation: its dependencies
+// or its dependents, and the services it already expanded.
+type explainWalk struct {
+	injector Injector
+	mode     string // "dependencies" or "dependents"
+	visited  map[ServiceDescription]struct{}
+}
 
-	dependencies, dependents := i.RootScope().dag.explainService(desc.ScopeID, desc.ScopeName, desc.Service)
+func newExplainWalk(i Injector, mode string) *explainWalk {
+	return &explainWalk{injector: i, mode: mode, visited: map[ServiceDescription]struct{}{}}
+}
+
+// newExplainServiceDependencies returns the dependencies (or dependents) of
+// desc, each with its own recursively. walk.visited holds the services
+// already expanded in this tree, desc included once called: a later
+// occurrence of one, including one closing a cycle, is a Ref node without its
+// own, so the tree grows with the number of edges, not of paths.
+func newExplainServiceDependencies(walk *explainWalk, desc ServiceDescription) []ExplainServiceDependencyOutput {
+	walk.visited[desc] = struct{}{}
+
+	dag := walk.injector.RootScope().dag
+	dependencies, dependents := dag.explainService(desc.ScopeID, desc.ScopeName, desc.Service)
 
 	deps := dependencies
-	if mode == "dependents" {
+	if walk.mode == "dependents" {
 		deps = dependents
 	}
 
@@ -353,13 +386,19 @@ func newExplainServiceDependencies(i Injector, desc ServiceDescription, mode str
 	})
 
 	return mAp(deps, func(item ServiceDescription, _ int) ExplainServiceDependencyOutput {
-		recursive := newExplainServiceDependencies(i, item, mode, path)
+		_, ref := walk.visited[item]
+		var recursive []ExplainServiceDependencyOutput
+		if ref {
+			recursive = []ExplainServiceDependencyOutput{}
+		} else {
+			recursive = newExplainServiceDependencies(walk, item)
+		}
 
 		from, to := desc, item
-		if mode == "dependents" {
+		if walk.mode == "dependents" {
 			from, to = item, desc
 		}
-		source, _ := i.RootScope().dag.edgeSource(from, to)
+		source, _ := dag.edgeSource(from, to)
 
 		// @TODO: differentiate status of lazy services (built, not built). Such as: "😴 (✅)"
 		return ExplainServiceDependencyOutput{
@@ -368,6 +407,7 @@ func newExplainServiceDependencies(i Injector, desc ServiceDescription, mode str
 			Service:   item.Service,
 			Recursive: recursive,
 			Source:    source,
+			Ref:       ref,
 		}
 	})
 }

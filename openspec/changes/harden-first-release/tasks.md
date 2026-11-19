@@ -180,10 +180,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 26. Bounded, plain-text explanation
 
-- [ ] 26.1 RED: add `TestExplain_LayeredGraphBounded`, `TestExplain_DependentsBounded`, `TestExplain_RefRendersSingleLine`, `TestExplain_RefJSON` and `TestExplain_PlainText` (service-explanation bounded/plain-text scenarios); verify they fail (121391 vs 45 nodes; `Ref` undefined; `&lt;` in output)
-- [ ] 26.2 GREEN: memoize `newExplainServiceDependencies` per call by (scope, service), emit `Ref: true` nodes (`json:"ref,omitempty"`) with no children rendered as `" (ref)"`, add JSON tags to `ServiceDescription`, and switch `di_explain.go` to `text/template`; verify the 26.1 tests pass and `make test` is green
-- [ ] 26.3 REFACTOR: Introduce Parameter Object for the visited set passed through the recursive builders; verify `make test` and `make lint` pass
-- [ ] 26.4 Add `FuzzExplainText` and run it 60s, and update the godoc of `ExplainServiceDependencyOutput`/`ExplainNamedService` and `ExampleExplainNamedService`; verify `go test -run=^$ -fuzz=FuzzExplainText -fuzztime=60s .` and `go test -run ExampleExplainNamedService .` pass
+- [x] 26.1 RED: add `TestExplain_LayeredGraphBounded`, `TestExplain_DependentsBounded`, `TestExplain_RefRendersSingleLine`, `TestExplain_RefJSON` and `TestExplain_PlainText` (service-explanation bounded/plain-text scenarios); verify they fail (121391 vs 45 nodes; `Ref` undefined; `&lt;` in output)
+- [x] 26.2 GREEN: memoize `newExplainServiceDependencies` per call by (scope, service), emit `Ref: true` nodes (`json:"ref,omitempty"`) with no children rendered as `" (ref)"`, add JSON tags to `ServiceDescription`, and switch `di_explain.go` to `text/template`; verify the 26.1 tests pass and `make test` is green
+- [x] 26.3 REFACTOR: Introduce Parameter Object for the visited set passed through the recursive builders; verify `make test` and `make lint` pass
+- [x] 26.4 Add `FuzzExplainText` and run it 60s, and update the godoc of `ExplainServiceDependencyOutput`/`ExplainNamedService` and `ExampleExplainNamedService`; verify `go test -run=^$ -fuzz=FuzzExplainText -fuzztime=60s .` and `go test -run ExampleExplainNamedService .` pass
 
 ## 27. Registration source is the consumer's call site
 
