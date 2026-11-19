@@ -1,4 +1,4 @@
-package stacktrace
+package frames
 
 ///
 /// Stolen from palantir/stacktrace repo

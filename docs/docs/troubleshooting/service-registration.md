@@ -15,10 +15,16 @@ injector.ListProvidedServices() []doger.ServiceDescription
 injector.ListInvokedServices() []doger.ServiceDescription
 
 type ServiceDescription struct {
-	ScopeID   string
-	ScopeName string
-	Service   string
+	ScopeID   string `json:"scopeId"`
+	ScopeName string `json:"scopeName"`
+	Service   string `json:"service"`
 }
+```
+
+A `ServiceDescription` marshals to JSON with lower-camel keys, for example in a health report entry:
+
+```json
+{"scopeId": "2a821628-7175-4b6d-a2ea-de8b82a203de", "scopeName": "[root]", "service": "db"}
 ```
 
 ## Service name {#service-name}

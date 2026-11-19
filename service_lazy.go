@@ -307,8 +307,13 @@ func (s *serviceLazy[T]) source() (stacktrace.Frame, []stacktrace.Frame) {
 // getBuildTime reads the build time and the published instance without
 // s.mu, so explaining a service never waits for, nor races with, its build or
 // shutdown.
+//
+// The instance is loaded first: build stores the build time before it
+// publishes the instance, so a published instance seen here always comes
+// with its build time, never (0, true).
 func (s *serviceLazy[T]) getBuildTime() (time.Duration, bool) {
-	return time.Duration(s.buildTime.Load()), s.published.Load() != nil
+	built := s.published.Load() != nil
+	return time.Duration(s.buildTime.Load()), built
 }
 
 func (s *serviceLazy[T]) getRegistrationIndex() uint64 {

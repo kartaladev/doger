@@ -37,7 +37,7 @@ Each entry gives the change and its migration.
 | Starting or resolving on a container after shutdown | `ErrShutdown` | Build a new container. |
 | An error panic value from a provider returned as is | Wrapped: matches `ErrProviderPanic` and the original | Keep using `errors.Is`/`errors.As`; don't compare with `==`. |
 | Web UI page functions and adapter `Use` | Gain a variadic `...dogerhttp.Option` | Source-compatible; no change needed. |
-| `ServiceDescription` JSON keys `ScopeID`, `ScopeName`, `Service` | `scopeId`, `scopeName`, `service` (also changes Explain JSON) | Update JSON consumers. |
+| `ServiceDescription` JSON keys `ScopeID`, `ScopeName`, `Service` | `scopeId`, `scopeName`, `service`, wherever a `ServiceDescription` is marshalled (`ListProvidedServices`/`ListInvokedServices` results, `HealthReport` entries); the Explain output types have their own keys and are unchanged | Update JSON consumers of those values. |
 | `Stage` without a text form | `MarshalText` gives `before-start` / `after-start` | None. |
 | `HealthCheckTimeout` 0 meaning none on every forced path | 10s on `RootScope.HealthCheck`, `Scope.HealthCheck` and the per-service functions (`HealthCheckSingleTimeout` 0 inherits it); `HealthCheckGlobalTimeout` ≤ 0 means no global bound | Set a negative value for unbounded. |
 | Typed-nil injector, root or scope | Treated as nil: `ErrNilInjector` | Pass a real container. |

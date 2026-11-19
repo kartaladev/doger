@@ -179,7 +179,10 @@ func TestExplain_FailedDependencyNoEdge(t *testing.T) {
 	}{
 		{name: "named", b: "b", resolve: func(i Injector) error { _, err := InvokeNamed[*explainEdgeB](i, "b"); return err }},
 		{name: "named_any", b: "b", resolve: func(i Injector) error { _, err := InvokeNamed[any](i, "b"); return err }},
-		{name: "by_type", b: NameOf[*explainEdgeB](), resolve: func(i Injector) error { _, err := Invoke[*explainEdgeB](i); return err }},
+		// Invoke[T] resolves by the type's name, through invokeByName
+		{name: "by_type_name", b: NameOf[*explainEdgeB](), resolve: func(i Injector) error { _, err := Invoke[*explainEdgeB](i); return err }},
+		// InvokeAs[T] selects by type, through invokeServiceInstance
+		{name: "by_type_selection", b: "b", resolve: func(i Injector) error { _, err := InvokeAs[*explainEdgeB](i); return err }},
 		{name: "struct", b: "b", resolve: func(i Injector) error { _, err := InvokeStruct[explainEdgeFields](i); return err }},
 	}
 
@@ -472,6 +475,80 @@ func TestExplain_PlainText(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExplain_RefOrderRepeatable(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	const runs = 30
+
+	// "a" (scope "child") invokes "p" (scope "child") then "q" (root), and
+	// both invoke "shared" (root): siblings are ordered by scope name, then
+	// service name, so "q" ("[root]") is expanded first and "p" holds the
+	// reference, on every run whatever the random scope IDs
+	for range runs {
+		root := New()
+		child := root.Scope("child")
+		ProvideNamedValue(root, "shared", 1)
+		ProvideNamed(root, "q", func(i Injector) (int64, error) {
+			_, err := InvokeNamed[int](i, "shared")
+			return 2, err
+		})
+		ProvideNamed(child, "p", func(i Injector) (int32, error) {
+			_, err := InvokeNamed[int](i, "shared")
+			return 3, err
+		})
+		ProvideNamed(child, "a", func(i Injector) (string, error) {
+			if _, err := InvokeNamed[int32](i, "p"); err != nil {
+				return "", err
+			}
+			_, err := InvokeNamed[int64](i, "q")
+			return "a", err
+		})
+		_, err := InvokeNamed[string](child, "a")
+		require.NoError(t, err)
+
+		output, ok := ExplainNamedService(child, "a")
+		require.True(t, ok)
+		require.Len(t, output.Dependencies, 2)
+		q, p := output.Dependencies[0], output.Dependencies[1]
+		if !is.Equal([]string{"q", "p"}, []string{q.Service, p.Service}) {
+			return
+		}
+		require.Len(t, q.Recursive, 1)
+		require.Len(t, p.Recursive, 1)
+		is.False(q.Recursive[0].Ref, "shared under q")
+		if !is.True(p.Recursive[0].Ref, "shared under p") {
+			return
+		}
+	}
+}
+
+func TestExplain_EdgeRemovedDuringExplanation(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+	must := require.New(t)
+
+	root := New()
+	ProvideNamedValue(root, "a", 1)
+	ProvideNamedValue(root, "b", 2)
+	must.NoError(DeclareDependency(root, "a", "b"))
+
+	// the edge a -> b leaves the dependencies of "a" while the dependents of
+	// "b" still list it, as when it is removed between two reads of the graph
+	a := newServiceDescription(root.ID(), root.Name(), "a")
+	b := newServiceDescription(root.ID(), root.Name(), "b")
+	root.dag.mu.Lock()
+	delete(root.dag.dependencies[a], b)
+	root.dag.mu.Unlock()
+
+	output, ok := ExplainNamedService(root, "b")
+	must.True(ok)
+	must.Len(output.Dependents, 1)
+	is.Equal(DependencySourceDeclared, output.Dependents[0].Source, "the source read with the listed edge")
+	_, err := json.Marshal(output)
+	is.NoError(err)
 }
 
 func TestServiceDescription_JSONKeys(t *testing.T) {

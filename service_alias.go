@@ -33,7 +33,7 @@ func newServiceAlias[Initial any, Alias any](
 	scope Injector,
 	targetName string,
 ) *serviceAlias[Initial, Alias] {
-	providerFrame, _ := stacktrace.NewFrameFromCallerOutside(rootPkgPath) // the consumer's call site
+	providerFrame := registrationFrame()
 
 	return &serviceAlias[Initial, Alias]{
 		mu:         sync.RWMutex{},

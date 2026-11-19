@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kartaladev/doger/internal/frames"
 	"github.com/kartaladev/doger/stacktrace"
 	typetostring "github.com/samber/go-type-to-string"
 )
@@ -180,6 +181,21 @@ type serviceWrapperAliasTarget interface {
 // value or alias registration skips its non-test frames, so it names the
 // consumer's call site.
 var rootPkgPath = reflect.TypeFor[Scope]().PkgPath()
+
+// registrationFrame returns the consumer's call site of a value, alias or
+// export registration, for the wrapper constructor calling it: the first
+// frame outside this package, whose _test.go files count as outside. When
+// that frame is deeper than frames.MaxDepth, it returns the wrapper
+// constructor's own frame instead, never a zero frame.
+func registrationFrame() stacktrace.Frame {
+	// skip registrationFrame itself
+	frame, ok := frames.Caller(1, frames.MaxDepth, rootPkgPath)
+	if !ok {
+		frame, _ = frames.Caller(1, frames.MaxDepth)
+	}
+
+	return stacktrace.Frame(frame)
+}
 
 type serviceWrapperBuildTime interface {
 	getBuildTime() (time.Duration, bool)

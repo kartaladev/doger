@@ -47,14 +47,14 @@ Dependencies:
       * SERVICE-A1 from scope [root]
       * SERVICE-A2 from scope [root]
   * SERVICE-C2 from scope scope-child
-    * SERVICE-B from scope [root]
-      * SERVICE-A1 from scope [root]
-      * SERVICE-A2 from scope [root]
+    * SERVICE-B from scope [root] (ref)
 
 Dependents:
 * SERVICE-F from scope scope-child
   * SERVICE-G from scope scope-child
 ```
+
+Each tree expands a service once, at its first occurrence. A later occurrence, such as the second `SERVICE-B` above, ends with ` (ref)` and lists nothing under it (`Ref: true` in the output, `"ref": true` in its JSON): explain that service by name to see its own dependencies. Siblings are ordered by scope name, then service name, so the same graph always renders the same way. Names are written as registered, never HTML-escaped.
 
 ```mermaid
 graph TD

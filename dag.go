@@ -2,6 +2,7 @@ package doger
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 )
 
@@ -162,13 +163,20 @@ func (d *DAG) addDependency(fromScopeID, fromScopeName, fromServiceName, toScope
 	dependents[from] = source
 }
 
-// edgeSource returns the source of the edge from -> to, and whether it exists.
-func (d *DAG) edgeSource(from, to ServiceDescription) (DependencySource, bool) {
+// edgesOf returns a copy of the edges of desc, each with its source: its
+// dependencies, or its dependents when dependents is set. The services and
+// their sources are read under one lock, so an edge removed meanwhile is
+// either listed with its source or not listed.
+func (d *DAG) edgesOf(desc ServiceDescription, dependents bool) map[ServiceDescription]DependencySource {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	source, ok := d.dependencies[from][to]
-	return source, ok
+	edges := d.dependencies[desc]
+	if dependents {
+		edges = d.dependents[desc]
+	}
+
+	return maps.Clone(edges)
 }
 
 // removeService removes a dependency relationship between services in the DAG.
