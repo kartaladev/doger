@@ -838,3 +838,103 @@ func TestContainerShutdown_KeptPanicLoggedWhenDispatchStops(t *testing.T) {
 	}
 	is.NotEmpty(recorder.containing("hunter2"), "the panic value at Debug")
 }
+
+func TestContainerShutdown_ChildDetached(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		shutdown func(t *testing.T, req *Scope)
+	}{
+		{name: "shutdown", shutdown: func(_ *testing.T, req *Scope) { req.Shutdown() }},
+		{name: "shutdown_with_deadline", shutdown: func(t *testing.T, req *Scope) {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			req.ShutdownWithContext(ctx)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+			is := assert.New(t)
+
+			root := New()
+			req := root.Scope("req")
+			provideBuilt(t, req, "svc", &shutdownTestCounter{})
+
+			tt.shutdown(t, req)
+
+			_, found := root.ChildByName("req")
+			is.False(found)
+			is.Empty(root.Children())
+			var again *Scope
+			is.NotPanics(func() { again = root.Scope("req") })
+			if is.NotNil(again) {
+				is.NoError(again.checkOpen(), "the new scope is open")
+			}
+		})
+	}
+}
+
+func TestContainerShutdown_ChildDetachNoGrowth(t *testing.T) {
+	t.Parallel()
+
+	for _, cycles := range []int{1, 1000} {
+		t.Run(fmt.Sprintf("cycles_%d", cycles), func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 10*time.Second)
+			is := assert.New(t)
+
+			root := New()
+			for range cycles {
+				req := root.Scope("req")
+				ProvideNamedValue(req, "value", &shutdownTestCounter{})
+				_, err := InvokeNamed[*shutdownTestCounter](req, "value")
+				require.NoError(t, err)
+				req.Shutdown()
+			}
+
+			is.Empty(root.Children())
+			for _, entry := range root.HealthReport().Services {
+				is.NotEqual("req", entry.Service.ScopeName, "a service of a req scope")
+			}
+		})
+	}
+}
+
+func TestContainerShutdown_ChildDetachConcurrent(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 20*time.Second)
+
+	root := New()
+	var wg sync.WaitGroup
+	for g := range 16 {
+		wg.Go(func() {
+			for n := range 200 {
+				root.Scope(fmt.Sprintf("req-%d-%d", g, n)).Shutdown()
+			}
+		})
+	}
+	wg.Wait()
+
+	assert.Empty(t, root.Children())
+}
+
+func TestContainerShutdown_GrandchildDetach(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	root := New()
+	a := root.Scope("a")
+	b := a.Scope("b")
+
+	b.Shutdown()
+
+	is.Empty(a.Children())
+	_, found := root.ChildByName("a")
+	is.True(found, `root still holds "a"`)
+	is.Len(root.Children(), 1)
+}

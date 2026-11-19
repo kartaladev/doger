@@ -187,6 +187,22 @@ func (s *Scope) directChild(name string) *Scope {
 	return s.childScopes[name]
 }
 
+// detachChildScope removes child from the children of s, unless s already
+// holds another scope under its name. Detaching twice is a no-op.
+func (s *Scope) detachChildScope(child *Scope) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.detachChildLocked(child)
+}
+
+// detachChildLocked is detachChildScope with s.mu held as a writer.
+func (s *Scope) detachChildLocked(child *Scope) {
+	if s.childScopes[child.name] == child {
+		delete(s.childScopes, child.name)
+	}
+}
+
 // detachChild removes the child scope name from s, without shutting it
 // down, so that the name can be used again.
 func (s *Scope) detachChild(name string) {
@@ -271,6 +287,7 @@ func (s *Scope) Ancestors() []*Scope {
 // This method only returns direct children, not grandchildren or deeper descendants.
 //
 // Returns a slice of child scopes. The order is not guaranteed to be stable.
+// A child whose shutdown has completed is detached: it is no longer listed.
 //
 // Play: https://go.dev/play/p/pao_03UdGE2
 func (s *Scope) Children() []*Scope {
@@ -317,6 +334,8 @@ func (s *Scope) ChildByID(id string) (*Scope, bool) {
 
 // ChildByName searches for a child scope by its name across the entire scope hierarchy.
 // This method performs a recursive search through all descendant scopes.
+// A scope whose shutdown has completed is detached from its parent, and not
+// found.
 //
 // Parameters:
 //   - name: The name of the scope to find
@@ -486,7 +505,10 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // A scope is closed once its shutdown begins: from then on, registrations
 // and Scope() on it panic, and invocations return, with an error matching
 // [ErrShutdown]. A second Shutdown of a closed scope succeeds with nothing to
-// do.
+// do. Once the shutdown of a child scope completed, whether called on it or
+// reached through an ancestor, the child is detached from its parent: it
+// leaves Children and ChildByName, and its name can be used again, so
+// per-request scopes created and shut down repeatedly do not accumulate.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
@@ -533,6 +555,9 @@ func (s *Scope) shutdownWithContext(ctx context.Context, first *hookPanic) (repo
 			return s.waitForScopeClose(ctx, run)
 		}
 		defer func() { s.finishScopeClose(run, report) }()
+		// once the shutdown completed, the parent forgets the scope, and its
+		// name can be used again
+		defer s.parentScope.detachChildScope(s)
 		waitErr = s.waitForStartingRun(ctx)
 	}
 
@@ -673,10 +698,10 @@ func (s *Scope) shutdownChildrenInParallel(ctx context.Context, first *hookPanic
 	// Snapshot children under lock
 	s.mu.Lock()
 	children := make([]*Scope, 0, len(s.childScopes))
-	for name, c := range s.childScopes {
+	for _, c := range s.childScopes {
 		if selected(c) {
 			children = append(children, c)
-			delete(s.childScopes, name) // scopes are removed from DI container
+			s.detachChildLocked(c) // scopes are removed from DI container
 		}
 	}
 	s.mu.Unlock()

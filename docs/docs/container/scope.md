@@ -109,6 +109,23 @@ svc := doger.MustInvokeNamed[*Passenger](passengersModule, "passenger-3")
 
 **Play: https://go.dev/play/p/vwLEbyo0APp**
 
+## Per-request scopes {#per-request-scopes}
+
+A child scope can hold the services of one request, job or tenant session. Create it, use it, and shut it down when the work ends:
+
+```go
+func handle(root *doger.RootScope, requestID string) error {
+    req := root.Scope("req-" + requestID)
+    defer req.Shutdown()
+
+    doger.ProvideNamedValue(req, "request-id", requestID)
+    // ... invoke the request's services from req
+    return nil
+}
+```
+
+Once its shutdown has completed, the scope is detached from its parent: it no longer appears in `Children()` or `ChildByName`, and its name can be used again. Scopes created and shut down this way do not accumulate in the parent. A shut-down scope stays closed: invoking or registering on it fails with `doger.ErrShutdown`.
+
 ## Scope export {#scope-export}
 
 A child scope hides its services from its parent: lookup only walks up the tree. `doger.Export` publishes selected services of a child scope to its parent, and keeps every other service private.

@@ -48,7 +48,7 @@ Examples:
   | tenant.Shutdown() | closing jobs, shutdown jobs, closed jobs, closing tenant, shutdown tenant, closed tenant               |
   | root.Shutdown()   | closing jobs, shutdown jobs, closed jobs, closing tenant, shutdown tenant, closed tenant                |
   | jobs.Shutdown()   | closing jobs, shutdown jobs, closed jobs                                                               |
-  | tenant.Shutdown() then root.Shutdown() | closing jobs, shutdown jobs, closed jobs, closing tenant, shutdown tenant, closed tenant, closing tenant, closed tenant |
+  | tenant.Shutdown() then root.Shutdown() | closing jobs, shutdown jobs, closed jobs, closing tenant, shutdown tenant, closed tenant (root.Shutdown() no longer reaches the detached "tenant") |
 ```
 
 #### Scenario: Overlapping shutdowns of a child scope join

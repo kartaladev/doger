@@ -387,9 +387,9 @@ func TestScopeHooks_ClosingClosed(t *testing.T) {
 			name: "tenant.Shutdown() then root.Shutdown()",
 			operation: func(root *RootScope, tenant, _ *Scope) {
 				tenant.Shutdown()
-				root.Shutdown()
+				root.Shutdown() // tenant is detached: not reached again
 			},
-			events: append(append([]string{}, nested...), "closing tenant", "closed tenant"),
+			events: nested,
 		},
 	}
 

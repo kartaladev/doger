@@ -112,10 +112,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 16. Detach shut-down child scopes
 
-- [ ] 16.1 RED: regression `TestContainerShutdown_ChildDetachNoGrowth` plus `TestContainerShutdown_ChildDetached`, `TestContainerShutdown_ChildDetachConcurrent` and `TestContainerShutdown_GrandchildDetach` (scenarios "A shut-down child is detached and its name reusable", "Per-request scopes do not accumulate", "Concurrent per-request scopes detach", "A grandchild detaches from its own parent only"); verify `go test -race -run 'TestContainerShutdown_(ChildDetach|GrandchildDetach)' .` fails (1000 children left; "already declared" panic)
-- [ ] 16.2 GREEN: the winning child shutdown calls `parent.detachChild(name)` after completion (D3); verify the 16.1 tests pass with goleak clean and `make test` is green
-- [ ] 16.3 REFACTOR: Inline the delete in `shutdownChildrenInParallel` into `detachChild`; verify `make test` and `make lint` pass
-- [ ] 16.4 Docs: godoc for `Scope.ShutdownWithContext`, `Children` and `ChildByName` (detach, name reuse), a per-request scope docs section and `ExampleScope_perRequest`; verify `go test -run ExampleScope_perRequest .` passes
+- [x] 16.1 RED: regression `TestContainerShutdown_ChildDetachNoGrowth` plus `TestContainerShutdown_ChildDetached`, `TestContainerShutdown_ChildDetachConcurrent` and `TestContainerShutdown_GrandchildDetach` (scenarios "A shut-down child is detached and its name reusable", "Per-request scopes do not accumulate", "Concurrent per-request scopes detach", "A grandchild detaches from its own parent only"); verify `go test -race -run 'TestContainerShutdown_(ChildDetach|GrandchildDetach)' .` fails (1000 children left; "already declared" panic)
+- [x] 16.2 GREEN: the winning child shutdown calls `parent.detachChild(name)` after completion (D3); verify the 16.1 tests pass with goleak clean and `make test` is green
+- [x] 16.3 REFACTOR: Inline the delete in `shutdownChildrenInParallel` into `detachChild`; verify `make test` and `make lint` pass
+- [x] 16.4 Docs: godoc for `Scope.ShutdownWithContext`, `Children` and `ChildByName` (detach, name reuse), a per-request scope docs section and `ExampleScope_perRequest`; verify `go test -run ExampleScope_perRequest .` passes
 
 ## 17. Shared eager values and re-entrant root shutdown
 
