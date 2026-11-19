@@ -397,40 +397,54 @@ func collectionCandidatesFor(source collectionSource, target reflect.Type) []col
 		return collectionCandidatesWithDefaults(source, target)
 	}
 
-	candidates := []collectionCandidate{}
-	seen := excludedNames(source)
-	// the reading scope, only when it sees exports: a single captured
-	// pointer keeps the closure in its allocation size class
+	from := injectorScope(source.from)
+	excluded := excludedNames(source)
+	// the reading scope, only when it sees exports
 	var reader *Scope
-	if from := injectorScope(source.from); chainHasExports(from) {
+	if chainHasExports(from) {
 		reader = from
 	}
 
-	source.from.serviceForEachRec(func(name string, scope *Scope, s any) bool {
-		if _, ok := seen[name]; ok {
-			return true
-		}
-		seen[name] = struct{}{}
+	// each scope's services matching target come from its type-match cache,
+	// so the cost follows the matching services, not every visible one; a
+	// name registered in a nearer scope, matching or not, hides farther ones
+	candidates := []collectionCandidate{}
+	var nearer []*Scope
+	for scope, depth := from, scopeDepth(from); scope != nil; scope, depth = scope.parentScope, depth-1 {
+		for _, match := range scope.matchesFor(target) {
+			if _, ok := excluded[match.name]; ok || shadowedByNearer(nearer, match.name) {
+				continue
+			}
+			service := match.service.(serviceWrapperAny) //nolint:errcheck,forcetypeassert // matchesFor lists service wrappers only
+			if service.getServiceType() == ServiceTypeAlias && excludedAlias(match.service, reader) {
+				continue
+			}
 
-		// inlined newCollectionCandidate: this walk is the hot path
-		service, ok := s.(serviceWrapperAny)
-		if !ok || (service.getServiceType() == ServiceTypeAlias && excludedAlias(s, reader)) || !serviceCanCastToType(s, target) {
-			return true
+			candidates = append(candidates, collectionCandidate{
+				name:     match.name,
+				depth:    depth,
+				regIndex: match.regIndex,
+				scope:    scope,
+				service:  match.service,
+			})
 		}
-
-		candidates = append(candidates, collectionCandidate{
-			name:     name,
-			depth:    scopeDepth(scope),
-			regIndex: service.getRegistrationIndex(),
-			scope:    scope,
-			service:  s,
-		})
-		return true
-	})
+		nearer = append(nearer, scope)
+	}
 
 	slices.SortFunc(candidates, func(a, b collectionCandidate) int { return a.compare(b.placement) })
 
 	return candidates
+}
+
+// shadowedByNearer reports whether one of the nearer scopes registers name.
+func shadowedByNearer(nearer []*Scope, name string) bool {
+	for _, scope := range nearer {
+		if scope.serviceExist(name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // collectionCandidatesWithDefaults is collectionCandidatesFor with the rules
