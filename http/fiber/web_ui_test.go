@@ -90,6 +90,7 @@ func TestWebUI_RenderFailureGeneric500(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, c.Response().StatusCode())
 	assert.NotContains(t, string(c.Response().Body()), webuitest.RenderFailurePath)
 	assert.Equal(t, webuitest.NoSniff, string(c.Response().Header.Peek("X-Content-Type-Options")))
+	assert.Equal(t, webuitest.ContentTypeText, string(c.Response().Header.ContentType()))
 }
 
 // mountWith mounts the UI for root on the fiber group webuitest.BasePath with opts.
@@ -168,4 +169,16 @@ func TestWebUI_ErrorHandler(t *testing.T) {
 			webuitest.AssertRecorded(t, &other, 0)
 		})
 	}
+}
+
+func TestWebUI_RootBasePath(t *testing.T) {
+	t.Parallel()
+	webuitest.RootBasePath(t, func(t *testing.T, root doger.Injector) webuitest.Doer {
+		t.Helper()
+
+		app := fiber.New()
+		Use(app, "/", root)
+
+		return appDoer(t, app)
+	})
 }

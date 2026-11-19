@@ -14,6 +14,7 @@ import (
 // The defensive headers every UI response carries.
 const (
 	ContentTypeHTML       = "text/html; charset=utf-8"
+	ContentTypeText       = "text/plain; charset=utf-8"
 	ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
 	NoSniff               = "nosniff"
 	NoStore               = "no-store"

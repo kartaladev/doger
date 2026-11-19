@@ -1,12 +1,12 @@
 package dogergin
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
+	"github.com/kartaladev/doger/http/internal/webui"
 )
 
 // Use integrates the doger library's web-based debugging interface with a Gin router.
@@ -53,23 +53,22 @@ func Use(router *gin.RouterGroup, injector doger.Injector, opts ...dogerhttp.Opt
 }
 
 func use(router *gin.RouterGroup, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
-	basePathDo := router.BasePath()
+	base := webui.Base(router.BasePath())
 
 	router.Handle("GET", "", func(c *gin.Context) {
-		output, err := pages.index(basePathDo, opts...)
+		output, err := pages.index(base, opts...)
 		response(c, output, err, opts)
 	})
 
 	router.Handle("GET", "/scope", func(c *gin.Context) {
 		scopeID := c.Query("scope_id")
 		if scopeID == "" {
-			target := fmt.Sprintf("%s/scope?scope_id=%s", basePathDo, injector.ID())
 			dogerhttp.WriteHeaders(c.Writer.Header())
-			c.Redirect(http.StatusFound, target)
+			c.Redirect(http.StatusFound, webui.ScopeLink(base, injector.ID()))
 			return
 		}
 
-		output, err := pages.scopeTree(basePathDo, injector, scopeID, opts...)
+		output, err := pages.scopeTree(base, injector, scopeID, opts...)
 		response(c, output, err, opts)
 	})
 
@@ -78,12 +77,12 @@ func use(router *gin.RouterGroup, injector doger.Injector, pages renderer, opts 
 		serviceName := c.Query("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := pages.serviceList(basePathDo, injector, opts...)
+			output, err := pages.serviceList(base, injector, opts...)
 			response(c, output, err, opts)
 			return
 		}
 
-		output, err := pages.service(basePathDo, injector, scopeID, serviceName, opts...)
+		output, err := pages.service(base, injector, scopeID, serviceName, opts...)
 		response(c, output, err, opts)
 	})
 }
@@ -92,7 +91,7 @@ func use(router *gin.RouterGroup, injector doger.Injector, pages renderer, opts 
 // render: the error text never reaches the client, only the error handler
 // of opts.
 func response(c *gin.Context, data string, err error, opts []dogerhttp.Option) {
-	dogerhttp.WritePage(c.Writer, c.Request, data, err, opts...)
+	webui.WritePage(c.Writer, c.Request, data, err, webui.Resolve(opts))
 }
 
 // renderer renders the pages of the UI. Tests replace a page to make it fail.

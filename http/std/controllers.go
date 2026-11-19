@@ -1,11 +1,12 @@
 package dogerhttpstd
 
 import (
-	"fmt"
 	"net/http"
+	"path"
 
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
+	"github.com/kartaladev/doger/http/internal/webui"
 )
 
 // Use creates an HTTP handler for the doger library's web-based debugging interface
@@ -79,22 +80,22 @@ var defaultRenderer = renderer{
 }
 
 func use(basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) http.Handler {
+	base := webui.Base(basePath)
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		output, err := pages.index(basePath, opts...)
+		output, err := pages.index(base, opts...)
 		response(w, r, output, err, opts)
 	})
 
 	mux.HandleFunc("GET /scope", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		if scopeID == "" {
-			target := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
-			http.Redirect(w, r, target, http.StatusFound)
+			http.Redirect(w, r, webui.ScopeLink(base, injector.ID()), http.StatusFound)
 			return
 		}
 
-		output, err := pages.scopeTree(basePath, injector, scopeID, opts...)
+		output, err := pages.scopeTree(base, injector, scopeID, opts...)
 		response(w, r, output, err, opts)
 	})
 
@@ -103,22 +104,32 @@ func use(basePath string, injector doger.Injector, pages renderer, opts []dogerh
 		serviceName := r.URL.Query().Get("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := pages.serviceList(basePath, injector, opts...)
+			output, err := pages.serviceList(base, injector, opts...)
 			response(w, r, output, err, opts)
 			return
 		}
 
-		output, err := pages.service(basePath, injector, scopeID, serviceName, opts...)
+		output, err := pages.service(base, injector, scopeID, serviceName, opts...)
 		response(w, r, output, err, opts)
 	})
 
-	return http.StripPrefix(basePath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.StripPrefix(base, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		dogerhttp.WriteHeaders(w.Header())
 
-		if r.URL.Path == "" {
+		p := r.URL.Path
+		if p == "" {
 			// The base path itself is the home page. StripPrefix gave r its
 			// own URL, so this does not change the caller's request.
-			r.URL.Path = "/"
+			p = "/"
+			r.URL.Path = p
+		}
+
+		if p[0] != '/' || path.Clean(p) != p {
+			// A path the mux would clean, such as "//scope", "/../x" or the
+			// "X" left of "/debug/dogerX", would get a redirect that drops
+			// the base path: answer 404 instead.
+			http.NotFound(w, r)
+			return
 		}
 
 		mux.ServeHTTP(w, r)
@@ -129,5 +140,5 @@ func use(basePath string, injector doger.Injector, pages renderer, opts []dogerh
 // render: the error text never reaches the client, only the error handler
 // of opts.
 func response(w http.ResponseWriter, r *http.Request, output string, err error, opts []dogerhttp.Option) {
-	dogerhttp.WritePage(w, r, output, err, opts...)
+	webui.WritePage(w, r, output, err, webui.Resolve(opts))
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/kartaladev/doger"
@@ -158,6 +159,38 @@ func TestWebUI_ErrorHandler(t *testing.T) {
 			webuitest.AssertGeneric500(t, resp)
 			webuitest.AssertRecorded(t, &record, tt.calls)
 			webuitest.AssertRecorded(t, &other, 0)
+		})
+	}
+}
+
+func TestWebUI_RootBasePath(t *testing.T) {
+	t.Parallel()
+	webuitest.RootBasePath(t, func(t *testing.T, root doger.Injector) webuitest.Doer {
+		t.Helper()
+
+		return webuitest.HandlerDoer(Use("/", root))
+	})
+}
+
+func TestWebUI_RedirectsStayUnderBasePath(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{
+		webuitest.BasePath + "//scope",
+		webuitest.BasePath + "/../x",
+		webuitest.BasePath + "X",
+	} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+
+			resp := webuitest.Get(t, mount(t, doger.New()), path)
+			if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+				assert.True(t, strings.HasPrefix(resp.Header.Get("Location"), webuitest.BasePath+"/"),
+					"%d redirect to %q leaves the base path", resp.StatusCode, resp.Header.Get("Location"))
+				return
+			}
+
+			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 		})
 	}
 }

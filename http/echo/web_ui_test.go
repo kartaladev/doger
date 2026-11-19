@@ -151,3 +151,15 @@ func TestWebUI_ErrorHandler(t *testing.T) {
 		})
 	}
 }
+
+func TestWebUI_RootBasePath(t *testing.T) {
+	t.Parallel()
+	webuitest.RootBasePath(t, func(t *testing.T, root doger.Injector) webuitest.Doer {
+		t.Helper()
+
+		e := echo.New()
+		Use(e.Group(""), "/", root)
+
+		return webuitest.HandlerDoer(e)
+	})
+}

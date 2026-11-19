@@ -1,11 +1,11 @@
 package dogerhttp
 
 import (
-	"net/url"
 	"slices"
 	"strconv"
 
 	"github.com/kartaladev/doger"
+	"github.com/kartaladev/doger/http/internal/webui"
 )
 
 // invokedAt returns where service was provided, as "<path>:<line>", once it
@@ -17,7 +17,7 @@ func invokedAt(scope doger.Injector, service doger.ExplainServiceOutput, o pageO
 	}
 
 	location := service.Invoked.File + ":" + strconv.Itoa(service.Invoked.Line)
-	if o.fullSourcePaths {
+	if o.FullSourcePaths {
 		return location
 	}
 
@@ -31,27 +31,12 @@ func isInvoked(scope doger.Injector, service doger.ExplainServiceOutput) bool {
 	})
 }
 
-// pageLink returns the link to page under basePath with query. The path is
-// escaped as a URL path and the query values with URL query escaping.
-func pageLink(basePath, page string, query url.Values) string {
-	u := url.URL{Path: basePath + page, RawQuery: query.Encode()}
-
-	return u.String()
-}
-
-// scopeLink returns the link to the scope tree page of scopeID.
-func scopeLink(basePath, scopeID string) string {
-	return pageLink(basePath, "/scope", url.Values{"scope_id": {scopeID}})
-}
-
-// serviceLink returns the link to the page of the service serviceName of
-// scopeID.
-func serviceLink(basePath, scopeID, serviceName string) string {
-	return pageLink(basePath, "/service", url.Values{
-		"scope_id":     {scopeID},
-		"service_name": {serviceName},
-	})
-}
+// The links of the pages, shared with the adapters' redirects.
+var (
+	pageLink    = webui.Link
+	scopeLink   = webui.ScopeLink
+	serviceLink = webui.ServiceLink
+)
 
 // menuLinks are the links of the menu shown on every page.
 type menuLinks struct {

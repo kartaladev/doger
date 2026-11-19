@@ -1,12 +1,12 @@
 package dogerfiber
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
+	"github.com/kartaladev/doger/http/internal/webui"
 )
 
 // Use integrates the doger library's web-based debugging interface with a Fiber router.
@@ -53,20 +53,21 @@ func Use(router fiber.Router, basePath string, injector doger.Injector, opts ...
 }
 
 func use(router fiber.Router, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
+	base := webui.Base(basePath)
+
 	router.Get("", func(c *fiber.Ctx) error {
-		output, err := pages.index(basePath, opts...)
+		output, err := pages.index(base, opts...)
 		return response(c, output, err, opts)
 	})
 
 	router.Get("/scope", func(c *fiber.Ctx) error {
 		scopeID := c.Query("scope_id")
 		if scopeID == "" {
-			target := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
 			writeHeaders(c)
-			return c.Redirect(target, http.StatusFound)
+			return c.Redirect(webui.ScopeLink(base, injector.ID()), http.StatusFound)
 		}
 
-		output, err := pages.scopeTree(basePath, injector, scopeID, opts...)
+		output, err := pages.scopeTree(base, injector, scopeID, opts...)
 		return response(c, output, err, opts)
 	})
 
@@ -75,11 +76,11 @@ func use(router fiber.Router, basePath string, injector doger.Injector, pages re
 		serviceName := c.Query("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := pages.serviceList(basePath, injector, opts...)
+			output, err := pages.serviceList(base, injector, opts...)
 			return response(c, output, err, opts)
 		}
 
-		output, err := pages.service(basePath, injector, scopeID, serviceName, opts...)
+		output, err := pages.service(base, injector, scopeID, serviceName, opts...)
 		return response(c, output, err, opts)
 	})
 }
@@ -97,12 +98,15 @@ func writeHeaders(c *fiber.Ctx) {
 
 // response writes data as the page, or a generic 500 when it failed to
 // render: the error text never reaches the client nor Fiber's error
-// handler, only the error handler of opts, with c.UserContext().
+// handler, only the error handler of opts, with c.UserContext(). The 500 is
+// plain text, as on the other adapters.
 func response(c *fiber.Ctx, data string, err error, opts []dogerhttp.Option) error {
 	writeHeaders(c)
 
 	if err != nil {
-		dogerhttp.ReportError(c.UserContext(), err, opts...)
+		webui.ReportError(c.UserContext(), err, webui.Resolve(opts))
+		c.Set(fiber.HeaderContentType, "text/plain; charset=utf-8")
+
 		return c.Status(http.StatusInternalServerError).SendString(http.StatusText(http.StatusInternalServerError))
 	}
 

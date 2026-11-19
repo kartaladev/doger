@@ -1,12 +1,12 @@
 package dogerchi
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
+	"github.com/kartaladev/doger/http/internal/webui"
 )
 
 // Use integrates the doger library's web-based debugging interface with a Chi router.
@@ -55,35 +55,36 @@ func Use(router *chi.Mux, basePath string, injector doger.Injector, opts ...doge
 }
 
 func use(router *chi.Mux, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
-	router.Get(basePath, func(w http.ResponseWriter, r *http.Request) {
-		output, err := pages.index(basePath, opts...)
+	base := webui.Base(basePath)
+
+	router.Get(webui.HomeRoute(base), func(w http.ResponseWriter, r *http.Request) {
+		output, err := pages.index(base, opts...)
 		response(w, r, output, err, opts)
 	})
 
-	router.Get(basePath+"/scope", func(w http.ResponseWriter, r *http.Request) {
+	router.Get(base+"/scope", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		if scopeID == "" {
-			target := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
 			dogerhttp.WriteHeaders(w.Header())
-			http.Redirect(w, r, target, http.StatusFound)
+			http.Redirect(w, r, webui.ScopeLink(base, injector.ID()), http.StatusFound)
 			return
 		}
 
-		output, err := pages.scopeTree(basePath, injector, scopeID, opts...)
+		output, err := pages.scopeTree(base, injector, scopeID, opts...)
 		response(w, r, output, err, opts)
 	})
 
-	router.Get(basePath+"/service", func(w http.ResponseWriter, r *http.Request) {
+	router.Get(base+"/service", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		serviceName := r.URL.Query().Get("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := pages.serviceList(basePath, injector, opts...)
+			output, err := pages.serviceList(base, injector, opts...)
 			response(w, r, output, err, opts)
 			return
 		}
 
-		output, err := pages.service(basePath, injector, scopeID, serviceName, opts...)
+		output, err := pages.service(base, injector, scopeID, serviceName, opts...)
 		response(w, r, output, err, opts)
 	})
 }
@@ -92,7 +93,7 @@ func use(router *chi.Mux, basePath string, injector doger.Injector, pages render
 // render: the error text never reaches the client, only the error handler
 // of opts.
 func response(w http.ResponseWriter, r *http.Request, data string, err error, opts []dogerhttp.Option) {
-	dogerhttp.WritePage(w, r, data, err, opts...)
+	webui.WritePage(w, r, data, err, webui.Resolve(opts))
 }
 
 // renderer renders the pages of the UI. Tests replace a page to make it fail.

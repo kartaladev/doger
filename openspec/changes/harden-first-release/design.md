@@ -185,7 +185,7 @@ Additional breaks and changes found while writing the specs:
 | Before | After | Migration |
 |---|---|---|
 | An error panic value from a provider returned as is | Wrapped: matches `ErrProviderPanic` and the original | Keep using `errors.Is`/`errors.As`; don't compare with `==` |
-| Web UI page functions and adapter `Use` | Gain a variadic `...dogerhttp.Option` | Source-compatible; no change needed |
+| Web UI page functions and adapter `Use` | Gain a variadic `...dogerhttp.Option` | Call sites keep compiling; code storing the functions in typed func variables breaks (apidiff: incompatible) and must update the variable type |
 | `ServiceDescription` JSON keys `ScopeID`, `ScopeName`, `Service` | `scopeId`, `scopeName`, `service` (also changes Explain JSON) | Update JSON consumers |
 | `Stage` without a text form | `MarshalText` gives `before-start` / `after-start` | None |
 | `HealthCheckTimeout` 0 meaning none on every forced path | 10s on `RootScope.HealthCheck`, `Scope.HealthCheck` and the per-service functions (`HealthCheckSingleTimeout` 0 inherits it); `HealthCheckGlobalTimeout` ≤ 0 means no global bound | Set a negative value for unbounded |
@@ -202,7 +202,7 @@ Additional breaks and changes found while writing the specs:
 
 ### D12. Web UI
 - **Templates.** One `html/template` set, parsed once at package init, with recursive `{{template}}` blocks for the trees. No pre-rendered strings are concatenated. Links use `url.Values`.
-- **Signatures.** The exported page functions keep their signatures.
+- **Signatures.** The exported page functions gain a variadic `...dogerhttp.Option`. Call sites keep compiling, but code storing the functions in typed func variables breaks.
 - **Response headers.** Every adapter's response helper sets these four headers:
   - `Content-Type: text/html; charset=utf-8`
   - `X-Content-Type-Options: nosniff`

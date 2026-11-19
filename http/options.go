@@ -3,33 +3,28 @@ package dogerhttp
 import (
 	"context"
 	"strings"
+
+	"github.com/kartaladev/doger/http/internal/webui"
 )
 
 // Option configures the debug UI. Pass options to an adapter's Use or to a
 // page function. Without options the UI shows shortened source paths and
 // discards render errors.
-type Option func(*pageOptions)
+type Option func(*webui.Options)
 
-type pageOptions struct {
-	fullSourcePaths bool
-	errorHandler    func(ctx context.Context, err error)
-}
+// pageOptions are the resolved options the page builders read.
+type pageOptions = webui.Options
 
 func newPageOptions(opts []Option) pageOptions {
-	o := pageOptions{}
-	for _, opt := range opts {
-		opt(&o)
-	}
-
-	return o
+	return webui.Resolve(opts)
 }
 
 // WithFullSourcePaths shows the full recorded path of the file where a
 // service was provided, instead of the default "<file base name>:<line>",
 // which reveals no directory.
 func WithFullSourcePaths() Option {
-	return func(o *pageOptions) {
-		o.fullSourcePaths = true
+	return func(o *webui.Options) {
+		o.FullSourcePaths = true
 	}
 }
 
@@ -43,21 +38,9 @@ func WithFullSourcePaths() Option {
 // WithErrorHandler given wins. A panicking handler propagates to the
 // framework's recovery.
 func WithErrorHandler(handler func(ctx context.Context, err error)) Option {
-	return func(o *pageOptions) {
-		o.errorHandler = handler
+	return func(o *webui.Options) {
+		o.ErrorHandler = handler
 	}
-}
-
-// ReportError passes err to the handler set with [WithErrorHandler] in opts,
-// if any. Adapters call it once for each page that fails to render, before
-// writing the generic 500.
-func ReportError(ctx context.Context, err error, opts ...Option) {
-	o := newPageOptions(opts)
-	if err == nil || o.errorHandler == nil {
-		return
-	}
-
-	o.errorHandler(ctx, err)
 }
 
 // shortenSourcePath returns location, a "<path>:<line>" source location,

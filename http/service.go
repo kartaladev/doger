@@ -47,29 +47,36 @@ func ServiceHTML(basePath string, injector doger.Injector, scopeID string, servi
 		return ServiceListHTML(basePath, injector, opts...)
 	}
 
-	o := newPageOptions(opts)
+	return render("service", newServicePage(basePath, scope.Scope, service, newPageOptions(opts)))
+}
 
-	return render("service", struct {
-		Menu             menuLinks
-		ScopeID          string
-		ScopeName        string
-		ServiceName      string
-		ServiceType      doger.ServiceType
-		ServiceBuildTime time.Duration
-		Invoked          string
-		Dependencies     []dependencyEntry
-		Dependents       []dependencyEntry
-	}{
+// servicePage is the data of the service page.
+type servicePage struct {
+	Menu             menuLinks
+	ScopeID          string
+	ScopeName        string
+	ServiceName      string
+	ServiceType      doger.ServiceType
+	ServiceBuildTime time.Duration
+	Invoked          string
+	Dependencies     []dependencyEntry
+	Dependents       []dependencyEntry
+}
+
+// newServicePage returns the data of the page of service, as seen from
+// scope.
+func newServicePage(basePath string, scope doger.Injector, service doger.ExplainServiceOutput, o pageOptions) servicePage {
+	return servicePage{
 		Menu:             newMenuLinks(basePath),
 		ScopeID:          service.ScopeID,
 		ScopeName:        service.ScopeName,
 		ServiceName:      service.ServiceName,
 		ServiceType:      service.ServiceType,
 		ServiceBuildTime: service.ServiceBuildTime,
-		Invoked:          invokedAt(scope.Scope, service, o),
+		Invoked:          invokedAt(scope, service, o),
 		Dependencies:     dependencyEntries(basePath, service.Dependencies),
 		Dependents:       dependencyEntries(basePath, service.Dependents),
-	})
+	}
 }
 
 // ServiceListHTML generates an HTML page that displays a list of all services across all scopes.

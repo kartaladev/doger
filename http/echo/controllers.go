@@ -1,11 +1,11 @@
 package dogerecho
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
+	"github.com/kartaladev/doger/http/internal/webui"
 	"github.com/labstack/echo/v4"
 )
 
@@ -53,20 +53,21 @@ func Use(router *echo.Group, basePath string, injector doger.Injector, opts ...d
 }
 
 func use(router *echo.Group, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
+	base := webui.Base(basePath)
+
 	router.GET("", func(c echo.Context) error {
-		output, err := pages.index(basePath, opts...)
+		output, err := pages.index(base, opts...)
 		return response(c, output, err, opts)
 	})
 
 	router.GET("/scope", func(c echo.Context) error {
 		scopeID := c.QueryParam("scope_id")
 		if scopeID == "" {
-			target := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
 			dogerhttp.WriteHeaders(c.Response().Header())
-			return c.Redirect(http.StatusFound, target)
+			return c.Redirect(http.StatusFound, webui.ScopeLink(base, injector.ID()))
 		}
 
-		output, err := pages.scopeTree(basePath, injector, scopeID, opts...)
+		output, err := pages.scopeTree(base, injector, scopeID, opts...)
 		return response(c, output, err, opts)
 	})
 
@@ -75,11 +76,11 @@ func use(router *echo.Group, basePath string, injector doger.Injector, pages ren
 		serviceName := c.QueryParam("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := pages.serviceList(basePath, injector, opts...)
+			output, err := pages.serviceList(base, injector, opts...)
 			return response(c, output, err, opts)
 		}
 
-		output, err := pages.service(basePath, injector, scopeID, serviceName, opts...)
+		output, err := pages.service(base, injector, scopeID, serviceName, opts...)
 		return response(c, output, err, opts)
 	})
 }
@@ -88,7 +89,7 @@ func use(router *echo.Group, basePath string, injector doger.Injector, pages ren
 // render: the error text never reaches the client nor Echo's error handler,
 // only the error handler of opts.
 func response(c echo.Context, data string, err error, opts []dogerhttp.Option) error {
-	dogerhttp.WritePage(c.Response(), c.Request(), data, err, opts...)
+	webui.WritePage(c.Response(), c.Request(), data, err, webui.Resolve(opts))
 
 	return nil
 }

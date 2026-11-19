@@ -131,4 +131,5 @@ func AssertGeneric500(t *testing.T, resp Response) {
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 	assert.NotContains(t, resp.Body, RenderFailurePath)
 	assert.Equal(t, NoSniff, resp.Header.Get("X-Content-Type-Options"))
+	assert.Equal(t, ContentTypeText, resp.Header.Get("Content-Type"))
 }
