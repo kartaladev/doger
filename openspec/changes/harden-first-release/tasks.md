@@ -300,9 +300,9 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 43. Web UI escapes names and links
 
-- [ ] 43.1 RED: add `TestPages_EscapeNames` and `TestPages_BasePathEscaped` in `http/pages_test.go` and `TestWebUI_HostileNamesEscaped`, `TestWebUI_LinkOpensNamedService`, `TestWebUI_LinksResolve` and `TestWebUI_NoReflection` in `http/{std,gin,echo,fiber,chi}/web_ui_test.go` (web-ui escaping scenarios); verify `go test -race ./...` fails on the escape assertions in `http` and each adapter module
-- [ ] 43.2 GREEN: replace `text/template` with one `html/template` set parsed at init using recursive `{{template}}` blocks and `url.Values` links (D12); verify the 43.1 tests pass in every module and `make test-all` (or a per-module loop until group 46) is green
-- [ ] 43.3 REFACTOR: Inline Function `fromTemplate`, Extract Function `scopeLink`/`serviceLink` and Move Function for the page data builders; verify the per-module tests and lint pass
+- [x] 43.1 RED: add `TestPages_EscapeNames` and `TestPages_BasePathEscaped` in `http/pages_test.go` and `TestWebUI_HostileNamesEscaped`, `TestWebUI_LinkOpensNamedService`, `TestWebUI_LinksResolve` and `TestWebUI_NoReflection` in `http/{std,gin,echo,fiber,chi}/web_ui_test.go` (web-ui escaping scenarios); verify `go test -race ./...` fails on the escape assertions in `http` and each adapter module
+- [x] 43.2 GREEN: replace `text/template` with one `html/template` set parsed at init using recursive `{{template}}` blocks and `url.Values` links (D12); verify the 43.1 tests pass in every module and `make test-all` (or a per-module loop until group 46) is green
+- [x] 43.3 REFACTOR: Inline Function `fromTemplate`, Extract Function `scopeLink`/`serviceLink` and Move Function for the page data builders; verify the per-module tests and lint pass
 
 ## 44. Web UI headers, read-only routes and error bodies
 

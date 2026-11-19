@@ -1,6 +1,8 @@
 package dogerhttp
 
 import (
+	"time"
+
 	"github.com/kartaladev/doger"
 )
 
@@ -23,6 +25,7 @@ import (
 //   - Navigation to other views
 //
 // If the scope or service is not found, it falls back to the service list page.
+// Every name is rendered as escaped text.
 //
 // Example:
 //
@@ -47,102 +50,27 @@ func ServiceHTML(basePath string, injector doger.Injector, scopeID string, servi
 		invoked = service.Invoked.String()
 	}
 
-	return fromTemplate(
-		`<!DOCTYPE html>
-<html>
-<head>
-	<title>Inspect service - doger</title>
-	<style>
-	</style>
-</head>
-<body>
-	<h1>Services by scope</h1>
-	<small>
-		Menu:
-		<a href="{{.BasePath}}">Home</a>
-		-
-		<a href="{{$.BasePath}}/scope">Scopes</a>
-		-
-		<a href="{{$.BasePath}}/service">Services</a>
-	</small>
-
-	<p>
-		Scope id: {{.ScopeID}}
-		<br>
-		Scope name: {{.ScopeName}}
-		<br>
-		Service name: {{.ServiceName}}
-		<br>
-		Service type: {{.ServiceType}}
-		{{if .ServiceBuildTime}}
-			<br>
-			Service build time: {{.ServiceBuildTime}}
-		{{end}}
-		<br>
-		Invoked at: {{.Invoked}}
-	</p>
-
-	<h2>Dependencies:</h2>
-	{{.Dependencies}}
-
-	<h2>Dependents:</h2>
-	{{.Dependents}}
-</body>
-</html>`,
-		map[string]any{
-			keyBasePath:         basePath,
-			keyScopeID:          service.ScopeID,
-			keyScopeName:        service.ScopeName,
-			keyServiceName:      service.ServiceName,
-			keyServiceType:      service.ServiceType,
-			keyServiceBuildTime: service.ServiceBuildTime,
-			keyInvoked:          invoked,
-			keyDependencies:     serviceToHTML(basePath, service.Dependencies),
-			keyDependents:       serviceToHTML(basePath, service.Dependents),
-		},
-	)
-}
-
-// serviceToHTML converts a list of service dependencies to HTML representation.
-// This function generates clickable links for each service in the dependency list,
-// allowing users to navigate to detailed views of related services.
-//
-// Parameters:
-//   - basePath: The base URL path for the web interface
-//   - services: List of service dependency outputs to convert
-//
-// Returns the HTML string representation of the service list.
-//
-// Each service is rendered as a clickable link that navigates to the service
-// detail page, with recursive dependencies shown as nested lists.
-func serviceToHTML(basePath string, services []doger.ExplainServiceDependencyOutput) string {
-	output, _ := fromTemplate(
-		`
-		<ul class="services">
-			{{range .Services}}
-				<li class="service">
-					<a href="{{$.BasePath}}/service?scope_id={{.ScopeID}}&service_name={{.ServiceName}}">
-						{{.ServiceName}}
-					</a>
-					{{if .Recursive}}
-						{{.Recursive}}
-					{{end}}
-				</li>
-			{{end}}
-		</ul>
-	`,
-		map[string]any{
-			keyBasePath: basePath,
-			keyServices: mAp(services, func(service doger.ExplainServiceDependencyOutput) map[string]any {
-				return map[string]any{
-					keyScopeID:     service.ScopeID,
-					keyServiceName: service.Service,
-					keyRecursive:   serviceToHTML(basePath, service.Recursive),
-				}
-			}),
-		},
-	)
-	return output
+	return render("service", struct {
+		Menu             menuLinks
+		ScopeID          string
+		ScopeName        string
+		ServiceName      string
+		ServiceType      doger.ServiceType
+		ServiceBuildTime time.Duration
+		Invoked          string
+		Dependencies     []dependencyEntry
+		Dependents       []dependencyEntry
+	}{
+		Menu:             newMenuLinks(basePath),
+		ScopeID:          service.ScopeID,
+		ScopeName:        service.ScopeName,
+		ServiceName:      service.ServiceName,
+		ServiceType:      service.ServiceType,
+		ServiceBuildTime: service.ServiceBuildTime,
+		Invoked:          invoked,
+		Dependencies:     dependencyEntries(basePath, service.Dependencies),
+		Dependents:       dependencyEntries(basePath, service.Dependents),
+	})
 }
 
 // ServiceListHTML generates an HTML page that displays a list of all services across all scopes.
@@ -161,6 +89,8 @@ func serviceToHTML(basePath string, services []doger.ExplainServiceDependencyOut
 //   - Navigation to other views
 //   - Service type indicators and capabilities
 //
+// Every scope and service name is rendered as escaped text.
+//
 // Example:
 //
 //	html, err := http.ServiceListHTML("/debug/di", injector)
@@ -171,103 +101,13 @@ func serviceToHTML(basePath string, services []doger.ExplainServiceDependencyOut
 func ServiceListHTML(basePath string, injector doger.Injector) (string, error) {
 	scopes := getAllScopes(injector)
 
-	return fromTemplate(
-		`<!DOCTYPE html>
-<html>
-	<head>
-		<title>Inspect service - doger</title>
-		<style>
-		.scope {
-			padding-top: 10px;
-			padding-bottom: 10px;
-		}
-		</style>
-	</head>
-	<body>
-		<h1>Service description</h1>
-		<small>
-			Menu:
-			<a href="{{.BasePath}}">Home</a>
-			-
-			<a href="{{$.BasePath}}/scope">Scopes</a>
-			-
-			<a href="{{$.BasePath}}/service">Services</a>
-		</small>
-
-		<ul class="scopes">
-			{{range .Scopes}}
-				<li class="scope">
-					{{.}}
-				</li>
-			{{end}}
-		</ul>
-	</body>
-</html>`,
-		map[string]any{
-			keyBasePath: basePath,
-			keyScopes: mAp(scopes, func(item doger.ExplainInjectorScopeOutput) string {
-				return serviceListScopeToHTML(basePath, item)
-			}),
-		},
-	)
-}
-
-func serviceListScopeToHTML(basePath string, description doger.ExplainInjectorScopeOutput) string {
-	html, _ := fromTemplate(
-		`
-			Scope:
-			<a href="{{$.BasePath}}/scope?scope_id={{.ScopeID}}">
-				{{.ScopeName}}
-			</a>
-
-			{{if .Services}}
-				<ul class="services">
-					{{range .Services}}
-						<li class="service">
-							{{.}}
-						</li>
-					{{end}}
-				</ul>
-			{{end}}
-		`,
-		map[string]any{
-			keyBasePath:  basePath,
-			keyScopeID:   description.ScopeID,
-			keyScopeName: description.ScopeName,
-			keyServices: mAp(description.Services, func(item doger.ExplainInjectorServiceOutput) string {
-				return serviceListServiceToHTML(basePath, description.ScopeID, item)
-			}),
-		},
-	)
-	return html
-}
-
-func serviceListServiceToHTML(basePath string, scopeID string, description doger.ExplainInjectorServiceOutput) string {
-	featuresIcons := ""
-
-	if description.IsHealthchecker {
-		featuresIcons += " 🫀"
-	}
-
-	if description.IsShutdowner {
-		featuresIcons += " 🙅"
-	}
-
-	html, _ := fromTemplate(
-		`
-			{{.ServiceTypeIcon}}
-			<a href="{{$.BasePath}}/service?scope_id={{.ScopeID}}&service_name={{.ServiceName}}">
-				{{.ServiceName}}
-			</a>
-			{{.FeaturesIcons}}
-		`,
-		map[string]any{
-			keyBasePath:        basePath,
-			keyScopeID:         scopeID,
-			keyServiceName:     description.ServiceName,
-			keyServiceTypeIcon: description.ServiceTypeIcon,
-			keyFeaturesIcons:   featuresIcons,
-		},
-	)
-	return html
+	return render("serviceList", struct {
+		Menu   menuLinks
+		Scopes []scopeEntry
+	}{
+		Menu: newMenuLinks(basePath),
+		Scopes: mAp(scopes, func(item doger.ExplainInjectorScopeOutput) scopeEntry {
+			return serviceListScopeEntry(basePath, item)
+		}),
+	})
 }

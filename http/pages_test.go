@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/kartaladev/doger"
+	"github.com/kartaladev/doger/http/internal/webuitest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -214,4 +215,93 @@ func TestPagesHTML_UpstreamAttributionOnly(t *testing.T) {
 			assert.Equal(t, tt.count, strings.Count(renderPage(t, tt.page), "samber/do"))
 		})
 	}
+}
+
+func TestPages_EscapeNames(t *testing.T) {
+	t.Parallel()
+
+	const basePath = "/debug/doger"
+
+	tests := []struct {
+		name     string
+		function string
+		service  string
+		escaped  string
+	}{
+		{
+			name:     "ServiceListHTML/script",
+			function: "ServiceListHTML",
+			service:  "<script>alert(1)</script>",
+			escaped:  "&lt;script&gt;alert(1)&lt;/script&gt;",
+		},
+		{
+			name:     "ScopeTreeHTML/script",
+			function: "ScopeTreeHTML",
+			service:  "<script>alert(1)</script>",
+			escaped:  "&lt;script&gt;alert(1)&lt;/script&gt;",
+		},
+		{
+			name:     "ServiceHTML/img_onerror",
+			function: "ServiceHTML",
+			service:  `"><img src=x onerror=alert(1)>`,
+			escaped:  "&#34;&gt;&lt;img src=x onerror=alert(1)&gt;",
+		},
+		{
+			name:     "ServiceListHTML/plain",
+			function: "ServiceListHTML",
+			service:  "plain-name",
+			escaped:  "plain-name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			root := doger.New()
+			doger.ProvideNamed(root, tt.service, func(doger.Injector) (string, error) { return "v", nil })
+
+			var (
+				html string
+				err  error
+			)
+			switch tt.function {
+			case "ServiceListHTML":
+				html, err = ServiceListHTML(basePath, root)
+			case "ScopeTreeHTML":
+				html, err = ScopeTreeHTML(basePath, root, root.ID())
+			case "ServiceHTML":
+				html, err = ServiceHTML(basePath, root, root.ID(), tt.service)
+			}
+
+			require.NoError(t, err)
+			if tt.service != tt.escaped {
+				is.NotContains(html, tt.service)
+			}
+			is.Contains(html, tt.escaped)
+			webuitest.AssertNoInjectedMarkup(t, html)
+		})
+	}
+}
+
+func TestPages_BasePathEscaped(t *testing.T) {
+	t.Parallel()
+
+	html, err := IndexHTML(`/x"><script>alert(1)</script>`)
+	require.NoError(t, err)
+
+	webuitest.AssertNoInjectedMarkup(t, html)
+
+	internal := 0
+	for _, link := range webuitest.Links(html) {
+		if strings.HasPrefix(link.Href, "https://") {
+			continue // the static links to the project's resources
+		}
+
+		internal++
+		assert.True(t, strings.HasPrefix(link.Href, "/x%22%3E%3Cscript%3Ealert%281%29%3C/script%3E"),
+			"link %q does not start with the escaped base path", link.Href)
+	}
+	assert.Equal(t, 2, internal, "the scope and service links")
 }

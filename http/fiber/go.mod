@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/gofiber/fiber/v2 v2.52.16
 	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
+	github.com/stretchr/testify v1.12.1
 )
 
 require (
@@ -20,6 +21,7 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/sys v0.28.0 // indirect
 )
 

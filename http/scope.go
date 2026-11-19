@@ -21,6 +21,8 @@ import (
 //   - Navigation links between different views
 //   - Interactive scope inspection links
 //
+// Every scope and service name is rendered as escaped text.
+//
 // Example:
 //
 //	html, err := http.ScopeTreeHTML("/debug/di", injector, "")
@@ -31,146 +33,13 @@ import (
 func ScopeTreeHTML(basePath string, injector doger.Injector, scopeID string) (string, error) {
 	description := doger.ExplainInjector(injector)
 
-	return fromTemplate(
-		`<!DOCTYPE html>
-<html>
-	<head>
-		<title>Inspect scope tree - doger</title>
-		<style>
-		header {
-			margin-bottom: 40px;
-		}
-		.scopes {
-			margin-left: 10px;
-			padding-top: 10px;
-			padding-bottom: 10px;
-			padding-left: 30px;
-			border-left: 2px solid red;
-		}
-		.services {
-			padding-top: 5px;
-			padding-bottom: 5px;
-		}
-		</style>
-	</head>
-	<body>
-		<h1>Scope description</h1>
-		<small>
-			Menu:
-			<a href="{{.BasePath}}">Home</a>
-			-
-			<a href="{{.BasePath}}/scope">Scopes</a>
-			-
-			<a href="{{.BasePath}}/service">Services</a>
-		</small>
-
-		<header>
-			<p>
-				<b>Spec</b>:
-				<br><br>
-				😴 Lazy service
-				<br>
-				🔁 Eager service
-				<br>
-				🏭 Transient service
-				<br>
-				🔗 Service alias
-				<br>
-				🫀 Implements Healthchecker
-				<br>
-				🙅 Implements Shutdowner
-			</p>
-		</header>
-
-		{{if .Scopes}}
-			<ul class="scopes">
-				{{range .Scopes}}
-					<li class="scope">
-						{{.}}
-					</li>
-				{{end}}
-			</ul>
-		{{end}}
-	</body>
-</html>`,
-		map[string]any{
-			keyBasePath: basePath,
-			keyScopes: mAp(description.DAG, func(item doger.ExplainInjectorScopeOutput) string {
-				return scopeTreeScopeToHTML(basePath, item)
-			}),
-		},
-	)
-}
-
-func scopeTreeScopeToHTML(basePath string, description doger.ExplainInjectorScopeOutput) string {
-	html, _ := fromTemplate(
-		`
-			Scope:
-			<a href="{{.BasePath}}/scope?scope_id={{.ScopeID}}">
-				{{.ScopeName}}
-			</a>
-
-			{{if .Services}}
-				<ul class="services">
-					{{range .Services}}
-						<li class="service">
-							{{.}}
-						</li>
-					{{end}}
-				</ul>
-			{{end}}
-
-			{{if .Scopes}}
-				<ul class="scopes">
-					{{range .Scopes}}
-						<li class="scope">
-							{{.}}
-						</li>
-					{{end}}
-				</ul>
-			{{end}}
-		`,
-		map[string]any{
-			keyBasePath:  basePath,
-			keyScopeID:   description.ScopeID,
-			keyScopeName: description.ScopeName,
-			keyServices: mAp(description.Services, func(item doger.ExplainInjectorServiceOutput) string {
-				return scopeTreeServiceToHTML(basePath, description.ScopeID, item)
-			}),
-			keyScopes: mAp(description.Children, func(item doger.ExplainInjectorScopeOutput) string {
-				return scopeTreeScopeToHTML(basePath, item)
-			}),
-		},
-	)
-	return html
-}
-
-func scopeTreeServiceToHTML(basePath string, scopeID string, description doger.ExplainInjectorServiceOutput) string {
-	featuresIcons := ""
-
-	if description.IsHealthchecker {
-		featuresIcons += " 🫀"
-	}
-
-	if description.IsShutdowner {
-		featuresIcons += " 🙅"
-	}
-
-	html, _ := fromTemplate(
-		`
-			{{.ServiceTypeIcon}}
-			<a href="{{.BasePath}}/service?scope_id={{.ScopeID}}&service_name={{.ServiceName}}">
-				{{.ServiceName}}
-			</a>
-			{{.FeaturesIcons}}
-		`,
-		map[string]any{
-			keyBasePath:        basePath,
-			keyScopeID:         scopeID,
-			keyServiceName:     description.ServiceName,
-			keyServiceTypeIcon: description.ServiceTypeIcon,
-			keyFeaturesIcons:   featuresIcons,
-		},
-	)
-	return html
+	return render("scopeTree", struct {
+		Menu   menuLinks
+		Scopes []scopeEntry
+	}{
+		Menu: newMenuLinks(basePath),
+		Scopes: mAp(description.DAG, func(item doger.ExplainInjectorScopeOutput) scopeEntry {
+			return scopeTreeScopeEntry(basePath, item)
+		}),
+	})
 }

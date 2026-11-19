@@ -10,6 +10,8 @@ require (
 require (
 	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/samber/go-type-to-string v1.8.0 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 )
 
 replace github.com/kartaladev/doger => ../../

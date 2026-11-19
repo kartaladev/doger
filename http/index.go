@@ -14,6 +14,8 @@ package dogerhttp
 //   - Navigation to scope and service inspection pages
 //   - Introduction to the debugging interface
 //
+// The base path is escaped as a URL path in every link.
+//
 // Example:
 //
 //	html, err := http.IndexHTML("/debug/di")
@@ -22,35 +24,5 @@ package dogerhttp
 //	}
 //	fmt.Fprint(w, html)
 func IndexHTML(basePath string) (string, error) {
-	return fromTemplate(
-		`<!DOCTYPE html>
-<html>
-	<head>
-		<title>Dependency injection UI - doger</title>
-	</head>
-	<body>
-		<h1>Welcome to doger UI ✌️</h1>
-		
-		<h2>Introduction</h2>
-		<ul>
-			<li><a href="https://github.com/kartaladev/doger" target="_blank">Repository</a></li>
-			<li><a href="https://github.com/kartaladev/doger/issues" target="_blank">New issue</a></li>
-			<li><a href="https://kartaladev.github.io/doger/" target="_blank">Documentation</a></li>
-			<li><a href="https://pkg.go.dev/github.com/kartaladev/doger" target="_blank">Godoc</a></li>
-			<li><a href="https://github.com/kartaladev/doger/releases" target="_blank">Changelog</a></li>
-			<li><a href="https://github.com/kartaladev/doger/blob/main/LICENSE" target="_blank">License</a></li>
-			<li><a href="https://github.com/samber/do" target="_blank">Upstream project</a></li>
-		</ul>
-
-		<h2>Getting started</h2>
-		<ul>
-			<li><a href="{{.BasePath}}/scope">Inspect scopes</a></li>
-			<li><a href="{{.BasePath}}/service">Inspect services</a></li>
-		</ul>
-	</body>
-</html>`,
-		map[string]any{
-			keyBasePath: basePath,
-		},
-	)
+	return render("index", struct{ Menu menuLinks }{Menu: newMenuLinks(basePath)})
 }
