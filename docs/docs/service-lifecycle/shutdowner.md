@@ -92,6 +92,8 @@ for service, err := range report.Errors {
 - is reported, if it is a built service implementing a [Shutdowner interface](#shutdowner-interfaces): the report holds `ctx.Err()` (`context.Canceled` or `context.DeadlineExceeded`) under the service's name;
 - is dropped: it is removed from its scope, so a later shutdown does not find it.
 
+The call also returns as soon as its context ends, even while a service's `Shutdown` method, or the build of a service, still runs. Each such service is reported with the context's error and abandoned: its `Shutdown` keeps running in the background, and its `HookAfterShutdown` hooks run when it returns. A build that completes after that finds the service shut down: its instance is shut down once and never handed out, and the invoker gets an error matching `doger.ErrShutdown`. With `context.Background()` the call waits for everything.
+
 Any other service (never built, without a `Shutdown` method, an alias, a transient service or an export) has nothing to skip and is removed without an error. The `HookBeforeShutdown` and `HookAfterShutdown` hooks still run for every service reached, skipped or not; `HookAfterShutdown` receives the same error as the report (`nil` when none), so a hook that logs "shut down" should check it. The context can end before the call, during the shutdown (slow services used up the deadline), or while a child scope shutdown waits for a running start; in each case the shutdown proceeds with the ended context and skips the remaining services.
 
 :::caution

@@ -88,3 +88,59 @@ func TestRootScope_ShutdownOnSignalsWithContext_Signal(t *testing.T) {
 	}
 	is.Positive(signalled, "no repeat returned the signal, so the signal branch never ran")
 }
+
+// TestRootScope_ShutdownOnSignalsWithContext_NilContext sends SIGUSR1 to the
+// test process, so it does not run in parallel and no other test uses it.
+func TestRootScope_ShutdownOnSignalsWithContext_NilContext(t *testing.T) {
+	testWithTimeout(t, 10*time.Second)
+	is := assert.New(t)
+
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGUSR1)
+	defer signal.Stop(guard)
+
+	root := New()
+	probe := &ctxShutdownProbe{}
+	ProvideNamed(root, "s", func(Injector) (*ctxShutdownProbe, error) { return probe, nil })
+	MustInvokeNamed[*ctxShutdownProbe](root, "s")
+
+	type result struct {
+		sig      os.Signal
+		report   *ShutdownReport
+		panicked any
+	}
+	done := make(chan result, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- result{panicked: r}
+			}
+		}()
+		//nolint:staticcheck // SA1012: a nil context is the subject of this test
+		sig, report := root.ShutdownOnSignalsWithContext(nil, syscall.SIGUSR1)
+		done <- result{sig: sig, report: report}
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	var got result
+wait:
+	for {
+		require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGUSR1))
+		select {
+		case got = <-done:
+			break wait
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	if !is.Nil(got.panicked, "the helper panicked") {
+		return
+	}
+	is.Equal(syscall.SIGUSR1, got.sig)
+	is.NoError(got.report.Err())
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	if is.Len(probe.ctxs, 1, "Shutdown calls") {
+		is.NoError(probe.ctxs[0].Err())
+	}
+}

@@ -288,6 +288,10 @@ func (s *RootScope) Shutdown() *ShutdownReport { return s.ShutdownWithContext(co
 // context waits for the running shutdown, bounded by its own context. A
 // marked context kept and used after that shutdown completed still returns
 // an empty successful report, not the first report.
+//
+// Deadline: the call returns once ctx ends, even while a service's Shutdown
+// or a build still runs; those services are reported with ctx's error and
+// keep running in the background (see [Scope.ShutdownWithContext]).
 func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 	if ctx == nil {
 		ctx = context.Background()
@@ -478,23 +482,7 @@ func (s *RootScope) rootFailureReport(err error) *ShutdownReport {
 // awaitDone waits until done is closed or ctx ends, and prefers completion:
 // it reports true whenever done is closed, even if ctx has ended too.
 func awaitDone(done <-chan struct{}, ctx context.Context) bool { //nolint:revive // done first mirrors the design
-	select {
-	case <-done:
-		return true
-	default:
-	}
-
-	select {
-	case <-done:
-		return true
-	case <-ctx.Done():
-		select {
-		case <-done:
-			return true
-		default:
-			return false
-		}
-	}
+	return awaitLayer(ctx, done, func(struct{}) {})
 }
 
 // cloneShutdownReport deep-copies a report, so callers cannot alter each other's copy.
@@ -981,8 +969,13 @@ func (s *RootScope) ShutdownOnSignals(signals ...os.Signal) (os.Signal, *Shutdow
 // [RootScope.ShutdownOnSignals]. It returns the signal, or nil when ctx ended
 // first. The shutdown is unbounded: to bound it, wait for the signal yourself
 // ([signal.NotifyContext]) and call [RootScope.ShutdownWithContext] with a
-// new context that has your own deadline.
+// new context that has your own deadline. A nil ctx is context.Background():
+// the call then waits for a signal.
 func (s *RootScope) ShutdownOnSignalsWithContext(ctx context.Context, signals ...os.Signal) (os.Signal, *ShutdownReport) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Make sure there is at least syscall.SIGTERM and os.Interrupt as a signal
 	if len(signals) < 1 {
 		signals = append(signals, syscall.SIGTERM, os.Interrupt)

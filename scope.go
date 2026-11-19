@@ -457,6 +457,15 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // service or an export) gets no error. The HookBeforeShutdown and
 // HookAfterShutdown hooks still run for each of them, the latter with that
 // error (nil when none).
+//
+// The call returns once ctx ends, even while a service's Shutdown, or the
+// build of a service, still runs: each such service is reported with ctx's
+// error and abandoned. Its Shutdown keeps running in the background, and its
+// HookAfterShutdown hooks run when it returns; a build still running then
+// finds the service shut down, so its instance is shut down once and never
+// handed out (the invoker gets an error matching ErrShutdown). With a
+// context that never ends, the call waits for every service and build.
+//
 // To give services time to shut down, pass a context that is still live,
 // for example context.WithTimeout(context.Background(), grace) created when
 // the shutdown begins, not one that has already ended, such as a
@@ -769,31 +778,57 @@ func (s *Scope) shutdownServicesWithoutDependenciesInParallel(ctx context.Contex
 		return &ShutdownReport{Succeed: true, Services: []ServiceDescription{}, Errors: map[ServiceDescription]error{}, ShutdownTime: 0, ServiceShutdownTime: map[ServiceDescription]time.Duration{}}
 	}
 
-	mu := sync.Mutex{}
+	type outcome struct {
+		desc ServiceDescription
+		err  error
+		took time.Duration
+	}
+
+	// each service shuts down on its own goroutine, which sends its outcome
+	// here; the channel holds them all, so a goroutine whose service was
+	// abandoned (D4) still finishes, running its AfterShutdown hooks, after
+	// this call returned
+	outcomes := make(chan outcome, len(serviceNames))
+	// services reached after ctx ended run no Shutdown, only their hooks:
+	// they are waited for, not abandoned
+	waitCtx := ctx
+	if ctx.Err() != nil {
+		waitCtx = context.WithoutCancel(ctx)
+	}
+	for _, name := range serviceNames {
+		go func() {
+			start := s.clock().Now()
+			err := s.shutdownServiceOf(ctx, name, panics)
+			outcomes <- outcome{desc: newServiceDescription(s.id, s.name, name), err: err, took: s.clock().Since(start)}
+		}()
+	}
+
 	services := []ServiceDescription{}
 	errors := map[ServiceDescription]error{}
 	perServiceTimes := map[ServiceDescription]time.Duration{}
-
-	var wg sync.WaitGroup
-
+	pending := make(map[string]struct{}, len(serviceNames))
 	for _, name := range serviceNames {
-		wg.Go(func() {
-			desc := newServiceDescription(s.id, s.name, name)
-			start := s.clock().Now()
-			e := s.shutdownServiceOf(ctx, name, panics)
-			dt := s.clock().Since(start)
-
-			mu.Lock()
-			services = append(services, desc)
-			if e != nil {
-				errors[desc] = e
-			}
-			perServiceTimes[desc] = dt
-			mu.Unlock()
-		})
+		pending[name] = struct{}{}
 	}
-
-	wg.Wait()
+	for len(pending) > 0 {
+		if !awaitLayer(waitCtx, outcomes, func(o outcome) {
+			delete(pending, o.desc.Service)
+			services = append(services, o.desc)
+			if o.err != nil {
+				errors[o.desc] = o.err
+			}
+			perServiceTimes[o.desc] = o.took
+		}) {
+			// the context ended first: the services still shutting down are
+			// abandoned and reported with its error
+			for name := range pending {
+				desc := newServiceDescription(s.id, s.name, name)
+				services = append(services, desc)
+				errors[desc] = ctx.Err()
+			}
+			break
+		}
+	}
 
 	return &ShutdownReport{
 		Succeed:             len(errors) == 0,
@@ -801,6 +836,32 @@ func (s *Scope) shutdownServicesWithoutDependenciesInParallel(ctx context.Contex
 		Errors:              errors,
 		ShutdownTime:        0,
 		ServiceShutdownTime: perServiceTimes,
+	}
+}
+
+// awaitLayer receives one value from values (or the close of values) and
+// passes it to got, unless ctx ends first: then it reports false. A value
+// ready when ctx ends wins over the ended context.
+func awaitLayer[V any](ctx context.Context, values <-chan V, got func(V)) bool {
+	select {
+	case v := <-values:
+		got(v)
+		return true
+	default:
+	}
+
+	select {
+	case v := <-values:
+		got(v)
+		return true
+	case <-ctx.Done():
+		select {
+		case v := <-values:
+			got(v)
+			return true
+		default:
+			return false
+		}
 	}
 }
 

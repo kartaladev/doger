@@ -142,26 +142,32 @@ func (s *serviceLazy[T]) runBuild(i Injector, run *buildRun) (instance T, err er
 			return
 		}
 		if r := recover(); r != nil {
-			s.finishBuild(run, empty[T](), 0, libErrorf("%w: %v", ErrProviderPanic, r))
+			_ = s.finishBuild(run, empty[T](), 0, libErrorf("%w: %v", ErrProviderPanic, r)) // the panic goes on
 			panic(r)
 		}
 		// runtime.Goexit: the waiters are released, the caller never returns
-		s.finishBuild(run, empty[T](), 0, wrapBuildError(i, s.name, libErrorMatching(ErrProviderPanic, "provider called runtime.Goexit")))
+		_ = s.finishBuild(run, empty[T](), 0, wrapBuildError(i, s.name, libErrorMatching(ErrProviderPanic, "provider called runtime.Goexit"))) // the caller never returns
 	}()
 
 	instance, elapsed, err := s.build(i)
 	finished = true
-	s.finishBuild(run, instance, elapsed, err)
 
-	return instance, err
+	return instance, s.finishBuild(run, instance, elapsed, err)
 }
 
-// finishBuild records the outcome of run: a successful build publishes the
-// instance, a failed one leaves the service buildable again. Waiters are
-// then released with err.
-func (s *serviceLazy[T]) finishBuild(run *buildRun, instance T, elapsed time.Duration, err error) {
+// finishBuild records the outcome of run, and returns the error of the
+// build: a successful build publishes the instance, a failed one leaves the
+// service buildable again. A build that completes once a bounded shutdown
+// gave up on it finds the service Terminal: its instance is shut down once,
+// never handed out, and the build fails with ErrShutdown. Waiters are then
+// released with that error.
+func (s *serviceLazy[T]) finishBuild(run *buildRun, instance T, elapsed time.Duration, err error) error {
 	s.mu.Lock()
-	if err == nil {
+	late := err == nil && s.terminal
+	switch {
+	case late:
+		err = shutDownServiceError(s.name)
+	case err == nil:
 		s.instance = instance
 		s.built = true
 		s.buildTime.Store(int64(elapsed)) // written before the instance is published
@@ -171,6 +177,12 @@ func (s *serviceLazy[T]) finishBuild(run *buildRun, instance T, elapsed time.Dur
 	s.mu.Unlock()
 
 	run.release()
+	if late {
+		// nobody waits for it any more: its error and its panic are dropped
+		_, _ = callHookSafely(func() { _ = shutdownValue(context.Background(), instance) })
+	}
+
+	return err
 }
 
 // build calls the provider after the declared dependencies, and returns the
@@ -309,11 +321,18 @@ func (s *serviceLazy[T]) isShutdowner() bool {
 
 func (s *serviceLazy[T]) shutdown(ctx context.Context) error {
 	s.mu.Lock()
-	// a build in flight completes first, as when the build held s.mu
-	for run := s.state.inFlight(); run != nil; run = s.state.inFlight() {
+	// a build in flight finds the service Terminal when it completes: it
+	// shuts its late instance down instead of publishing it (D4). The wait
+	// for it ends with ctx.
+	if run := s.state.inFlight(); run != nil {
+		s.terminal = true
 		s.mu.Unlock()
-		<-run.done
-		s.mu.Lock()
+		select {
+		case <-run.done:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	defer func() {
@@ -329,7 +348,13 @@ func (s *serviceLazy[T]) shutdown(ctx context.Context) error {
 		return nil
 	}
 
-	switch instance := any(s.instance).(type) {
+	return shutdownValue(ctx, s.instance)
+}
+
+// shutdownValue calls the Shutdown method of value, in whichever Shutdowner
+// form it implements, unless ctx already ended: it then returns ctx.Err().
+func shutdownValue(ctx context.Context, value any) error {
+	switch instance := value.(type) {
 	case ShutdownerWithContextAndError:
 		if ctx.Err() != nil {
 			return ctx.Err()

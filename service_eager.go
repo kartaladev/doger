@@ -37,7 +37,7 @@ type serviceEager[T any] struct {
 
 	// shutdownOnce is shared with the clones of this wrapper, which share
 	// the value: its Shutdown runs once across them
-	shutdownOnce *sync.Once
+	shutdownOnce *sharedShutdown
 }
 
 func newServiceEager[T any](name string, instance T) *serviceEager[T] {
@@ -50,7 +50,7 @@ func newServiceEager[T any](name string, instance T) *serviceEager[T] {
 
 		providerFrame:    providerFrame,
 		invocationFrames: newInvocationFrames(),
-		shutdownOnce:     &sync.Once{},
+		shutdownOnce:     newSharedShutdown(),
 	}
 }
 
@@ -207,10 +207,34 @@ func (s *serviceEager[T]) shutdown(ctx context.Context) error {
 
 	// the value is shared with clones: the first container to shut it down
 	// calls Shutdown, the others only drop their registration
-	var err error
-	s.shutdownOnce.Do(func() { err = s.shutdownInstance(ctx) })
+	return s.shutdownOnce.do(ctx, func() error { return s.shutdownInstance(ctx) })
+}
 
-	return err
+// sharedShutdown runs the Shutdown of a value shared by containers once.
+type sharedShutdown struct {
+	started atomic.Bool
+	done    chan struct{} // closed once the Shutdown returned
+}
+
+func newSharedShutdown() *sharedShutdown {
+	return &sharedShutdown{done: make(chan struct{})}
+}
+
+// do calls shutdown on the first call, and returns its error. A later call
+// waits for that Shutdown to return, bounded by its own ctx (D4), and then
+// returns nil: only the container that ran it reports its error.
+func (o *sharedShutdown) do(ctx context.Context, shutdown func() error) error {
+	if o.started.CompareAndSwap(false, true) {
+		defer close(o.done)
+		return shutdown()
+	}
+
+	select {
+	case <-o.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // shutdownInstance calls the Shutdown method of the value.

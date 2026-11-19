@@ -619,13 +619,20 @@ func TestRootScope_ShutdownDeadlineDuringShutdown(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 
+		start := time.Now()
 		report := root.ShutdownWithContext(ctx)
 
+		// the call returns when its context ends, reporting "a" as abandoned
+		is.Equal(time.Second, time.Since(start))
 		is.Equal(int32(1), a.calls.Load())
-		is.NotContains(report.Errors, newServiceDescription(root.ID(), root.Name(), "a"))
+		is.ErrorIs(report.Errors[newServiceDescription(root.ID(), root.Name(), "a")], context.DeadlineExceeded)
 		is.Equal(int32(0), b.calls.Load())
 		is.False(report.Succeed)
 		is.ErrorIs(report.Errors[newServiceDescription(root.ID(), root.Name(), "b")], context.DeadlineExceeded)
+
+		time.Sleep(time.Second) // "a" returns at 2s
+		synctest.Wait()
+		is.Equal(int32(0), b.calls.Load(), "b after a returned")
 	})
 }
 

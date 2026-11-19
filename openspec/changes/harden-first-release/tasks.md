@@ -141,12 +141,12 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 20. Shutdown honors its context
 
-- [ ] 20.1 RED: regression `TestShutdownContext_HungShutdownBounded` and `TestShutdownContext_InFlightBuildBounded` plus `TestShutdownContext_SlowShutdownWaited` and `TestShutdownContext_InFlightBuildWaited`, and update `TestRootScope_ShutdownDeadlineDuringShutdown` (shutdown-context scenarios); verify `go test -race -run 'TestShutdownContext_|TestRootScope_ShutdownDeadlineDuringShutdown' .` fails (the call returns only after release)
-- [ ] 20.2 GREEN: wait on completion or `ctx.Done()` per layer, report unfinished services as `*ServiceError{Err: ctx.Err()}`, stop scheduling further layers, run AfterShutdown hooks when an abandoned Shutdown returns, wait for in-flight builds with `select`, and shut a late instance down once on its Terminal wrapper (D4, D1); verify the 20.1 tests pass with goleak clean and `make test` is green
-- [ ] 20.3 RED: regression `TestRootScope_ShutdownOnSignalsWithContext_NilContext` (scenario "The signal helper accepts a nil context"); verify `go test -race -run TestRootScope_ShutdownOnSignalsWithContext_NilContext .` fails with a nil-pointer panic
-- [ ] 20.4 GREEN: `if ctx == nil { ctx = context.Background() }` before `signal.Notify` in `ShutdownOnSignalsWithContext`; verify the 20.3 test passes and `make test` is green
-- [ ] 20.5 REFACTOR: Extract Function `awaitLayer(ctx, done)` shared with `awaitDone`; verify `make test` and `make lint` pass
-- [ ] 20.6 Docs: godoc for root and Scope `ShutdownWithContext` (returns at the deadline, abandoned services keep running) and `ShutdownOnSignalsWithContext` (nil context), plus the Shutdowner docs page; verify `go doc doger.Scope.ShutdownWithContext` shows the text
+- [x] 20.1 RED: regression `TestShutdownContext_HungShutdownBounded` and `TestShutdownContext_InFlightBuildBounded` plus `TestShutdownContext_SlowShutdownWaited` and `TestShutdownContext_InFlightBuildWaited`, and update `TestRootScope_ShutdownDeadlineDuringShutdown` (shutdown-context scenarios); verify `go test -race -run 'TestShutdownContext_|TestRootScope_ShutdownDeadlineDuringShutdown' .` fails (the call returns only after release)
+- [x] 20.2 GREEN: wait on completion or `ctx.Done()` per layer, report unfinished services as `*ServiceError{Err: ctx.Err()}`, stop scheduling further layers, run AfterShutdown hooks when an abandoned Shutdown returns, wait for in-flight builds with `select`, and shut a late instance down once on its Terminal wrapper (D4, D1); verify the 20.1 tests pass with goleak clean and `make test` is green
+- [x] 20.3 RED: regression `TestRootScope_ShutdownOnSignalsWithContext_NilContext` (scenario "The signal helper accepts a nil context"); verify `go test -race -run TestRootScope_ShutdownOnSignalsWithContext_NilContext .` fails with a nil-pointer panic
+- [x] 20.4 GREEN: `if ctx == nil { ctx = context.Background() }` before `signal.Notify` in `ShutdownOnSignalsWithContext`; verify the 20.3 test passes and `make test` is green
+- [x] 20.5 REFACTOR: Extract Function `awaitLayer(ctx, done)` shared with `awaitDone`; verify `make test` and `make lint` pass
+- [x] 20.6 Docs: godoc for root and Scope `ShutdownWithContext` (returns at the deadline, abandoned services keep running) and `ShutdownOnSignalsWithContext` (nil context), plus the Shutdowner docs page; verify `go doc doger.Scope.ShutdownWithContext` shows the text
 
 ## 21. Provider panic errors
 
