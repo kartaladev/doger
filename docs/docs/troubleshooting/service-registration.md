@@ -24,7 +24,11 @@ type ServiceDescription struct {
 A `ServiceDescription` marshals to JSON with lower-camel keys, for example in a health report entry:
 
 ```json
-{"scopeId": "2a821628-7175-4b6d-a2ea-de8b82a203de", "scopeName": "[root]", "service": "db"}
+{
+  "scopeId": "2a821628-7175-4b6d-a2ea-de8b82a203de",
+  "scopeName": "[root]",
+  "service": "db"
+}
 ```
 
 ## Service name {#service-name}

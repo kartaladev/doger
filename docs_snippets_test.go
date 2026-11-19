@@ -238,7 +238,7 @@ func (docsExtension) Extend(*doger.ExtensionContext) error { return nil }
 // before it: <!-- snippet: name -->, <!-- before --> (samber/do code, not
 // compiled here) or <!-- text --> (a fragment, such as an import, that is
 // not code on its own).
-var docsSnippet = regexp.MustCompile("(?s)(?:<!-- (snippet: ([a-z-]+)|before|text) -->\\n)?```go\\n(.*?)```")
+var docsSnippet = regexp.MustCompile("(?s)(?:<!-- (snippet: ([a-z-]+)|before|text) -->\\n(?:[ \\t]*\\n)*)?```go\\n(.*?)```")
 
 // docsRegion matches a named region of a compiled snippet file.
 var docsRegion = regexp.MustCompile(`(?s)// docs:([a-z-]+)\n(.*?)\n[\t ]*// docs:end`)

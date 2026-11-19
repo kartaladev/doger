@@ -19,20 +19,20 @@ Viewing a page never builds, invokes, health-checks or shuts down a service. Onl
 > Bind it to a private listener (for example `127.0.0.1`) and put it behind
 > your own authentication middleware, as every example below does.
 
-## What the UI guarantees
+## What the UI guarantees {#what-the-ui-guarantees}
 
 - **Escaped output.** Scope and service names are rendered as text and every link encodes its query values, so a name such as `<script>` or `a&b#c` can neither inject markup nor break its own link.
 - **Defensive headers.** Every page, redirect and error carries `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'` and `Cache-Control: no-store`. The UI cannot be framed. Your middleware can add more headers, such as `Strict-Transport-Security`.
 - **Bounded dependency trees.** A service page expands each service of its dependency and dependent trees once. A service met again is shown as a link to its own page, marked as a reference, with no children, so the page grows with the number of edges, not with the number of paths.
 - **Generic errors.** A page that fails to render gets a plain `500 Internal Server Error` that reveals nothing of the error.
 
-## Options
+## Options {#options}
 
 Every adapter's `Use` and every page function of `github.com/kartaladev/doger/http` accept `...dogerhttp.Option`:
 
-| Option | Default | Effect |
-| --- | --- | --- |
-| `dogerhttp.WithFullSourcePaths()` | off | Shows the full recorded path where a service was provided. By default the service page shows `<file>:<line>`, without directories. |
+| Option                                                             | Default              | Effect                                                                                                                                                                    |
+| ------------------------------------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dogerhttp.WithFullSourcePaths()`                                  | off                  | Shows the full recorded path where a service was provided. By default the service page shows `<file>:<line>`, without directories.                                        |
 | `dogerhttp.WithErrorHandler(func(ctx context.Context, err error))` | errors are discarded | Receives each render failure once, with the request's context (Fiber passes `c.UserContext()`), before the generic 500. The last option wins; `nil` restores the default. |
 
 ```go

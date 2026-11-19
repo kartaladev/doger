@@ -55,7 +55,7 @@ func Example_readmeQuickstart() {
 
 // readmeSnippet matches a README Go block and the name of the snippet
 // comment before it.
-var readmeSnippet = regexp.MustCompile("(?s)(?:<!-- snippet: ([a-z-]+) -->\n)?```go\n(.*?)```")
+var readmeSnippet = regexp.MustCompile("(?s)(?:<!-- snippet: ([a-z-]+) -->\n(?:[ \t]*\n)*)?```go\n(.*?)```")
 
 // readmeRegion matches a named region of a compiled snippet file.
 var readmeRegion = regexp.MustCompile(`(?s)// readme:([a-z-]+)\n(.*?)\n[\t ]*// readme:end`)
