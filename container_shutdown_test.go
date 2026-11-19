@@ -222,13 +222,13 @@ type shutdownHookRecorder struct {
 	after  []string
 }
 
-func (r *shutdownHookRecorder) recordBefore(_ *Scope, name string) {
+func (r *shutdownHookRecorder) recordBefore(_ context.Context, _ *Scope, name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.before = append(r.before, name)
 }
 
-func (r *shutdownHookRecorder) recordAfter(_ *Scope, name string, _ error) {
+func (r *shutdownHookRecorder) recordAfter(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.after = append(r.after, name)
@@ -247,7 +247,7 @@ func TestContainerShutdown_ShutdownHookPanic(t *testing.T) {
 		{
 			name: "before_panics",
 			opts: func(r *shutdownHookRecorder) *InjectorOpts {
-				return &InjectorOpts{HookBeforeShutdown: []func(*Scope, string){func(*Scope, string) { panic("before boom") }, r.recordBefore}}
+				return &InjectorOpts{HookBeforeShutdown: []func(context.Context, *Scope, string){func(context.Context, *Scope, string) { panic("before boom") }, r.recordBefore}}
 			},
 			also:   func(t *testing.T, err error) { t.Helper(); assert.ErrorContains(t, err, "before boom") },
 			before: true,
@@ -255,14 +255,14 @@ func TestContainerShutdown_ShutdownHookPanic(t *testing.T) {
 		{
 			name: "after_panics",
 			opts: func(r *shutdownHookRecorder) *InjectorOpts {
-				return &InjectorOpts{HookAfterShutdown: []func(*Scope, string, error){func(*Scope, string, error) { panic("after boom") }, r.recordAfter}}
+				return &InjectorOpts{HookAfterShutdown: []func(context.Context, *Scope, string, time.Duration, error){func(context.Context, *Scope, string, time.Duration, error) { panic("after boom") }, r.recordAfter}}
 			},
 			also: func(t *testing.T, err error) { t.Helper(); assert.ErrorContains(t, err, "after boom") },
 		},
 		{
 			name: "after_panics_shutdown_fails",
 			opts: func(r *shutdownHookRecorder) *InjectorOpts {
-				return &InjectorOpts{HookAfterShutdown: []func(*Scope, string, error){func(*Scope, string, error) { panic("after boom") }, r.recordAfter}}
+				return &InjectorOpts{HookAfterShutdown: []func(context.Context, *Scope, string, time.Duration, error){func(context.Context, *Scope, string, time.Duration, error) { panic("after boom") }, r.recordAfter}}
 			},
 			shutdownErr: io.ErrClosedPipe,
 			also:        func(t *testing.T, err error) { t.Helper(); assert.ErrorIs(t, err, io.ErrClosedPipe) },
@@ -270,7 +270,7 @@ func TestContainerShutdown_ShutdownHookPanic(t *testing.T) {
 		{
 			name: "before_panics_with_error",
 			opts: func(r *shutdownHookRecorder) *InjectorOpts {
-				return &InjectorOpts{HookBeforeShutdown: []func(*Scope, string){func(*Scope, string) { panic(io.EOF) }, r.recordBefore}}
+				return &InjectorOpts{HookBeforeShutdown: []func(context.Context, *Scope, string){func(context.Context, *Scope, string) { panic(io.EOF) }, r.recordBefore}}
 			},
 			also:   func(t *testing.T, err error) { t.Helper(); assert.ErrorIs(t, err, io.EOF) },
 			before: true,

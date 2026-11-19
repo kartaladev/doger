@@ -22,8 +22,8 @@ func ExampleNew() {
 
 func ExampleNewWithOpts() {
 	injector := NewWithOpts(&InjectorOpts{
-		HookAfterShutdown: []func(scope *Scope, serviceName string, err error){
-			func(scope *Scope, serviceName string, err error) {
+		HookAfterShutdown: []func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error){
+			func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error) {
 				fmt.Printf("service shutdown: %s\n", serviceName)
 			},
 		},
@@ -80,7 +80,7 @@ func ExampleRootScope_AddBeforeInvocationHook() {
 func ExampleRootScope_AddAfterInvocationHook() {
 	injector := New()
 
-	injector.AddAfterInvocationHook(func(scope *Scope, serviceName string, err error) {
+	injector.AddAfterInvocationHook(func(scope *Scope, serviceName string, elapsed time.Duration, err error) {
 		fmt.Printf("invoked service: %s, error: %v\n", serviceName, err)
 	})
 
@@ -92,7 +92,7 @@ func ExampleRootScope_AddAfterInvocationHook() {
 func ExampleRootScope_AddBeforeShutdownHook() {
 	injector := New()
 
-	injector.AddBeforeShutdownHook(func(scope *Scope, serviceName string) {
+	injector.AddBeforeShutdownHook(func(ctx context.Context, scope *Scope, serviceName string) {
 		fmt.Printf("shutting down service: %s\n", serviceName)
 	})
 
@@ -104,7 +104,7 @@ func ExampleRootScope_AddBeforeShutdownHook() {
 func ExampleRootScope_AddAfterShutdownHook() {
 	injector := New()
 
-	injector.AddAfterShutdownHook(func(scope *Scope, serviceName string, err error) {
+	injector.AddAfterShutdownHook(func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error) {
 		fmt.Printf("shut down service: %s, error: %v\n", serviceName, err)
 	})
 
@@ -132,8 +132,8 @@ func ExampleRootScope_CloneWithOpts() {
 	ProvideNamedValue(injector, "test", "value")
 
 	clone := injector.CloneWithOpts(&InjectorOpts{
-		HookAfterShutdown: []func(scope *Scope, serviceName string, err error){
-			func(scope *Scope, serviceName string, err error) {
+		HookAfterShutdown: []func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error){
+			func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error) {
 				fmt.Printf("shutdown: %s\n", serviceName)
 			},
 		},
@@ -213,4 +213,28 @@ func ExampleRootScope_Shutdown_closed() {
 	// Output:
 	// true
 	// true
+}
+
+func ExampleInjectorOpts_afterInvocationHook() {
+	// HookAfterInvocation receives the time each invocation took on the
+	// container clock, a build included: ready for a latency metric.
+	clock := newExampleClock()
+	injector := NewWithOpts(&InjectorOpts{
+		Clock: clock,
+		HookAfterInvocation: []func(*Scope, string, time.Duration, error){
+			func(_ *Scope, name string, elapsed time.Duration, err error) {
+				fmt.Printf("%s took %s, error: %v\n", name, elapsed, err)
+			},
+		},
+	})
+	ProvideNamed(injector, "db", func(Injector) (string, error) {
+		clock.Advance(3 * time.Second) // a slow connection
+		return "connected", nil
+	})
+
+	_, _ = InvokeNamed[string](injector, "db") // builds
+	_, _ = InvokeNamed[string](injector, "db") // cached
+	// Output:
+	// db took 3s, error: <nil>
+	// db took 0s, error: <nil>
 }

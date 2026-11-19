@@ -573,7 +573,7 @@ func (s *RootScope) AddBeforeInvocationHook(hook func(*Scope, string)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-func (s *RootScope) AddAfterInvocationHook(hook func(*Scope, string, error)) {
+func (s *RootScope) AddAfterInvocationHook(hook func(scope *Scope, serviceName string, elapsed time.Duration, err error)) {
 	if hook == nil {
 		return
 	}
@@ -605,7 +605,7 @@ func (s *RootScope) AddAfterBuildHook(hook func(*Scope, string, any)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-func (s *RootScope) AddBeforeShutdownHook(hook func(*Scope, string)) {
+func (s *RootScope) AddBeforeShutdownHook(hook func(ctx context.Context, scope *Scope, serviceName string)) {
 	if hook == nil {
 		return
 	}
@@ -621,7 +621,7 @@ func (s *RootScope) AddBeforeShutdownHook(hook func(*Scope, string)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-func (s *RootScope) AddAfterShutdownHook(hook func(*Scope, string, error)) {
+func (s *RootScope) AddAfterShutdownHook(hook func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error)) {
 	if hook == nil {
 		return
 	}
@@ -639,7 +639,7 @@ func (s *RootScope) AddAfterShutdownHook(hook func(*Scope, string, error)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-func (s *RootScope) AddBeforeStartHook(hook func(*Scope, string)) {
+func (s *RootScope) AddBeforeStartHook(hook func(ctx context.Context, scope *Scope, serviceName string)) {
 	if hook == nil {
 		return
 	}
@@ -657,7 +657,7 @@ func (s *RootScope) AddBeforeStartHook(hook func(*Scope, string)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-func (s *RootScope) AddAfterStartHook(hook func(*Scope, string, error)) {
+func (s *RootScope) AddAfterStartHook(hook func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error)) {
 	if hook == nil {
 		return
 	}

@@ -29,7 +29,7 @@ func (s *stuckPlain) Shutdown()                       { <-s.release }
 func (s *stuckErr) Shutdown() error                   { <-s.release; return nil }
 func (s *stuckCtx) Shutdown(context.Context)          { <-s.release }
 func (s *stuckCtxErr) Shutdown(context.Context) error { <-s.release; return nil }
-func (r *afterShutdowns) hook(_ *Scope, name string, err error) {
+func (r *afterShutdowns) hook(_ context.Context, _ *Scope, name string, _ time.Duration, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.calls == nil {
@@ -69,7 +69,7 @@ func TestShutdownContext_HungShutdownBounded(t *testing.T) {
 				is := assert.New(t)
 
 				hooks := &afterShutdowns{}
-				root := NewWithOpts(&InjectorOpts{HookAfterShutdown: []func(*Scope, string, error){hooks.hook}})
+				root := NewWithOpts(&InjectorOpts{HookAfterShutdown: []func(context.Context, *Scope, string, time.Duration, error){hooks.hook}})
 				tenant := root.Scope("tenant")
 				scope := root.self
 				if tt.inTenant {

@@ -61,12 +61,12 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
     HookBeforeRegistration: []func(scope *doger.Scope, serviceName string){},
     HookAfterRegistration:  []func(scope *doger.Scope, serviceName string){},
     HookBeforeInvocation:   []func(scope *doger.Scope, serviceName string){},
-    HookAfterInvocation:    []func(scope *doger.Scope, serviceName string, err error){},
+    HookAfterInvocation:    []func(scope *doger.Scope, serviceName string, elapsed time.Duration, err error){},
     HookAfterBuild:         []func(scope *doger.Scope, serviceName string, instance any){},
-    HookBeforeShutdown:     []func(scope *doger.Scope, serviceName string){},
-    HookAfterShutdown:      []func(scope *doger.Scope, serviceName string, err error){},
-    HookBeforeStart:        []func(scope *doger.Scope, serviceName string){},
-    HookAfterStart:         []func(scope *doger.Scope, serviceName string, err error){},
+    HookBeforeShutdown:     []func(ctx context.Context, scope *doger.Scope, serviceName string){},
+    HookAfterShutdown:      []func(ctx context.Context, scope *doger.Scope, serviceName string, elapsed time.Duration, err error){},
+    HookBeforeStart:        []func(ctx context.Context, scope *doger.Scope, serviceName string){},
+    HookAfterStart:         []func(ctx context.Context, scope *doger.Scope, serviceName string, elapsed time.Duration, err error){},
 
     Logger: slog.Default(), // nil: nothing is logged
 
@@ -182,23 +182,23 @@ injector.AddAfterRegistrationHook(func(scope *doger.Scope, serviceName string) {
 injector.AddBeforeInvocationHook(func(scope *doger.Scope, serviceName string) {
     // ...
 })
-injector.AddAfterInvocationHook(func(scope *doger.Scope, serviceName string, err error) {
-    // ...
+injector.AddAfterInvocationHook(func(scope *doger.Scope, serviceName string, elapsed time.Duration, err error) {
+    // elapsed: the invocation, a build included, on the container clock
 })
 
-// Start hooks
-injector.AddBeforeStartHook(func(scope *doger.Scope, serviceName string) {
+// Start hooks: ctx is the context Start, Refresh or Scope.Start runs with
+injector.AddBeforeStartHook(func(ctx context.Context, scope *doger.Scope, serviceName string) {
     // ...
 })
-injector.AddAfterStartHook(func(scope *doger.Scope, serviceName string, err error) {
-    // ...
+injector.AddAfterStartHook(func(ctx context.Context, scope *doger.Scope, serviceName string, elapsed time.Duration, err error) {
+    // elapsed: the Start method call
 })
 
-// Shutdown hooks
-injector.AddBeforeShutdownHook(func(scope *doger.Scope, serviceName string) {
+// Shutdown hooks: ctx derives from the shutdown's context
+injector.AddBeforeShutdownHook(func(ctx context.Context, scope *doger.Scope, serviceName string) {
     // ...
 })
-injector.AddAfterShutdownHook(func(scope *doger.Scope, serviceName string, err error) {
-    // ...
+injector.AddAfterShutdownHook(func(ctx context.Context, scope *doger.Scope, serviceName string, elapsed time.Duration, err error) {
+    // elapsed: the Shutdown call
 })
 ```

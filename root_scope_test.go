@@ -49,9 +49,9 @@ func TestNewWithOpts(t *testing.T) {
 		HookBeforeRegistration: []func(*Scope, string){},
 		HookAfterRegistration:  []func(*Scope, string){},
 		HookBeforeInvocation:   []func(*Scope, string){},
-		HookAfterInvocation:    []func(*Scope, string, error){},
-		HookBeforeShutdown:     []func(*Scope, string){},
-		HookAfterShutdown:      []func(*Scope, string, error){},
+		HookAfterInvocation:    []func(*Scope, string, time.Duration, error){},
+		HookBeforeShutdown:     []func(context.Context, *Scope, string){},
+		HookAfterShutdown:      []func(context.Context, *Scope, string, time.Duration, error){},
 
 		Logger: slog.New(slog.DiscardHandler),
 
@@ -181,9 +181,9 @@ func TestRootScope_Clone(t *testing.T) {
 		HookBeforeRegistration: []func(*Scope, string){},
 		HookAfterRegistration:  []func(*Scope, string){},
 		HookBeforeInvocation:   []func(*Scope, string){},
-		HookAfterInvocation:    []func(*Scope, string, error){},
-		HookBeforeShutdown:     []func(*Scope, string){},
-		HookAfterShutdown:      []func(*Scope, string, error){},
+		HookAfterInvocation:    []func(*Scope, string, time.Duration, error){},
+		HookBeforeShutdown:     []func(context.Context, *Scope, string){},
+		HookAfterShutdown:      []func(context.Context, *Scope, string, time.Duration, error){},
 
 		Logger: slog.New(slog.DiscardHandler),
 
@@ -243,9 +243,9 @@ func TestRootScope_CloneWithOpts(t *testing.T) {
 		HookBeforeRegistration: []func(*Scope, string){},
 		HookAfterRegistration:  []func(*Scope, string){},
 		HookBeforeInvocation:   []func(*Scope, string){},
-		HookAfterInvocation:    []func(*Scope, string, error){},
-		HookBeforeShutdown:     []func(*Scope, string){},
-		HookAfterShutdown:      []func(*Scope, string, error){},
+		HookAfterInvocation:    []func(*Scope, string, time.Duration, error){},
+		HookBeforeShutdown:     []func(context.Context, *Scope, string){},
+		HookAfterShutdown:      []func(context.Context, *Scope, string, time.Duration, error){},
 
 		Logger: slog.New(slog.DiscardHandler),
 

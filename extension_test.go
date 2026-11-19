@@ -739,10 +739,14 @@ func (h *hookEvents) list() []string {
 func (h *hookEvents) opts() *InjectorOpts {
 	return &InjectorOpts{
 		HookAfterRegistration: []func(*Scope, string){func(scope *Scope, name string) { h.add("registered " + scope.Name() + " " + name) }},
-		HookBeforeShutdown:    []func(*Scope, string){func(scope *Scope, name string) { h.add("before-shutdown " + scope.Name() + " " + name) }},
-		HookAfterShutdown:     []func(*Scope, string, error){func(scope *Scope, name string, _ error) { h.add("after-shutdown " + scope.Name() + " " + name) }},
-		HookScopeClosing:      []func(context.Context, *Scope){func(_ context.Context, scope *Scope) { h.add("scope-closing " + scope.Name()) }},
-		HookScopeClosed:       []func(context.Context, *Scope){func(_ context.Context, scope *Scope) { h.add("scope-closed " + scope.Name()) }},
+		HookBeforeShutdown: []func(context.Context, *Scope, string){func(_ context.Context, scope *Scope, name string) {
+			h.add("before-shutdown " + scope.Name() + " " + name)
+		}},
+		HookAfterShutdown: []func(context.Context, *Scope, string, time.Duration, error){func(_ context.Context, scope *Scope, name string, _ time.Duration, _ error) {
+			h.add("after-shutdown " + scope.Name() + " " + name)
+		}},
+		HookScopeClosing: []func(context.Context, *Scope){func(_ context.Context, scope *Scope) { h.add("scope-closing " + scope.Name()) }},
+		HookScopeClosed:  []func(context.Context, *Scope){func(_ context.Context, scope *Scope) { h.add("scope-closed " + scope.Name()) }},
 	}
 }
 

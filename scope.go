@@ -1224,11 +1224,13 @@ func (s *Scope) shutdownServiceOf(ctx context.Context, name string, panics *shut
 
 	hooks := &s.RootScope().hooks
 	for _, hook := range hooks.beforeShutdown.load() {
-		_ = run(func() error { hook(s, name); return nil })
+		_ = run(func() error { hook(ctx, s, name); return nil })
 	}
+	op := beginServiceOp(ctx, s, name)
 	shutdownErr := run(func() error { return service.shutdown(ctx) })
+	elapsed := op.elapsed()
 	for _, hook := range hooks.afterShutdown.load() {
-		_ = run(func() error { hook(s, name, shutdownErr); return nil })
+		_ = run(func() error { hook(ctx, s, name, elapsed, shutdownErr); return nil })
 	}
 
 	if failure := joinErrors(failures); failure != nil {

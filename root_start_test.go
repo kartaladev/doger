@@ -1346,11 +1346,11 @@ func TestStart_Hooks(t *testing.T) {
 	rec := &callRecorder{}
 	var errB error
 	root := NewWithOpts(&InjectorOpts{
-		HookBeforeStart: []func(*Scope, string){
-			func(_ *Scope, name string) { rec.record("before " + name) },
+		HookBeforeStart: []func(context.Context, *Scope, string){
+			func(_ context.Context, _ *Scope, name string) { rec.record("before " + name) },
 		},
-		HookAfterStart: []func(*Scope, string, error){
-			func(_ *Scope, name string, err error) {
+		HookAfterStart: []func(context.Context, *Scope, string, time.Duration, error){
+			func(_ context.Context, _ *Scope, name string, _ time.Duration, err error) {
 				if name == "b" {
 					errB = err
 				}
@@ -1362,7 +1362,9 @@ func TestStart_Hooks(t *testing.T) {
 			},
 		},
 	})
-	root.AddAfterStartHook(func(_ *Scope, name string, _ error) { rec.record("late-after " + name) })
+	root.AddAfterStartHook(func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) {
+		rec.record("late-after " + name)
+	})
 	ProvideNamed(root, "a", func(Injector) (*errorStarter, error) { return &errorStarter{}, nil }, AsStarter())
 	ProvideNamed(root, "b", func(Injector) (*errorStarter, error) { return &errorStarter{err: errBoom}, nil }, AsStarter())
 
@@ -1381,8 +1383,8 @@ func TestStart_HooksSkipNonStarter(t *testing.T) {
 
 	rec := &callRecorder{}
 	root := New()
-	root.AddBeforeStartHook(func(_ *Scope, name string) { rec.record("before " + name) })
-	root.AddAfterStartHook(func(_ *Scope, name string, _ error) { rec.record("after " + name) })
+	root.AddBeforeStartHook(func(_ context.Context, _ *Scope, name string) { rec.record("before " + name) })
+	root.AddAfterStartHook(func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) { rec.record("after " + name) })
 	ProvideNamed(root, "app.Lifecycle", func(Injector) (startLifecycle, error) { return &startNone{}, nil }, AsStarter())
 
 	err := root.Start()
@@ -2169,8 +2171,8 @@ func TestStart_ParallelHooks(t *testing.T) {
 	rec := &callRecorder{}
 	root := NewWithOpts(&InjectorOpts{
 		StartParallelism: 4,
-		HookBeforeStart:  []func(*Scope, string){func(_ *Scope, name string) { rec.record("before " + name) }},
-		HookAfterStart:   []func(*Scope, string, error){func(_ *Scope, name string, _ error) { rec.record("after " + name) }},
+		HookBeforeStart:  []func(context.Context, *Scope, string){func(_ context.Context, _ *Scope, name string) { rec.record("before " + name) }},
+		HookAfterStart:   []func(context.Context, *Scope, string, time.Duration, error){func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) { rec.record("after " + name) }},
 	})
 	starts := &countingStarters{}
 	for i := range 8 {
@@ -2233,9 +2235,9 @@ func TestStart_ParallelHookPanic(t *testing.T) {
 				}
 				opts := &InjectorOpts{StartParallelism: tt.n}
 				if tt.before {
-					opts.HookBeforeStart = []func(*Scope, string){func(_ *Scope, name string) { panicFor(name) }}
+					opts.HookBeforeStart = []func(context.Context, *Scope, string){func(_ context.Context, _ *Scope, name string) { panicFor(name) }}
 				} else {
-					opts.HookAfterStart = []func(*Scope, string, error){func(_ *Scope, name string, _ error) { panicFor(name) }}
+					opts.HookAfterStart = []func(context.Context, *Scope, string, time.Duration, error){func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) { panicFor(name) }}
 				}
 				root := NewWithOpts(opts)
 				run := root.Start

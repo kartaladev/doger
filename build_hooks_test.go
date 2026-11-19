@@ -167,7 +167,7 @@ func TestAfterBuildHook_Order(t *testing.T) {
 	root := NewWithOpts(&InjectorOpts{
 		HookBeforeInvocation: []func(*Scope, string){func(_ *Scope, name string) { calls.record("before-invocation " + name) }},
 		HookAfterBuild:       []func(*Scope, string, any){func(_ *Scope, name string, _ any) { calls.record("after-build " + name) }},
-		HookAfterInvocation:  []func(*Scope, string, error){func(_ *Scope, name string, _ error) { calls.record("after-invocation " + name) }},
+		HookAfterInvocation:  []func(*Scope, string, time.Duration, error){func(_ *Scope, name string, _ time.Duration, _ error) { calls.record("after-invocation " + name) }},
 	})
 	ProvideNamed(root, "db", func(Injector) (*buildDB, error) { return &buildDB{}, nil })
 

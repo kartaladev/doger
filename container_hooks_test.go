@@ -364,7 +364,7 @@ func TestContainerFailedHook_PipelinePanic(t *testing.T) {
 		{
 			name: "HookBeforeStart, sequential",
 			opts: func(panicFor func(string)) *InjectorOpts {
-				return &InjectorOpts{HookBeforeStart: []func(*Scope, string){func(_ *Scope, name string) { panicFor(name) }}}
+				return &InjectorOpts{HookBeforeStart: []func(context.Context, *Scope, string){func(_ context.Context, _ *Scope, name string) { panicFor(name) }}}
 			},
 			value: errBoom,
 			check: func(t *testing.T, failedErr error) { t.Helper(); assert.ErrorIs(t, failedErr, errBoom) },
@@ -382,7 +382,7 @@ func TestContainerFailedHook_PipelinePanic(t *testing.T) {
 			opts: func(panicFor func(string)) *InjectorOpts {
 				return &InjectorOpts{
 					StartParallelism: 4,
-					HookAfterStart:   []func(*Scope, string, error){func(_ *Scope, name string, _ error) { panicFor(name) }},
+					HookAfterStart:   []func(context.Context, *Scope, string, time.Duration, error){func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) { panicFor(name) }},
 				}
 			},
 			value: errBoom,
@@ -442,7 +442,7 @@ func TestContainerFailedHook_PanicDuringPipelinePanic(t *testing.T) {
 			logs := &callRecorder{}
 			panics := &callRecorder{}
 			opts := &InjectorOpts{
-				HookBeforeStart: []func(*Scope, string){func(*Scope, string) { panic("pipeline") }},
+				HookBeforeStart: []func(context.Context, *Scope, string){func(context.Context, *Scope, string) { panic("pipeline") }},
 				Logger:          lineLogger(logs.record),
 			}
 			if tt.policy {
@@ -1764,7 +1764,7 @@ func TestContainerFailedHook_PipelinePanicAfterShutdown(t *testing.T) {
 				errBoom := errors.New("boom")
 				root := NewWithOpts(&InjectorOpts{
 					StartParallelism: n,
-					HookAfterStart: []func(*Scope, string, error){func(_ *Scope, name string, _ error) {
+					HookAfterStart: []func(context.Context, *Scope, string, time.Duration, error){func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) {
 						if name == "a" {
 							panic(errBoom)
 						}

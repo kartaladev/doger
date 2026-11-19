@@ -1902,8 +1902,8 @@ func TestScopeShutdown_AfterContextEnded(t *testing.T) {
 			root := New()
 			var before, after []string
 			var afterErr error
-			root.AddBeforeShutdownHook(func(_ *Scope, name string) { before = append(before, name) })
-			root.AddAfterShutdownHook(func(_ *Scope, name string, err error) {
+			root.AddBeforeShutdownHook(func(_ context.Context, _ *Scope, name string) { before = append(before, name) })
+			root.AddAfterShutdownHook(func(_ context.Context, _ *Scope, name string, _ time.Duration, err error) {
 				after = append(after, name)
 				afterErr = err
 			})

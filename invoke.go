@@ -58,9 +58,10 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 	}
 
 	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
+	op := beginInvocation(serviceScope, name)
 	child := newChildVirtualScope(vScope, serviceScope, name)
 	instance, err := service.getInstanceAny(child)
-	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, err)
+	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, op.elapsed(), err)
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +115,10 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 	}
 
 	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
+	op := beginInvocation(serviceScope, name)
 	child := newChildVirtualScope(vScope, serviceScope, name)
 	instance, err := service.getInstance(child)
-	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, err)
+	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, op.elapsed(), err)
 
 	if err != nil {
 		return empty[T](), err
@@ -185,9 +187,10 @@ func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, re
 	}
 
 	injector.RootScope().hooks.onBeforeInvocation(scope, hookName)
+	op := beginInvocation(scope, realName)
 	child := newChildVirtualScope(vScope, scope, realName)
 	instance, err := service.(serviceWrapperGetInstanceAny).getInstanceAny(child) //nolint:errcheck,forcetypeassert // service was selected among stored service wrappers
-	injector.RootScope().hooks.onAfterInvocation(scope, hookName, err)
+	injector.RootScope().hooks.onAfterInvocation(scope, hookName, op.elapsed(), err)
 	if err != nil {
 		return nil, err
 	}

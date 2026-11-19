@@ -70,7 +70,7 @@ func TestInvokeAs_HookReceivesTypeName(t *testing.T) {
 	after := &callRecorder{}
 	root := NewWithOpts(&InjectorOpts{
 		HookBeforeInvocation: []func(*Scope, string){func(_ *Scope, name string) { before.record(name) }},
-		HookAfterInvocation:  []func(*Scope, string, error){func(_ *Scope, name string, _ error) { after.record(name) }},
+		HookAfterInvocation:  []func(*Scope, string, time.Duration, error){func(_ *Scope, name string, _ time.Duration, _ error) { after.record(name) }},
 	})
 	provideHandler(root, "audit", newAudit)
 
@@ -685,7 +685,7 @@ func TestInvokeAll_HooksPerMember(t *testing.T) {
 	before, after := &callRecorder{}, &callRecorder{}
 	root := NewWithOpts(&InjectorOpts{
 		HookBeforeInvocation: []func(*Scope, string){func(_ *Scope, name string) { before.record(name) }},
-		HookAfterInvocation:  []func(*Scope, string, error){func(_ *Scope, name string, _ error) { after.record(name) }},
+		HookAfterInvocation:  []func(*Scope, string, time.Duration, error){func(_ *Scope, name string, _ time.Duration, _ error) { after.record(name) }},
 	})
 	provideHandler(root, "console", newConsole)
 	provideHandler(root, "audit", newAudit)

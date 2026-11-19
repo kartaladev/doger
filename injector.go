@@ -162,13 +162,15 @@ type InjectorOpts struct {
 	// at any time, from the next operation on.
 	HookBeforeInvocation []func(scope *Scope, serviceName string)
 
-	// HookAfterInvocation is called after a service is invoked, with the result error.
+	// HookAfterInvocation is called after a service is invoked, with the
+	// time the invocation took on the container Clock (a build included; 0
+	// or more) and the result error. It gets no context: Invoke has none.
 	// This hook can be used for logging, metrics collection, or error handling.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddAfterInvocationHook] adds a hook later, safely
 	// at any time, from the next operation on.
-	HookAfterInvocation []func(scope *Scope, serviceName string, err error)
+	HookAfterInvocation []func(scope *Scope, serviceName string, elapsed time.Duration, err error)
 
 	// HookAfterBuild is called with each instance the container builds:
 	// after every successful provider call (each transient instance
@@ -185,40 +187,47 @@ type InjectorOpts struct {
 	// at any time, from the next operation on.
 	HookAfterBuild []func(scope *Scope, serviceName string, instance any)
 
-	// HookBeforeShutdown is called before a service is shut down.
-	// This hook can be used for cleanup preparation or logging.
+	// HookBeforeShutdown is called before a service is shut down, with a
+	// context derived from the shutdown's: its values, deadline and
+	// cancellation (Shutdown() without a context passes one derived from
+	// context.Background()). This hook can be used for cleanup preparation or
+	// logging.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddBeforeShutdownHook] adds a hook later, safely
 	// at any time, from the next operation on.
-	HookBeforeShutdown []func(scope *Scope, serviceName string)
+	HookBeforeShutdown []func(ctx context.Context, scope *Scope, serviceName string)
 
-	// HookAfterShutdown is called after a service is shut down, with the result error.
-	// This hook can be used for logging, metrics collection, or error handling.
+	// HookAfterShutdown is called after a service is shut down, with the
+	// shutdown's context (see HookBeforeShutdown), the time the Shutdown call
+	// took on the container Clock and the result error. This hook can be
+	// used for logging, metrics collection, or error handling.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddAfterShutdownHook] adds a hook later, safely
 	// at any time, from the next operation on.
-	HookAfterShutdown []func(scope *Scope, serviceName string, err error)
+	HookAfterShutdown []func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error)
 
 	// HookBeforeStart is called by Start, Refresh and Scope.Start just before
-	// a service's Start method. With StartParallelism > 1, calls for
-	// different services may run concurrently.
+	// a service's Start method, with the context the operation runs with.
+	// With StartParallelism > 1, calls for different services may run
+	// concurrently.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddBeforeStartHook] adds a hook later, safely
 	// at any time, from the next operation on.
-	HookBeforeStart []func(scope *Scope, serviceName string)
+	HookBeforeStart []func(ctx context.Context, scope *Scope, serviceName string)
 
 	// HookAfterStart is called by Start, Refresh and Scope.Start just after a
-	// service's Start method, with the error the method returned, unwrapped
-	// (nil on success; a recovered panic as an error). With StartParallelism
+	// service's Start method, with the context the operation runs with, the
+	// time the method took on the container Clock, and the error the method
+	// returned, unwrapped (nil on success; a recovered panic as an error). With StartParallelism
 	// > 1, calls for different services may run concurrently.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddAfterStartHook] adds a hook later, safely
 	// at any time, from the next operation on.
-	HookAfterStart []func(scope *Scope, serviceName string, err error)
+	HookAfterStart []func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error)
 
 	// HookContainerStarting is called by the root container's first Start,
 	// after its one-shot guard and before its context check, discovery or any
@@ -615,9 +624,9 @@ func (h *containerHooks) onBeforeInvocation(scope *Scope, serviceName string) {
 	}
 }
 
-func (h *containerHooks) onAfterInvocation(scope *Scope, serviceName string, err error) {
+func (h *containerHooks) onAfterInvocation(scope *Scope, serviceName string, elapsed time.Duration, err error) {
 	for _, fn := range h.afterInvocation.load() {
-		fn(scope, serviceName, err)
+		fn(scope, serviceName, elapsed, err)
 	}
 }
 
@@ -629,27 +638,46 @@ func (h *containerHooks) onAfterBuild(scope *Scope, serviceName string, instance
 	}
 }
 
-func (h *containerHooks) onBeforeShutdown(scope *Scope, serviceName string) {
-	for _, fn := range h.beforeShutdown.load() {
-		fn(scope, serviceName)
-	}
+// serviceOp is a per-service operation the start, shutdown and invocation
+// hooks bracket: its context (nil for an invocation), service, and the time
+// it began on the container clock.
+type serviceOp struct {
+	ctx   context.Context
+	scope *Scope
+	name  string
+	clock Clock
+	start time.Time
 }
 
-func (h *containerHooks) onAfterShutdown(scope *Scope, serviceName string, err error) {
-	for _, fn := range h.afterShutdown.load() {
-		fn(scope, serviceName, err)
-	}
+// beginServiceOp returns the start or shutdown of the service name of
+// scope, with ctx, begun now on the container clock.
+func beginServiceOp(ctx context.Context, scope *Scope, name string) serviceOp {
+	op := beginInvocation(scope, name)
+	op.ctx = ctx
+	return op
 }
 
-func (h *containerHooks) onBeforeStart(scope *Scope, serviceName string) {
+// beginInvocation returns the invocation of the service name of scope,
+// which has no context, begun now on the container clock.
+func beginInvocation(scope *Scope, name string) serviceOp {
+	clock := scope.clock()
+	return serviceOp{scope: scope, name: name, clock: clock, start: clock.Now()}
+}
+
+// elapsed returns the time since op began, on the container clock.
+func (op serviceOp) elapsed() time.Duration {
+	return op.clock.Since(op.start)
+}
+
+func (h *containerHooks) onBeforeStart(op serviceOp) {
 	for _, fn := range h.beforeStart.load() {
-		fn(scope, serviceName)
+		fn(op.ctx, op.scope, op.name)
 	}
 }
 
-func (h *containerHooks) onAfterStart(scope *Scope, serviceName string, err error) {
+func (h *containerHooks) onAfterStart(op serviceOp, elapsed time.Duration, err error) {
 	for _, fn := range h.afterStart.load() {
-		fn(scope, serviceName, err)
+		fn(op.ctx, op.scope, op.name, elapsed, err)
 	}
 }
 
@@ -660,12 +688,12 @@ type containerHooks struct {
 	beforeRegistration hookList[func(*Scope, string)]
 	afterRegistration  hookList[func(*Scope, string)]
 	beforeInvocation   hookList[func(*Scope, string)]
-	afterInvocation    hookList[func(*Scope, string, error)]
+	afterInvocation    hookList[func(*Scope, string, time.Duration, error)]
 	afterBuild         hookList[func(*Scope, string, any)]
-	beforeShutdown     hookList[func(*Scope, string)]
-	afterShutdown      hookList[func(*Scope, string, error)]
-	beforeStart        hookList[func(*Scope, string)]
-	afterStart         hookList[func(*Scope, string, error)]
+	beforeShutdown     hookList[func(context.Context, *Scope, string)]
+	afterShutdown      hookList[func(context.Context, *Scope, string, time.Duration, error)]
+	beforeStart        hookList[func(context.Context, *Scope, string)]
+	afterStart         hookList[func(context.Context, *Scope, string, time.Duration, error)]
 	containerStarting  hookList[func(context.Context, *RootScope) error]
 	containerStarted   hookList[func(context.Context, *RootScope)]
 	containerReady     hookList[func(context.Context, *RootScope)]

@@ -291,7 +291,7 @@ func TestContainerOptions_AddHookConcurrent(t *testing.T) {
 			name:      "after_invocation",
 			operation: invoke,
 			adder: func(root *RootScope, hook func()) {
-				root.AddAfterInvocationHook(func(*Scope, string, error) { hook() })
+				root.AddAfterInvocationHook(func(*Scope, string, time.Duration, error) { hook() })
 			},
 		},
 		{
@@ -314,21 +314,21 @@ func TestContainerOptions_AddHookConcurrent(t *testing.T) {
 			name:      "after_shutdown",
 			operation: shutdown,
 			adder: func(root *RootScope, hook func()) {
-				root.AddAfterShutdownHook(func(*Scope, string, error) { hook() })
+				root.AddAfterShutdownHook(func(context.Context, *Scope, string, time.Duration, error) { hook() })
 			},
 		},
 		{
 			name:      "before_shutdown",
 			operation: shutdown,
 			adder: func(root *RootScope, hook func()) {
-				root.AddBeforeShutdownHook(func(*Scope, string) { hook() })
+				root.AddBeforeShutdownHook(func(context.Context, *Scope, string) { hook() })
 			},
 		},
 		{
 			name:      "before_start",
 			operation: func(root *RootScope, _ int) { _ = root.Start() },
 			adder: func(root *RootScope, hook func()) {
-				root.AddBeforeStartHook(func(*Scope, string) { hook() })
+				root.AddBeforeStartHook(func(context.Context, *Scope, string) { hook() })
 			},
 		},
 		{

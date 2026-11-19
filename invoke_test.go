@@ -123,8 +123,8 @@ func TestInvokeAnyByName(t *testing.T) {
 				beforeCalled = true
 			},
 		},
-		HookAfterInvocation: []func(*Scope, string, error){
-			func(scope *Scope, serviceName string, err error) {
+		HookAfterInvocation: []func(*Scope, string, time.Duration, error){
+			func(scope *Scope, serviceName string, elapsed time.Duration, err error) {
 				afterCalled = true
 			},
 		},
@@ -252,8 +252,8 @@ func TestInvokeByName(t *testing.T) {
 				beforeCalled = true
 			},
 		},
-		HookAfterInvocation: []func(*Scope, string, error){
-			func(scope *Scope, serviceName string, err error) {
+		HookAfterInvocation: []func(*Scope, string, time.Duration, error){
+			func(scope *Scope, serviceName string, elapsed time.Duration, err error) {
 				afterCalled = true
 			},
 		},
@@ -360,8 +360,8 @@ func TestInvokeByGenericType(t *testing.T) {
 				beforeCalled = true
 			},
 		},
-		HookAfterInvocation: []func(*Scope, string, error){
-			func(scope *Scope, serviceName string, err error) {
+		HookAfterInvocation: []func(*Scope, string, time.Duration, error){
+			func(scope *Scope, serviceName string, elapsed time.Duration, err error) {
 				afterCalled = true
 			},
 		},

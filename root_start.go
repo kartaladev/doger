@@ -797,9 +797,11 @@ func (s *RootScope) startCandidate(startCtx context.Context, candidate *startCan
 		return startErr
 	}
 
-	s.hooks.onBeforeStart(candidate.scope, candidate.name)
+	op := serviceOp{ctx: startCtx, scope: candidate.scope, name: candidate.name}
+	s.hooks.onBeforeStart(op)
+	op = beginServiceOp(startCtx, candidate.scope, candidate.name)
 	err := startInstance(startCtx, candidate.instance)
-	s.hooks.onAfterStart(candidate.scope, candidate.name, err)
+	s.hooks.onAfterStart(op, op.elapsed(), err)
 	if err != nil {
 		err = newStartError(StartOpStart, candidate.scope, candidate.name, "", err)
 		return withAbortCause(startCtx, err)
