@@ -364,7 +364,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 53. Close the audit's test-suite gaps (existing behavior, tests only)
 
-- [ ] 53.1 Add `TestShutdownOrder_ThreeLevelChain` (synctest; a→b→c in one scope, c must not stop before b finishes) and `TestDAG_removeDependent`; they pass on arrival, so prove they can fail by temporarily deleting the `removeService` dependents loop (mutant M07, not committed); verify `go test -race -run 'TestShutdownOrder_ThreeLevelChain|TestDAG_removeDependent' .` fails under the mutant and passes without it
+- [x] 53.1 Add `TestShutdownOrder_ThreeLevelChain` (synctest; a→b→c in one scope, c must not stop before b finishes) and `TestDAG_removeDependent`; they pass on arrival, so prove they can fail by temporarily deleting the `removeService` dependents loop (mutant M07, not committed); verify `go test -race -run 'TestShutdownOrder_ThreeLevelChain|TestDAG_removeDependent' .` fails under the mutant and passes without it
 - [ ] 53.2 Add `TestLazyShutdown_ShutdownerWithContext_IsCalled` and ended-context rows for lazy and eager services; prove they can fail by temporarily replacing `instance.Shutdown(ctx)` with `_ = instance` (mutant M29); verify the same red/green check
 - [ ] 53.3 Add `TestHealthReport_TimeoutNotOverwrittenByLateResult` (synctest: an unbounded `HealthCheckNamed` holds the check while `HealthReport` times out); prove it can fail by temporarily dropping `&& !call.timedOut` in `finishCall` (mutant M18); verify the same red/green check
 - [x] 53.4 Add `TestInvokeNamedAny_ListedAsInvoked`; prove it can fail by temporarily removing `onServiceInvoke` from `invokeAnyByNameAs` (mutant M22); verify the same red/green check
