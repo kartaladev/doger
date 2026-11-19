@@ -58,7 +58,7 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 9. Scaffold the clockwork adapter module
 
-- [ ] 9.1 Create module `clock/clockwork` (`go.mod` `github.com/kartaladev/doger/clock/clockwork`, package `dogerclockwork`, requiring root and `jonboulle/clockwork` with a local `replace`), add `./clock/clockwork` to `go.work` and a `doc.go` package comment; verify `go build ./...` inside `clock/clockwork` and `go work sync` succeed
+- [x] 9.1 Create module `clock/clockwork` (`go.mod` `github.com/kartaladev/doger/clock/clockwork`, package `dogerclockwork`, requiring root and `jonboulle/clockwork` with a local `replace`), add `./clock/clockwork` to `go.work` and a `doc.go` package comment; verify `go build ./...` inside `clock/clockwork` and `go work sync` succeed
 
 ## 10. Doger-owned Clock
 
