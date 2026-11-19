@@ -3,6 +3,7 @@ package doger
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -881,6 +882,17 @@ func TestServiceLazy_shutdown(t *testing.T) {
 			is.False(tt.service.built())
 		})
 	}
+
+	// shutting down a service never built makes it Terminal too
+	var builds atomic.Int32
+	neverBuilt := newServiceLazy("foobar", func(Injector) (*lazyTestShutdownerOK, error) {
+		builds.Add(1)
+		return &lazyTestShutdownerOK{foobar: "foobar"}, nil
+	})
+	is.NoError(neverBuilt.shutdown(ctx))
+	_, neverBuiltErr := neverBuilt.getInstance(nil)
+	is.ErrorIs(neverBuiltErr, ErrShutdown)
+	is.Zero(builds.Load(), "builds after shutdown")
 
 	// Test with context scenarios
 	// Test with canceled context

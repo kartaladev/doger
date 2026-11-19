@@ -189,6 +189,12 @@ func (s *serviceDefault[T]) getInstanceAny(i Injector) (any, error) {
 }
 
 func (s *serviceDefault[T]) getInstance(i Injector) (T, error) {
+	// once its scope closed, a default neither yields nor resolves its
+	// replacement: a caller that looked it up before gets ErrShutdown
+	if err := s.scope.checkOpen(); err != nil {
+		return empty[T](), err
+	}
+
 	switch s.decide() {
 	case defaultUnresolved, defaultChosen:
 		return s.inner.getInstance(i)

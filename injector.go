@@ -83,6 +83,9 @@ type Injector interface {
 	// serviceSet registers a service in the current scope with the given name.
 	// Note: This method is not protected against double registration.
 	serviceSet(string, any)
+	// ownScope returns the scope the injector stands for; promoted through
+	// embedding, it lets a type embedding an Injector register and invoke.
+	ownScope() *Scope
 	// serviceForEach iterates over all services in the current scope.
 	serviceForEach(func(string, *Scope, any) bool)
 	// serviceForEachRec iterates over all services in the current scope and all ancestor scopes.
@@ -274,7 +277,10 @@ type InjectorOpts struct {
 	//
 	// A Closing hook must not call root Shutdown synchronously without a
 	// deadline: that call waits for the running Shutdown, which waits for the
-	// hook. With a deadline, it returns a failed report when it expires.
+	// hook. With a deadline, it returns a failed report when it expires. This
+	// holds for ShutdownWithContext with the hook's own ctx too: it is the
+	// caller's context, not the marked one services receive, so the call is
+	// not re-entrant and waits on itself (see RootScope.ShutdownWithContext).
 	//
 	// Ordering with Start: a Shutdown that begins while Start runs cancels
 	// it and fires Closing only after Start's pipeline returned, or after the

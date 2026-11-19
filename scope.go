@@ -153,6 +153,9 @@ func (s *Scope) Scope(name string, packages ...func(Injector)) *Scope {
 	return child
 }
 
+// ownScope returns s.
+func (s *Scope) ownScope() *Scope { return s }
+
 // checkOpen returns an error matching ErrShutdown once the shutdown of s
 // began, and nil before. A nil s, the scope of an Injector implemented
 // outside this package, is open.

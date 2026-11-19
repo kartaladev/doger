@@ -1075,8 +1075,7 @@ func TestContainerShutdown_ReentrantRootShutdown(t *testing.T) {
 					is.ErrorIs(reportError(outer, root.self, "supervisor"), context.DeadlineExceeded)
 				} else {
 					is.Zero(supervisor.elapsed, "returned at once")
-					is.True(supervisor.report.Succeed)
-					is.Empty(supervisor.report.Errors)
+					is.NoError(supervisor.report.Err())
 					is.Empty(supervisor.report.Services)
 					is.True(outer.Succeed, "outer errors: %v", outer.Errors)
 				}
@@ -1233,4 +1232,122 @@ func TestShutdownReport_MarshalJSON(t *testing.T) {
 			})
 		})
 	}
+}
+
+// lookedUpThenShutDown invokes name of root on another goroutine, lets the
+// lookup happen, shuts root down, then lets the invocation continue, and
+// returns its error.
+func lookedUpThenShutDown(t *testing.T, invokedFrom Injector, name string, shutdown func(), setHook func(func(*Scope, string))) error {
+	t.Helper()
+
+	lookedUp, shutDown := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	setHook(func(_ *Scope, invoked string) {
+		if invoked == name {
+			once.Do(func() {
+				close(lookedUp)
+				<-shutDown
+			})
+		}
+	})
+	result := make(chan error, 1)
+	go func() {
+		_, err := invokeAnyByName(invokedFrom, name)
+		result <- err
+	}()
+	<-lookedUp
+	shutdown()
+	close(shutDown)
+
+	return <-result
+}
+
+func TestContainerShutdown_ClosedScopeReviewGaps(t *testing.T) {
+	t.Parallel()
+
+	t.Run("transient_looked_up_before_shutdown", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+
+		root := New()
+		var builds atomic.Int32
+		ProvideNamedTransient(root, "t", func(Injector) (*shutdownTestCounter, error) {
+			builds.Add(1)
+			return &shutdownTestCounter{}, nil
+		})
+
+		err := lookedUpThenShutDown(t, root, "t", func() { root.Shutdown() }, func(hook func(*Scope, string)) {
+			root.AddBeforeInvocationHook(hook)
+		})
+
+		assert.ErrorIs(t, err, ErrShutdown)
+		assert.Equal(t, int32(0), builds.Load(), "builds")
+	})
+
+	t.Run("default_yield_after_scope_closed", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+
+		root := New()
+		tenant := root.Scope("tenant")
+		var rootBuilds atomic.Int32
+		ProvideNamed(root, "svc", func(Injector) (*shutdownTestCounter, error) {
+			rootBuilds.Add(1)
+			return &shutdownTestCounter{}, nil
+		})
+		ProvideNamed(tenant, "svc", func(Injector) (*shutdownTestCounter, error) { return &shutdownTestCounter{}, nil }, AsDefault())
+
+		err := lookedUpThenShutDown(t, tenant, "svc", func() { tenant.Shutdown() }, func(hook func(*Scope, string)) {
+			root.AddBeforeInvocationHook(hook)
+		})
+
+		assert.ErrorIs(t, err, ErrShutdown)
+		assert.Equal(t, int32(0), rootBuilds.Load(), "builds of the root svc")
+	})
+
+	t.Run("superseded_default_after_scope_closed", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+
+		root := New()
+		tenant := root.Scope("tenant")
+		ProvideNamed(tenant, "svc", func(Injector) (*shutdownTestCounter, error) { return &shutdownTestCounter{}, nil }, AsDefault())
+		wrapper, ok := tenant.serviceGet("svc")
+		require.True(t, ok)
+		ProvideNamed(tenant, "svc", func(Injector) (*shutdownTestCounter, error) { return &shutdownTestCounter{}, nil })
+		tenant.Shutdown()
+
+		_, err := wrapper.(serviceWrapper[*shutdownTestCounter]).getInstance(tenant)
+
+		assert.ErrorIs(t, err, ErrShutdown)
+	})
+
+	t.Run("invoke_struct", func(t *testing.T) {
+		t.Parallel()
+
+		root := New()
+		root.Shutdown()
+
+		_, err := InvokeStruct[struct{}](root)
+
+		assert.ErrorIs(t, err, ErrShutdown)
+	})
+}
+
+// customInjector is an Injector implemented outside the library's own
+// types, by embedding one: the only way, since Injector has unexported
+// methods.
+type customInjector struct{ Injector }
+
+func TestProvide_CustomInjectorEmbeddingScope(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	root := New()
+	custom := customInjector{root.Scope("custom")}
+
+	is.NotPanics(func() { ProvideNamedValue(custom, "value", 42) })
+	value, err := InvokeNamed[int](custom, "value")
+	is.NoError(err)
+	is.Equal(42, value)
 }

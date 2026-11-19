@@ -124,7 +124,7 @@ func handle(root *doger.RootScope, requestID string) error {
 }
 ```
 
-Once its shutdown has completed, the scope is detached from its parent: it no longer appears in `Children()` or `ChildByName`, and its name can be used again. Scopes created and shut down this way do not accumulate in the parent. A shut-down scope stays closed: invoking or registering on it fails with `doger.ErrShutdown`.
+Once its shutdown has completed, the scope is detached from its parent: it no longer appears in `Children()` or `ChildByName`, and its name can be used again. Scopes created and shut down this way do not accumulate in the parent. A shut-down scope stays closed: invoking on it returns an error matching `doger.ErrShutdown`, and registering on it panics with one.
 
 ## Scope export {#scope-export}
 

@@ -55,7 +55,7 @@ The goroutine-id read is a known trade-off, made acceptable because it stays off
 
 ### D2. A scope is closed once its shutdown begins
 - **Close flag.** `Scope` gets an atomic close flag. It is set under the scope's write lock at the start of shutdown, before its children are listed.
-- **Registration and child scopes.** Registration (`Provide*`, `Override*`, aliases, `Export`) and `Scope()` check the flag under that same lock. A closed scope panics with an error that matches `ErrShutdown`, the way a duplicate registration panics today.
+- **Registration and child scopes.** Registration (`Provide*`, `Override*`, aliases, `Export`) and `Scope()` check the flag under that same lock. On a closed scope, `Provide*`, `Override*` and `Scope()` panic with an error that matches `ErrShutdown`, the way a duplicate registration panics today, while `Alias*` and `Export*`, which return errors, return one.
 - **Invoke.** `Invoke*` checks the flag before the lookup and returns `ErrShutdown`.
 - **A wrapper looked up just before shutdown.** Shutting a service down moves its wrapper to Terminal. If a caller had already looked the wrapper up, its build sees Terminal and returns `ErrShutdown` instead of building (fixes F2/C7).
 - **One sentinel.** `ErrShutdown` replaces `ErrStartAfterShutdown`, so Start, Refresh, Scope.Start, Invoke and registration all report one sentinel.

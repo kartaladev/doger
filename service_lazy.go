@@ -166,8 +166,11 @@ func injectorScope(i Injector) *Scope {
 		return injector
 	case *RootScope:
 		return injector.self
-	default:
+	case nil:
 		return nil
+	default:
+		// a type embedding an Injector
+		return injector.ownScope()
 	}
 }
 

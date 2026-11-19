@@ -54,6 +54,11 @@ func (s *serviceTransient[T]) getInstanceAny(i Injector) (any, error) {
 }
 
 func (s *serviceTransient[T]) getInstance(i Injector) (T, error) {
+	// a caller that looked the service up before its scope closed builds
+	// nothing
+	if err := injectorScope(i).checkOpen(); err != nil {
+		return empty[T](), err
+	}
 	if err := resolveDeclaredDependencies(i, s.opts); err != nil {
 		return empty[T](), wrapBuildError(i, s.name, err)
 	}

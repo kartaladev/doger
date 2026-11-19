@@ -588,6 +588,14 @@ func MustInvokeNamed[T any](i Injector, name string) T {
 //	// Invoke struct with injected services
 //	app, err := doger.InvokeStruct[App](injector)
 func InvokeStruct[T any](i Injector) (T, error) {
+	injector, err := getInjector(i)
+	if err != nil {
+		return empty[T](), err
+	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
+		return empty[T](), err
+	}
+
 	structName := inferServiceName[T]()
 	output, err := deepEmpty[T]() // if the struct is hidden behind a pointer, we need to init the struct value deep enough
 	if err != nil {

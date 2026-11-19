@@ -86,6 +86,7 @@ func (s *virtualScope) ID() string                                 { return s.se
 func (s *virtualScope) Name() string                               { return s.self.Name() }
 func (s *virtualScope) Scope(n string, p ...func(Injector)) *Scope { return s.self.Scope(n, p...) }
 func (s *virtualScope) RootScope() *RootScope                      { return s.self.RootScope() }
+func (s *virtualScope) ownScope() *Scope                           { return injectorScope(s.self) }
 func (s *virtualScope) Ancestors() []*Scope                        { return s.self.Ancestors() }
 func (s *virtualScope) Children() []*Scope                         { return s.self.Children() }
 func (s *virtualScope) ChildByID(id string) (*Scope, bool)         { return s.self.ChildByID(id) }

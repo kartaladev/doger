@@ -173,6 +173,7 @@ func (s *RootScope) Scope(name string, p ...func(Injector)) *Scope { return s.se
 
 // RootScope returns the root scope itself (this instance).
 func (s *RootScope) RootScope() *RootScope { return s.self.RootScope() }
+func (s *RootScope) ownScope() *Scope      { return s.self }
 
 // Ancestors returns an empty slice since the root scope has no ancestors.
 func (s *RootScope) Ancestors() []*Scope { return []*Scope{} }
@@ -284,7 +285,9 @@ func (s *RootScope) Shutdown() *ShutdownReport { return s.ShutdownWithContext(co
 // with that context, or one derived from it, such as from a service's
 // Shutdown(ctx), returns at once a successful report listing no service,
 // and the running shutdown completes normally. A call with any other
-// context waits for the running shutdown, bounded by its own context.
+// context waits for the running shutdown, bounded by its own context. A
+// marked context kept and used after that shutdown completed still returns
+// an empty successful report, not the first report.
 func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 	if ctx == nil {
 		ctx = context.Background()

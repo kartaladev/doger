@@ -57,7 +57,7 @@ If no signal is passed to `injector.ShutdownOnSignals(...)`, both `syscall.SIGTE
 - A caller still waiting when its own context ends returns a failed report with a single error, keyed by the root scope with an empty service name, wrapping `ctx.Err()`. The first caller's shutdown keeps running.
 - If the first caller panics before producing a report (for example in a custom `Logger` handler), the panic reaches that caller and every other caller gets a failed report containing `doger: root shutdown did not complete`.
 - A `nil` context is treated as `context.Background()`.
-- A container cannot be reused after `Shutdown`: once its shutdown begins, the scope is closed. `Invoke*`, collection reads, `Alias*` and `Export*` return an error matching `doger.ErrShutdown`, and `Provide*`, `Override*` and `Scope()` panic with one, also from a Closing hook. Build a new container instead.
+- A container cannot be reused after `Shutdown`: once its shutdown begins, the scope is closed. `Invoke*`, `InvokeStruct`, collection reads, `Alias*` and `Export*` return an error matching `doger.ErrShutdown`, and `Provide*`, `Override*` and `Scope()` panic with one, also from a Closing hook. Build a new container instead. Its services are gone, so `DeclareDependency` and `HealthCheckNamed` on it report `ErrServiceNotFound`, and `Kind.Handle` on it does nothing.
 
 Child scopes follow a similar rule while a shutdown of them runs: a concurrent `scope.Shutdown()`, or root `Shutdown()` reaching that scope, waits for the running shutdown (bounded by its context) and gets a copy of its report. Once that shutdown has finished, the scope is closed: a later `scope.Shutdown()` succeeds with nothing to do.
 
