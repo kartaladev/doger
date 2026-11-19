@@ -165,7 +165,7 @@ func TestHealthCheck_EndedContextIsTimeout(t *testing.T) {
 					bad = true
 				}
 				if bad && firstErr == nil {
-					firstErr = fmt.Errorf("got %v", err) //nolint:errorlint
+					firstErr = fmt.Errorf("got %v", err) //nolint:errorlint // only formats the unexpected result for the failure message; nothing unwraps it
 				}
 			}
 
@@ -320,7 +320,7 @@ func TestHealthCheck_ServiceWithoutCheckNeverTimesOut(t *testing.T) {
 				if !ok {
 					unexpected++
 					if firstErr == nil {
-						firstErr = fmt.Errorf("got %v", err) //nolint:errorlint
+						firstErr = fmt.Errorf("got %v", err) //nolint:errorlint // only formats the unexpected result for the failure message; nothing unwraps it
 					}
 				}
 			}
@@ -388,7 +388,7 @@ func TestHealthCheck_TimeoutOptionsOnClock(t *testing.T) {
 					if !ok {
 						unexpected++
 						if firstErr == nil {
-							firstErr = fmt.Errorf("got %v", err) //nolint:errorlint
+							firstErr = fmt.Errorf("got %v", err) //nolint:errorlint // only formats the unexpected result for the failure message; nothing unwraps it
 						}
 					}
 
@@ -617,7 +617,7 @@ func TestHealthCheck_PerServiceTimeout(t *testing.T) {
 					if !ok {
 						unexpected++
 						if firstErr == nil {
-							firstErr = fmt.Errorf("got %v", err) //nolint:errorlint
+							firstErr = fmt.Errorf("got %v", err) //nolint:errorlint // only formats the unexpected result for the failure message; nothing unwraps it
 						}
 					}
 
@@ -712,7 +712,7 @@ func TestHealthCheckSingleTimeout(t *testing.T) {
 					if !ok {
 						unexpected++
 						if firstErr == nil {
-							firstErr = fmt.Errorf("got %v", err) //nolint:errorlint
+							firstErr = fmt.Errorf("got %v", err) //nolint:errorlint // only formats the unexpected result for the failure message; nothing unwraps it
 						}
 					}
 

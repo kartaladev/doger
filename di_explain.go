@@ -127,7 +127,7 @@ func (s *DefaultState) UnmarshalText(text []byte) error {
 //
 // Returns a formatted string describing the service.
 //
-//nolint:goconst
+//nolint:goconst // the template keys repeat the field names they render; constants would hide that mapping
 func (sd *ExplainServiceOutput) String() string {
 	invoked := ""
 	if sd.Invoked != nil {
@@ -616,7 +616,7 @@ func ExplainInjector(scope Injector) ExplainInjectorOutput {
 
 // 2 modes are available: looping on ancestors, focused-scope or children.
 func newExplainInjectorScopes(ancestors []Injector, children []Injector) []ExplainInjectorScopeOutput {
-	//nolint:goconst
+	//nolint:goconst // the three looping modes are local labels, compared right below
 	loopingOn := "children" // @TODO: create a real enum
 	injectors := children
 	if len(ancestors) > 0 {

@@ -505,7 +505,7 @@ func TestInvokeByTags(t *testing.T) {
 
 	// not found
 	type dependencyNotFound struct {
-		eagerTest *hasNonExportedEagerTestDependency `do:""` //nolint:unused
+		eagerTest *hasNonExportedEagerTestDependency `do:""` //nolint:unused // set by InvokeStruct through its tag, never read
 	}
 	test3 := dependencyNotFound{}
 	err = invokeByTags(i, "*myStruct", reflect.ValueOf(&test3), false)
@@ -513,7 +513,7 @@ func TestInvokeByTags(t *testing.T) {
 
 	// use tag
 	type namedDependency struct {
-		eagerTest *eagerTest `do:"int"` //nolint:unused
+		eagerTest *eagerTest `do:"int"` //nolint:unused // set by InvokeStruct through its tag, never read
 	}
 	test4 := namedDependency{}
 	err = invokeByTags(i, "*myStruct", reflect.ValueOf(&test4), false)
@@ -957,7 +957,8 @@ func TestInvoke_ProviderPanicNil_GODEBUGOverride(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, 10*time.Second)
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestInvoke_ProviderPanicNil_GODEBUGOverride$", "-test.v", "-test.count=1")
+	//nolint:gosec // G204: re-runs this test binary (os.Args[0]) as a child process with fixed flags
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestInvoke_ProviderPanicNil_GODEBUGOverride$", "-test.v", "-test.count=1")
 	cmd.Env = append(os.Environ(), "GODEBUG=panicnil=1", panicNilChildEnv+"=1")
 	out, err := cmd.CombinedOutput()
 

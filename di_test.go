@@ -902,7 +902,7 @@ func TestInvokeStruct(t *testing.T) {
 
 	// not found
 	type dependencyNotFound struct {
-		eagerTest *hasNonExportedEagerTestDependency `do:""` //nolint:unused
+		eagerTest *hasNonExportedEagerTestDependency `do:""` //nolint:unused // set by InvokeStruct through its tag, never read
 	}
 	test4, err := InvokeStruct[dependencyNotFound](i)
 	is.Equal(serviceNotFound(i, ErrServiceNotFound, []string{inferServiceName[*hasNonExportedEagerTestDependency]()}).Error(), err.Error())
@@ -910,7 +910,7 @@ func TestInvokeStruct(t *testing.T) {
 
 	// use tag
 	type namedDependency struct {
-		eagerTest *eagerTest `do:"int"` //nolint:unused
+		eagerTest *eagerTest `do:"int"` //nolint:unused // set by InvokeStruct through its tag, never read
 	}
 	test5, err := InvokeStruct[namedDependency](i)
 	is.Equal(serviceNotFound(i, ErrServiceNotFound, []string{inferServiceName[int]()}).Error(), err.Error())
@@ -957,11 +957,11 @@ func TestInvokeStruct(t *testing.T) {
 
 	test10, err := InvokeStruct[*serviceWithInterface](i)
 	is.NoError(err)
-	is.NotNil((*test10).eagerTest) //nolint:gocritic
+	is.NotNil((*test10).eagerTest) //nolint:gocritic // the explicit dereference shows the pointer depth InvokeStruct returned
 
 	test11, err := InvokeStruct[****serviceWithInterface](i)
 	is.NoError(err)
-	is.NotNil((****test11).eagerTest) //nolint:gocritic
+	is.NotNil((****test11).eagerTest) //nolint:gocritic // the explicit dereferences show the pointer depth InvokeStruct returned
 }
 
 func TestMustInvokeStruct(t *testing.T) {
@@ -1733,9 +1733,9 @@ func TestOverride_IgnoresAsDefault(t *testing.T) {
 		require.True(t, ok)
 		Override(root, dialerProvider("override-dialer", nil))
 
-		instance, err := stale.(serviceWrapperAny).getInstanceAny(root) //nolint:errcheck,forcetypeassert
+		instance, err := stale.(serviceWrapperAny).getInstanceAny(root)
 
 		require.NoError(t, err)
-		assert.Equal(t, "override-dialer", instance.(*dfDialer).label) //nolint:errcheck,forcetypeassert
+		assert.Equal(t, "override-dialer", instance.(*dfDialer).label)
 	})
 }

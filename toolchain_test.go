@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 func readGoDirectives(t *testing.T, file string) (goLine string, toolchainLine string) {
 	t.Helper()
 
-	f, err := os.Open(file)
+	f, err := os.Open(filepath.Clean(file))
 	require.NoError(t, err)
 	defer func() { _ = f.Close() }()
 

@@ -6,6 +6,7 @@
 package webuitest
 
 import (
+	"context"
 	"html"
 	"io"
 	"net/http"
@@ -77,7 +78,7 @@ func NewRequest(t *testing.T, method, target string) *http.Request {
 	u, err := url.Parse(target)
 	requireNoError(t, err, "parse target")
 
-	req := httptest.NewRequest(method, "/", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), method, "/", http.NoBody)
 	req.URL = u
 	req.RequestURI = u.RequestURI()
 

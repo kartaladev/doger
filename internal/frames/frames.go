@@ -22,7 +22,7 @@ const MaxDepth = 32
 var (
 	// goroot is read once at package init: runtime.GOROOT() re-reads an
 	// env var on every call, and it cannot change during the process lifetime.
-	//nolint:staticcheck
+	//nolint:staticcheck // SA1019: runtime.GOROOT is deprecated, but it is the build's GOROOT that stack frame paths start with
 	goroot = runtime.GOROOT()
 
 	// selfPkgPath is the import path of this package, derived at runtime so

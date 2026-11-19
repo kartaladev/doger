@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/kartaladev/doger"
@@ -42,7 +43,7 @@ type Car struct {
 
 func (c *Car) Shutdown() error {
 	println("car stopped")
-	return fmt.Errorf("💥 BOOOOM!") //nolint:staticcheck
+	return errors.New("💥 boooom")
 }
 
 func (c *Car) Start() {

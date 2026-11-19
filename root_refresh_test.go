@@ -854,7 +854,7 @@ func TestIncrementalStart_CallerContext(t *testing.T) {
 			} else {
 				is.NoError(err)
 			}
-			is.Equal(int32(tt.starts), starts.Load())
+			is.Equal(tt.starts, int(starts.Load()))
 			wantRecorded := 2 * tt.starts // the Starter and the kind handler
 			if tt.scope {
 				wantRecorded++ // the Starting hook, which runs before the abort check

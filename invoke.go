@@ -110,7 +110,7 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 
 	service, ok := serviceAny.(serviceWrapper[T])
 	if !ok {
-		return empty[T](), serviceTypeMismatch(inferServiceName[T](), serviceAny.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert
+		return empty[T](), serviceTypeMismatch(inferServiceName[T](), serviceAny.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
 	}
 
 	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
@@ -186,7 +186,7 @@ func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, re
 
 	injector.RootScope().hooks.onBeforeInvocation(scope, hookName)
 	child := newChildVirtualScope(vScope, scope, realName)
-	instance, err := service.(serviceWrapperGetInstanceAny).getInstanceAny(child) //nolint:errcheck,forcetypeassert
+	instance, err := service.(serviceWrapperGetInstanceAny).getInstanceAny(child) //nolint:errcheck,forcetypeassert // service was selected among stored service wrappers
 	injector.RootScope().hooks.onAfterInvocation(scope, hookName, err)
 	if err != nil {
 		return nil, err
@@ -551,7 +551,7 @@ func dropReplacedDefaults(candidates []collectionCandidate) []collectionCandidat
 	replacing := []reflect.Type{}
 	for _, candidate := range candidates {
 		if isDefault, _ := defaultStateOf(candidate.service); !isDefault {
-			replacing = append(replacing, candidate.service.(serviceWrapperAny).getReflectType()) //nolint:errcheck,forcetypeassert
+			replacing = append(replacing, candidate.service.(serviceWrapperAny).getReflectType()) //nolint:errcheck,forcetypeassert // collection candidates are stored service wrappers
 		}
 	}
 
@@ -560,7 +560,7 @@ func dropReplacedDefaults(candidates []collectionCandidate) []collectionCandidat
 		if !isDefault || state != defaultUnresolved {
 			return false
 		}
-		registered := c.service.(serviceWrapperAny).getReflectType() //nolint:errcheck,forcetypeassert
+		registered := c.service.(serviceWrapperAny).getReflectType() //nolint:errcheck,forcetypeassert // collection candidates are stored service wrappers
 		if slices.ContainsFunc(replacing, func(t reflect.Type) bool { return typeCanCastToType(t, registered) }) {
 			return true
 		}
@@ -644,7 +644,7 @@ func selectByType(injector Injector, target reflect.Type) (collectionCandidate, 
 // unresolved default visible from from is appended to unresolved, the second
 // tier; a yielded one is never a candidate.
 func firstTierDefault(from, scope *Scope, match typeMatch, unresolved *[]collectionCandidate) bool {
-	switch match.service.(serviceWrapperDefault).currentState() { //nolint:errcheck,forcetypeassert
+	switch match.service.(serviceWrapperDefault).currentState() { //nolint:errcheck,forcetypeassert // called only for a match with isDefault set, whose wrapper is a *serviceDefault
 	case defaultChosen:
 		return true
 	case defaultUnresolved:
@@ -769,7 +769,7 @@ func scopeDepth(scope *Scope) int {
 // The function does not manipulate virtual scope because it is done by invokeAnyByName or invokeByGenericType.
 //
 // The implicit-aliasing fallback selects among matching services like invokeByGenericType.
-func invokeByTags(i Injector, structName string, structValue reflect.Value, implicitAliasing bool) error { //nolint:gocyclo
+func invokeByTags(i Injector, structName string, structValue reflect.Value, implicitAliasing bool) error { //nolint:gocyclo // one pass over the fields, each tag form handled inline; splitting it would scatter the field-by-field rules
 	injector, err := getInjector(i)
 	if err != nil {
 		return err
@@ -803,6 +803,7 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 			// When a field is not exported, we override it.
 			// See https://stackoverflow.com/questions/42664837/how-to-access-unexported-struct-fields/43918797#43918797
 			// bearer:disable go_gosec_unsafe_unsafe
+			//nolint:gosec // G103: struct injection sets unexported tagged fields: it bypasses reflect's export check via the field's own address (CanAddr was checked above)
 			fieldValue = reflect.NewAt(fieldValue.Type(), unsafe.Pointer(fieldValue.UnsafeAddr())).Elem()
 		}
 

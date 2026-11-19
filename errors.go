@@ -142,6 +142,7 @@ var libSentinels = []error{
 // isLibMade reports whether the library made err itself: a sentinel, a
 // libErrorf result, or a library error type whose message it formats.
 func isLibMade(err error) bool {
+	//nolint:errorlint // one layer on purpose: isLibLed walks the chain and asks about each error in it
 	switch e := err.(type) {
 	case *libError, *ExtensionError, *ServiceError:
 		return true
@@ -173,6 +174,7 @@ func isLibLed(err error) bool {
 			return true
 		}
 
+		//nolint:errorlint // this loop is the chain walk itself: it unwraps one layer at a time, both Unwrap forms
 		switch u := e.(type) {
 		case interface{ Unwrap() error }:
 			pending = append(pending, u.Unwrap())

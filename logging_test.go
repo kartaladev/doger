@@ -216,7 +216,7 @@ func captureDefaultLogs(t *testing.T) (*logRecorder, *bytes.Buffer) {
 // TestLogging_CaptureDefaultLogsRestores checks that captureDefaultLogs
 // leaves the log and slog defaults as it found them, so later tests in the
 // binary can log.
-func TestLogging_CaptureDefaultLogsRestores(t *testing.T) { //nolint:paralleltest // replaces the default slog logger and log output
+func TestLogging_CaptureDefaultLogsRestores(t *testing.T) { // not parallel: replaces the default slog logger and log output
 	is := assert.New(t)
 	writer, flags, prefix, logger := log.Writer(), log.Flags(), log.Prefix(), slog.Default()
 
@@ -228,7 +228,7 @@ func TestLogging_CaptureDefaultLogsRestores(t *testing.T) { //nolint:paralleltes
 	is.Same(logger, slog.Default(), "default slog logger")
 }
 
-func TestLogging_OffByDefault(t *testing.T) { //nolint:paralleltest // replaces the default slog logger and log output
+func TestLogging_OffByDefault(t *testing.T) { // not parallel: replaces the default slog logger and log output
 	tests := []struct {
 		name string
 		root func() *RootScope

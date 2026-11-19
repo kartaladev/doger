@@ -1,6 +1,7 @@
 package dogerfiber_test
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -42,13 +43,13 @@ func ExampleUse() {
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	dogerfiber.Use(app.Group("/debug/doger", auth), "/debug/doger", injector)
 
-	anonymous, err := app.Test(httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody))
+	anonymous, err := app.Test(httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody))
 	if err != nil {
 		panic(err)
 	}
 	defer anonymous.Body.Close()
 
-	empty := httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody)
+	empty := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody)
 	empty.SetBasicAuth("", "")
 	emptyCredentials, err := app.Test(empty)
 	if err != nil {
@@ -56,7 +57,7 @@ func ExampleUse() {
 	}
 	defer emptyCredentials.Body.Close()
 
-	req := httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody)
 	req.SetBasicAuth("admin", "s3cret")
 	admin, err := app.Test(req)
 	if err != nil {

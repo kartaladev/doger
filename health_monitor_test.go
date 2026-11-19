@@ -181,7 +181,7 @@ func TestHealthScheduler_NilNoRounds(t *testing.T) {
 }
 
 // Not parallel: goleak checks the goroutines this test leaves.
-func TestHealthScheduler_NilNoGoroutine(t *testing.T) { //nolint:paralleltest
+func TestHealthScheduler_NilNoGoroutine(t *testing.T) {
 	ignore := goleak.IgnoreCurrent()
 
 	i := New()
@@ -510,7 +510,7 @@ func TestHealthRound_EachCheckOnce(t *testing.T) {
 }
 
 // Not parallel: AllocsPerRun counts the allocations of the whole process.
-func TestHealthRound_AllocsLinear(t *testing.T) { //nolint:paralleltest
+func TestHealthRound_AllocsLinear(t *testing.T) {
 	testWithTimeout(t, 60*time.Second)
 
 	// roundAllocs returns the allocations of a round re-recording the results

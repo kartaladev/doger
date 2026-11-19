@@ -205,6 +205,7 @@ func TestContainerShutdown_ShutdownPanicDoesNotCrashProcess(t *testing.T) {
 
 	t.Parallel()
 
+	//nolint:gosec // G204: re-runs this test binary (os.Args[0]) as a child process with a fixed -test.run
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestContainerShutdown_ShutdownPanicDoesNotCrashProcess$")
 	cmd.Env = append(os.Environ(), shutdownPanicChildEnv+"=1")
 	output, err := cmd.CombinedOutput()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,7 +31,7 @@ func TestBasicAuth(t *testing.T) {
 			t.Parallel()
 
 			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-			req := httptest.NewRequest(http.MethodGet, "/debug/doger", http.NoBody)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger", http.NoBody)
 			if tt.send {
 				req.SetBasicAuth(tt.sendUser, tt.sendPass)
 			}

@@ -32,6 +32,14 @@ linters:
     # - wsl_v5
     - testifylint
     - modernize
+    # security issues; each finding is fixed or suppressed inline with its reason
+    - gosec
+    # error comparisons and type switches that miss wrapped errors
+    - errorlint
+    # HTTP requests built without a context
+    - noctx
+    # every //nolint names its linters and says why
+    - nolintlint
 
   # disable noisy/controversial ones which you might enable later
   disable:
@@ -50,6 +58,9 @@ linters:
       min-occurrences: 3
     gocyclo:
       min-complexity: 15 # strict; lower => stricter
+    nolintlint:
+      require-explanation: true
+      require-specific: true
     modernize:
       disable:
         # its fixes change test fixture field types (int32 -> atomic.Int32)
@@ -67,16 +78,19 @@ linters:
 
   exclusions:
     generated: lax
-    paths:
-      - examples$
     rules:
+      # providers and hooks take parameters fixed by their function types,
+      # which many implementations do not use
       - linters:
           - revive
         text: "^unused-parameter:"
+      # closing a response body has nothing actionable to report
       - linters:
           - errcheck
         text: "Error return value of `.*\\.Body\\.Close` is not checked"
-      # linters disabled in tests
+      # linters disabled in tests: repeated literals, long table-driven
+      # functions, ignored errors of setup calls and asserted type
+      # conversions are the norm there and are checked by the assertions
       - linters:
           - dupl
           - goconst
@@ -85,6 +99,7 @@ linters:
           - forcetypeassert
           - revive
         path: "_test\\.go$"
+      # the tests package holds black-box scenario tests, not API
       - linters:
           - revive
         path: "tests/"
@@ -105,4 +120,3 @@ formatters:
     paths:
       - third_party$
       - builtin$
-      - examples$

@@ -33,7 +33,7 @@ const oldLibPrefix = "DI" + ": "
 func readModulePath(t *testing.T, dir string) string {
 	t.Helper()
 
-	f, err := os.Open(filepath.Join(dir, "go.mod"))
+	f, err := os.Open(filepath.Clean(filepath.Join(dir, "go.mod")))
 	require.NoError(t, err)
 	defer func() { _ = f.Close() }()
 
@@ -122,7 +122,7 @@ func TestModuleIdentity_HTTPAdapterModules(t *testing.T) {
 func readWorkspaceDirs(t *testing.T, dir string) []string {
 	t.Helper()
 
-	f, err := os.Open(filepath.Join(dir, "go.work"))
+	f, err := os.Open(filepath.Clean(filepath.Join(dir, "go.work")))
 	require.NoError(t, err)
 	defer func() { _ = f.Close() }()
 
@@ -221,7 +221,7 @@ func TestModuleIdentity_OldQualifierScanSkipsCheckouts(t *testing.T) {
 	write := func(path, content string) {
 		t.Helper()
 		full := filepath.Join(root, path)
-		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o750))
 		require.NoError(t, os.WriteFile(full, []byte(content), 0o600))
 	}
 	write("own.go", planted)                                 // part of the module: reported

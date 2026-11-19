@@ -270,7 +270,8 @@ func TestScheduler_Overrides(t *testing.T) {
 			i := startWith(t, clock, must(New(append(tt.opts(), runs.option(), runs.monitor())...)), db, nil)
 			defer i.Shutdown()
 
-			want := tt.calls - int32(len(tt.steps)) // rounds run at once
+			// rounds run at once
+			want := tt.calls - int32(len(tt.steps)) //nolint:gosec // G115: a table row has a handful of steps, far below MaxInt32
 			if want > 0 {
 				require.Eventually(t, func() bool { return db.calls.Load() == want }, 2*time.Second, time.Millisecond, "the first round did not run at once")
 			}
@@ -418,7 +419,7 @@ func TestScheduler_OptionPrecedence(t *testing.T) {
 }
 
 // Not parallel: goleak checks the goroutines gocron leaves.
-func TestScheduler_RejectedJob(t *testing.T) { //nolint:paralleltest
+func TestScheduler_RejectedJob(t *testing.T) {
 	tests := []struct {
 		name   string
 		option Option
@@ -428,7 +429,7 @@ func TestScheduler_RejectedJob(t *testing.T) { //nolint:paralleltest
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) { //nolint:paralleltest // goleak checks the goroutines gocron leaves
+		t.Run(tt.name, func(t *testing.T) { // not parallel: goleak checks the goroutines gocron leaves
 			ignore := goleak.IgnoreCurrent()
 
 			scheduler := must(New(tt.option))
@@ -532,7 +533,7 @@ func TestScheduler_SharedStop(t *testing.T) {
 }
 
 // Not parallel: goleak checks the goroutines gocron leaves.
-func TestScheduler_CleanStop(t *testing.T) { //nolint:paralleltest
+func TestScheduler_CleanStop(t *testing.T) {
 	tests := []struct {
 		name     string
 		shutdown func(i *doger.RootScope)
@@ -575,7 +576,7 @@ func (consumerClock) Since(time.Time) time.Duration               { return 0 }
 func (consumerClock) AfterFunc(time.Duration, func()) doger.Timer { return nil }
 
 // Not parallel: goleak checks the goroutines gocron leaves.
-func TestScheduler_ClockMapping(t *testing.T) { //nolint:paralleltest
+func TestScheduler_ClockMapping(t *testing.T) {
 	tests := []struct {
 		name string
 		// setup returns the options of New, the clock passed to
@@ -608,7 +609,7 @@ func TestScheduler_ClockMapping(t *testing.T) { //nolint:paralleltest
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) { //nolint:paralleltest // goleak checks the goroutines gocron leaves
+		t.Run(tt.name, func(t *testing.T) { // not parallel: goleak checks the goroutines gocron leaves
 			is := assert.New(t)
 			ignore := goleak.IgnoreCurrent()
 

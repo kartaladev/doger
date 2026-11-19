@@ -669,7 +669,7 @@ func TestServiceAlias_clone(t *testing.T) {
 	originalService.mu.Lock()
 	clonedService.mu.Lock()
 	// If mutexes were shared, this would deadlock
-	//nolint:ineffassign,staticcheck
+	//nolint:ineffassign,staticcheck // a statement inside both locks (SA2001): the test only checks that taking both does not deadlock
 	ok = !ok // fake stuff to avoid staticcheck warning below
 	clonedService.mu.Unlock()
 	originalService.mu.Unlock()

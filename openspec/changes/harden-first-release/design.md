@@ -638,7 +638,7 @@ Hot paths and the tests that cover them:
 | A clean tree passes make test-all | CI test.yml job test-all | ci |
 | CI runs the module loop on three operating systems | scripts/check-workflows.sh (test.yml matrix) | script |
 | An issue in any module fails make lint-all | scripts/test-make-targets.sh (planted lint issue) | script |
-| The head of main is lint-clean | CI lint.yml job lint-all + scripts/check-workflows.sh (nolint reasons) | ci |
+| The head of main is lint-clean | CI lint.yml job lint-all (`make lint-all`), with nolintlint require-explanation/require-specific enforcing nolint reasons | ci |
 | A reachable vulnerability fails the gate | CI security.yml job govulncheck (make vuln) | ci |
 | Released dependency floors | scripts/check-workflows.sh (go.mod floors) | script |
 | An accepted vulnerability without a fix is recorded | scripts/check-workflows.sh (SECURITY.md advisories) | script |
