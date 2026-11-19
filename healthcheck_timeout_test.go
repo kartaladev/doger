@@ -352,7 +352,12 @@ func TestHealthCheck_TimeoutOptionsOnClock(t *testing.T) {
 		{name: "global_10ms_check_9ms", global: 10 * time.Millisecond, duration: 9 * time.Millisecond, advance: 9 * time.Millisecond},
 		{name: "per_check_50ms_global_10ms_check_20ms", global: 10 * time.Millisecond, perCheck: 50 * time.Millisecond, duration: 20 * time.Millisecond, advance: 20 * time.Millisecond, want: healthCheckTestDeadlineMessage},
 		{name: "per_check_10ms_global_50ms_check_20ms", global: 50 * time.Millisecond, perCheck: 10 * time.Millisecond, duration: 20 * time.Millisecond, advance: 20 * time.Millisecond, want: healthCheckTestDeadlineMessage},
-		{name: "no_timeout_check_1h", duration: time.Hour, advance: time.Hour},
+		{name: "default_check_9999ms", duration: 9999 * time.Millisecond, advance: 9999 * time.Millisecond},
+		{name: "default_check_10s_exact_limit", duration: 10 * time.Second, advance: 10 * time.Second, want: healthCheckTestDeadlineMessage},
+		{name: "default_check_1h", duration: time.Hour, advance: time.Hour, want: healthCheckTestDeadlineMessage},
+		{name: "per_check_negative_check_1h", perCheck: -1, duration: time.Hour, advance: time.Hour},
+		{name: "per_check_negative_global_10ms_check_20ms", perCheck: -1, global: 10 * time.Millisecond, duration: 20 * time.Millisecond, advance: 20 * time.Millisecond, want: healthCheckTestDeadlineMessage},
+		{name: "both_negative_check_1h", perCheck: -1, global: -1, duration: time.Hour, advance: time.Hour},
 	}
 
 	for _, tt := range tests {
@@ -451,23 +456,60 @@ func TestHealthCheck_SequentialChecksShareGlobalTimeout(t *testing.T) {
 func TestHealthCheck_NotBeforeClockReachesTimeout(t *testing.T) {
 	t.Parallel()
 
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		before  time.Duration
+	}{
+		{name: "timeout_10ms", timeout: 10 * time.Millisecond, before: 9 * time.Millisecond},
+		{name: "default_10s", before: 9999 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				fc := newFakeClock()
+				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckTimeout: tt.timeout})
+				check := newHealthCheckTestBlocking()
+				ProvideNamedValue(i, "svc", check)
+
+				result := healthCheckTestAsync(context.Background(), i)
+				synctest.Wait()
+				fc.Advance(tt.before)
+				synctest.Wait()
+				is.False(healthCheckTestReturned(result), "returned before the clock reached the timeout")
+
+				fc.Advance(time.Millisecond)
+				err := (<-result)["svc"]
+				is.EqualError(err, healthCheckTestDeadlineMessage)
+
+				close(check.release)
+				synctest.Wait()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_DefaultTimeoutZeroConfig(t *testing.T) {
+	t.Parallel()
+
 	synctest.Test(t, func(t *testing.T) {
 		is := assert.New(t)
 
-		fc := newFakeClock()
-		i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckTimeout: 10 * time.Millisecond})
+		i := New()
 		check := newHealthCheckTestBlocking()
 		ProvideNamedValue(i, "svc", check)
 
-		result := healthCheckTestAsync(context.Background(), i)
-		synctest.Wait()
-		fc.Advance(9 * time.Millisecond)
-		synctest.Wait()
-		is.False(healthCheckTestReturned(result), "returned before the clock reached the timeout")
+		start := time.Now()
+		err := i.HealthCheck()["svc"]
 
-		fc.Advance(time.Millisecond)
-		err := (<-result)["svc"]
-		is.EqualError(err, healthCheckTestDeadlineMessage)
+		is.Equal(DefaultHealthReportCheckTimeout, time.Since(start))
+		is.ErrorIs(err, ErrHealthCheckTimeout)
+		is.ErrorIs(err, context.DeadlineExceeded)
 
 		close(check.release)
 		synctest.Wait()
@@ -482,7 +524,7 @@ func TestHealthCheck_ConsumerDeadlineOnContextOnly(t *testing.T) {
 		perCheck time.Duration
 		waiters  int // fake-clock waiters once the check runs
 	}{
-		{name: "no_timeout_options", waiters: 1},
+		{name: "per_check_negative", perCheck: -1, waiters: 1},
 		{name: "per_check_3h", perCheck: 3 * time.Hour, waiters: 2},
 	}
 
@@ -536,7 +578,9 @@ func TestHealthCheck_PerServiceTimeout(t *testing.T) {
 		{name: "HealthCheck_10ms_check_9ms", call: typed, byType: true, timeout: 10 * time.Millisecond, duration: 9 * time.Millisecond},
 		{name: "HealthCheckWithContext_10ms_check_10ms", call: typedCtx, byType: true, timeout: 10 * time.Millisecond, duration: 10 * time.Millisecond, want: healthCheckTestDeadlineMessage},
 		{name: "HealthCheckNamed_global_only", call: named, global: 10 * time.Millisecond, duration: 20 * time.Millisecond},
-		{name: "HealthCheckNamed_no_timeout_check_1h", call: named, duration: time.Hour},
+		{name: "HealthCheckNamed_default_check_9999ms", call: named, duration: 9999 * time.Millisecond},
+		{name: "HealthCheckNamed_default_check_1h", call: named, duration: time.Hour, want: healthCheckTestDeadlineMessage},
+		{name: "HealthCheckNamed_negative_check_1h", call: named, timeout: -1, duration: time.Hour},
 	}
 
 	for _, tt := range tests {

@@ -30,8 +30,9 @@ func TestClock_DefaultRealClock(t *testing.T) {
 		{name: "timeout_10ms_real_clock_check_20ms", build: func() *RootScope {
 			return NewWithOpts(&InjectorOpts{HealthCheckTimeout: 10 * time.Millisecond, Clock: RealClock()})
 		}, sleep: 20 * time.Millisecond, want: healthCheckTestDeadlineMessage},
-		{name: "new_no_timeout_check_20ms", build: func() *RootScope { return New() }, sleep: 20 * time.Millisecond},
-		{name: "nil_opts_no_timeout_check_20ms", build: func() *RootScope { return NewWithOpts(nil) }, sleep: 20 * time.Millisecond},
+		{name: "new_default_timeout_check_20ms", build: func() *RootScope { return New() }, sleep: 20 * time.Millisecond},
+		{name: "nil_opts_default_timeout_check_20ms", build: func() *RootScope { return NewWithOpts(nil) }, sleep: 20 * time.Millisecond},
+		{name: "new_default_timeout_check_10s", build: func() *RootScope { return New() }, sleep: 10 * time.Second, want: healthCheckTestDeadlineMessage},
 	}
 
 	for _, tt := range tests {

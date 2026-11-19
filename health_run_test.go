@@ -607,7 +607,9 @@ func TestHealthCheck_JoinerOwnBound(t *testing.T) {
 		{name: "named_single_unbounded_at_10m", timeout: 50 * time.Millisecond, single: -time.Nanosecond, entry: named, advance: 10 * time.Minute},
 		{name: "forced_global_30ms_at_30ms", global: 30 * time.Millisecond, entry: forced, advance: 30 * time.Millisecond, want: healthCheckTestDeadlineMessage},
 		{name: "forced_global_30ms_at_29ms", global: 30 * time.Millisecond, entry: forced, advance: 29 * time.Millisecond},
-		{name: "named_global_30ms_does_not_apply", global: 30 * time.Millisecond, entry: named, advance: 10 * time.Minute},
+		{name: "named_global_30ms_does_not_apply", timeout: -time.Nanosecond, global: 30 * time.Millisecond, entry: named, advance: 10 * time.Minute},
+		{name: "named_default_10s_at_10s", entry: named, advance: 10 * time.Second, want: healthCheckTestDeadlineMessage},
+		{name: "named_default_10s_before_10s", entry: named, advance: 9999 * time.Millisecond},
 	}
 
 	for _, tt := range tests {
@@ -1500,8 +1502,9 @@ func TestHealthCheck_QueuedKeepSlotRule(t *testing.T) {
 		second func(i *RootScope) any
 	}{
 		{
-			name:   "forced_waits_for_slot",
-			holder: true,
+			name:    "forced_waits_for_slot",
+			timeout: -time.Nanosecond, // unbounded: 0 is the 10s default
+			holder:  true,
 			first: func(i *RootScope) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 				defer cancel()

@@ -226,7 +226,7 @@ func (s *RootScope) healthRound(ctx context.Context) {
 	defer cancel()
 	defer context.AfterFunc(roundCtx, cancel)()
 
-	bound := reportBound(s.opts)
+	bound := serviceBound(s.opts, boundScopeWide)
 	covered := s.coveredChecks(containerCheckers(s))
 	m.keepOnly(coveredMembers(covered))
 	s.deliverTransitions()

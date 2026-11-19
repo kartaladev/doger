@@ -269,9 +269,9 @@ func HealthCheckNamed(i Injector, name string) error {
 //
 // The check is bounded, on the injector's clock, by
 // InjectorOpts.HealthCheckSingleTimeout when it is set (a negative value
-// means no bound), and otherwise by HealthCheckTimeout when it is greater
-// than zero, as each check of HealthCheck() is; HealthCheckGlobalTimeout
-// does not apply. HealthCheck, HealthCheckWithContext
+// means no bound), and otherwise by HealthCheckTimeout as each check of
+// HealthCheck() is: 0 means DefaultHealthReportCheckTimeout (10s) and a
+// negative value no bound. HealthCheckGlobalTimeout does not apply. HealthCheck, HealthCheckWithContext
 // and HealthCheckNamed go through this function and follow the same rule.
 //
 // A check of the service already in flight, started by any path, is shared:
@@ -298,21 +298,10 @@ func HealthCheckNamedWithContext(ctx context.Context, i Injector, name string) e
 	}
 
 	opts := injector.RootScope().opts
-	ctx, cancel := healthCheckContextWithin(ctx, opts.Clock, opts.singleHealthCheckTimeout())
+	ctx, cancel := healthCheckContextWithin(ctx, opts.Clock, serviceBound(opts, boundSingle))
 	defer cancel()
 
 	return injector.serviceHealthCheck(ctx, name)
-}
-
-// singleHealthCheckTimeout returns the bound of a single-service health
-// check: HealthCheckSingleTimeout, or HealthCheckTimeout when it is 0. A
-// value of 0 or less means no bound.
-func (o *InjectorOpts) singleHealthCheckTimeout() time.Duration {
-	if o.HealthCheckSingleTimeout != 0 {
-		return o.HealthCheckSingleTimeout
-	}
-
-	return o.HealthCheckTimeout
 }
 
 // healthCheckContextWithin bounds ctx by timeout on clock when timeout is

@@ -13,9 +13,10 @@ const (
 	// DefaultHealthReportCacheTTL is the HealthReportCacheTTL used when it
 	// is 0.
 	DefaultHealthReportCacheTTL = time.Second
-	// DefaultHealthReportCheckTimeout bounds each check a HealthReport read
-	// or a scheduled round waits for when HealthCheckTimeout is 0, so a read
-	// never hangs on a check that ignores its context.
+	// DefaultHealthReportCheckTimeout bounds each health check, on every
+	// path (HealthCheck(), the single-service functions, HealthReport reads
+	// and scheduled rounds), when HealthCheckTimeout is 0, so no call hangs
+	// on a check that ignores its context.
 	DefaultHealthReportCheckTimeout = 10 * time.Second
 )
 
@@ -355,7 +356,7 @@ func coveredMembers(covered []*reportCheck) map[any]healthTarget {
 // checkOnDemand checks, within ctx and the report bound, each of covered
 // that is eligible and that due accepts, sharing checks in flight.
 func (s *RootScope) checkOnDemand(ctx context.Context, covered []*reportCheck, due func(service any) bool) {
-	bound := reportBound(s.opts)
+	bound := serviceBound(s.opts, boundScopeWide)
 
 	for _, c := range covered {
 		if !c.unstarted && due(c.target.wrapper) {
@@ -453,10 +454,25 @@ func (s *RootScope) coveredChecks(targets []healthTarget) []*reportCheck {
 	return covered
 }
 
-// reportBound returns the bound of a check a report read or a round waits
-// for: HealthCheckTimeout, or DefaultHealthReportCheckTimeout when it is 0. A
-// negative value means none.
-func reportBound(opts *InjectorOpts) time.Duration {
+// boundPath is the path a health check is waited for on, which decides its
+// per-service bound (see serviceBound).
+type boundPath int
+
+const (
+	// boundScopeWide: HealthCheck(), report reads and scheduled rounds
+	boundScopeWide boundPath = iota
+	// boundSingle: HealthCheck[T], HealthCheckNamed and their WithContext forms
+	boundSingle
+)
+
+// serviceBound returns the per-service bound of a health check waited for on
+// path: HealthCheckSingleTimeout for a single-service path when it is not 0,
+// otherwise HealthCheckTimeout, or DefaultHealthReportCheckTimeout when it is
+// 0. A negative value means none.
+func serviceBound(opts *InjectorOpts, path boundPath) time.Duration {
+	if path == boundSingle && opts.HealthCheckSingleTimeout != 0 {
+		return opts.HealthCheckSingleTimeout
+	}
 	if opts.HealthCheckTimeout == 0 {
 		return DefaultHealthReportCheckTimeout
 	}

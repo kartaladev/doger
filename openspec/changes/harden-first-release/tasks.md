@@ -266,10 +266,10 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 38. HealthCheckTimeout defaults to 10s
 
-- [ ] 38.1 RED: add `TestHealthCheck_DefaultTimeoutZeroConfig` and update the default rows of `TestHealthCheck_TimeoutOptionsOnClock`, `TestHealthCheck_NotBeforeClockReachesTimeout`, `TestHealthCheck_PerServiceTimeout`, `TestHealthCheck_ConsumerDeadlineOnContextOnly`, `TestHealthCheckSingleTimeout` and `TestHealthCheck_JoinerOwnBound` (health-check-timeouts scenarios); verify `go test -race -run 'TestHealthCheck' .` fails on the default rows
-- [ ] 38.2 GREEN: forced-path and single-service bounds use the report bound (0 → 10s, negative → none) and a global ≤ 0 means no global bound; verify the 38.1 tests pass and `make test` is green
-- [ ] 38.3 REFACTOR: Consolidate Duplicate Conditional Fragments into one `serviceBound(opts, path)` helper; verify `make test` and `make lint` pass
-- [ ] 38.4 Docs: godoc of `HealthCheckTimeout`/`HealthCheckSingleTimeout` and the CHANGELOG/migration row ("set a negative value for unbounded"); verify `go doc InjectorOpts.HealthCheckTimeout` states the default
+- [x] 38.1 RED: add `TestHealthCheck_DefaultTimeoutZeroConfig` and update the default rows of `TestHealthCheck_TimeoutOptionsOnClock`, `TestHealthCheck_NotBeforeClockReachesTimeout`, `TestHealthCheck_PerServiceTimeout`, `TestHealthCheck_ConsumerDeadlineOnContextOnly`, `TestHealthCheckSingleTimeout` and `TestHealthCheck_JoinerOwnBound` (health-check-timeouts scenarios); verify `go test -race -run 'TestHealthCheck' .` fails on the default rows
+- [x] 38.2 GREEN: forced-path and single-service bounds use the report bound (0 → 10s, negative → none) and a global ≤ 0 means no global bound; verify the 38.1 tests pass and `make test` is green
+- [x] 38.3 REFACTOR: Consolidate Duplicate Conditional Fragments into one `serviceBound(opts, path)` helper; verify `make test` and `make lint` pass
+- [x] 38.4 Docs: godoc of `HealthCheckTimeout`/`HealthCheckSingleTimeout` and the CHANGELOG/migration row ("set a negative value for unbounded"); verify `go doc InjectorOpts.HealthCheckTimeout` states the default
 
 ## 39. A Goexit in a check does not block later checks
 

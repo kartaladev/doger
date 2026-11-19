@@ -238,7 +238,7 @@ func (s *RootScope) queueWrapperCheck(ctx context.Context, scope *Scope, name st
 		return nil
 	}
 
-	return s.joinOrStart(waitSpec{ctx: ctx, bound: s.opts.HealthCheckTimeout, pooled: true}, healthTarget{key: name, name: name, scope: scope, wrapper: service}, check)
+	return s.joinOrStart(waitSpec{ctx: ctx, bound: serviceBound(s.opts, boundScopeWide), pooled: true}, healthTarget{key: name, name: name, scope: scope, wrapper: service}, check)
 }
 
 // waitSpec is how a caller waits for a health check: ctx and bound, on the
@@ -744,7 +744,7 @@ func (s *RootScope) startCall(call *sharedCall) {
 // function that stops it from running then. call must be claimed.
 func (s *RootScope) holdSlot(call *sharedCall, release func()) (stop func()) {
 	stopOnDone := context.AfterFunc(call.ctx, release)
-	if bound := reportBound(s.opts); bound > 0 {
+	if bound := serviceBound(s.opts, boundScopeWide); bound > 0 {
 		timer := s.opts.Clock.AfterFunc(bound, release)
 		return func() {
 			timer.Stop()
