@@ -295,8 +295,7 @@ func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 		hook(ctx, s, report)
 	})
 
-	s.dispatchFirstPanic(first)
-	s.dispatchShutdownPanic(panics)
+	s.dispatchShutdownPanics(first, panics)
 
 	return report
 }

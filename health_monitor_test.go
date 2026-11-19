@@ -1325,7 +1325,8 @@ func TestHealthHooks_ContainerAfterService(t *testing.T) {
 }
 
 // TestHealthHooks_AddRacesClone is a race guard: adding health hooks while
-// the root is cloned must not race, and every clone keeps a consistent list.
+// the root is cloned must not race, and a clone taken afterwards has every
+// hook.
 func TestHealthHooks_AddRacesClone(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, 10*time.Second)
@@ -1344,6 +1345,10 @@ func TestHealthHooks_AddRacesClone(t *testing.T) {
 		}
 	})
 	wg.Wait()
+
+	clone := root.Clone()
+	assert.Len(t, clone.hooks.serviceHealthChanged.load(), 200)
+	assert.Len(t, clone.hooks.containerHealthChanged.load(), 200)
 }
 
 func TestHealthHooks_AddNilIgnored(t *testing.T) {

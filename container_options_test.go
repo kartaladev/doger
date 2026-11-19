@@ -568,13 +568,17 @@ func TestContainerOptions_FrameCapPerWrapper(t *testing.T) {
 			}
 		}},
 	}
+	// The off row fails when a wrapper ignores its container's cap. The on
+	// row fails when a wrapper records nothing: in-package callers all
+	// record the same frame, so it cannot tell a cap of 1 from a larger one
+	// (TestContainerOptions_MaxInvocationFrames covers the cap values).
 	caps := []struct {
 		name   string
 		option int
 		want   int // frames "svc" records
 	}{
 		{name: "off", option: -1, want: 0},
-		{name: "cap_1", option: 1, want: 1},
+		{name: "on", option: 1, want: 1},
 	}
 
 	for _, kind := range kinds {

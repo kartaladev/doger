@@ -507,8 +507,7 @@ func (s *Scope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 	panics := &shutdownPanics{}
 	first := hookPanic{services: panics}
 	report := s.shutdownWithContext(ctx, &first)
-	s.rootScope.dispatchFirstPanic(first)
-	s.rootScope.dispatchShutdownPanic(panics)
+	s.rootScope.dispatchShutdownPanics(first, panics)
 
 	return report
 }
@@ -1180,13 +1179,15 @@ func (s *Scope) shutdownServiceOf(ctx context.Context, name string, panics *shut
 // Shutdown or a shutdown hook, for HookContainerPanic.
 type shutdownPanics struct {
 	mu       sync.Mutex
+	scope    *Scope // of the service that panicked
+	service  string
 	value    any
 	panicked bool
 }
 
-// keepFirst keeps value when it is the first panic, and reports whether it
-// did. A nil p keeps nothing.
-func (p *shutdownPanics) keepFirst(value any) bool {
+// keepFirst keeps the panic value of the service name of scope when it is
+// the first panic, and reports whether it did. A nil p keeps nothing.
+func (p *shutdownPanics) keepFirst(scope *Scope, name string, value any) bool {
 	if p == nil {
 		return false
 	}
@@ -1197,8 +1198,16 @@ func (p *shutdownPanics) keepFirst(value any) bool {
 	if p.panicked {
 		return false
 	}
-	p.value, p.panicked = value, true
+	p.scope, p.service, p.value, p.panicked = scope, name, value, true
 	return true
+}
+
+// kept returns the panic p kept, if any.
+func (p *shutdownPanics) kept() (scope *Scope, service string, value any, panicked bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.scope, p.service, p.value, p.panicked
 }
 
 // recordShutdownPanic handles a panic recovered from the shutdown of the
@@ -1206,7 +1215,7 @@ func (p *shutdownPanics) keepFirst(value any) bool {
 // HookContainerPanic when that option is set; any other is logged. panics
 // is nil for a single service shut down by name.
 func (s *Scope) recordShutdownPanic(panics *shutdownPanics, name string, value any) {
-	if s.rootScope.opts.HookContainerPanic != nil && panics.keepFirst(value) {
+	if s.rootScope.opts.HookContainerPanic != nil && panics.keepFirst(s, name, value) {
 		return
 	}
 
@@ -1217,13 +1226,30 @@ func (s *Scope) recordShutdownPanic(panics *shutdownPanics, name string, value a
 // HookContainerPanic, with the point "service-shutdown". Call it once the
 // shutdown is complete; a panic HookContainerPanic raises propagates.
 func (s *RootScope) dispatchShutdownPanic(panics *shutdownPanics) {
-	panics.mu.Lock()
-	value, panicked := panics.value, panics.panicked
-	panics.mu.Unlock()
-
+	_, _, value, panicked := panics.kept()
 	if panicked && s.opts.HookContainerPanic != nil {
 		s.opts.HookContainerPanic(s, "service-shutdown", value)
 	}
+}
+
+// dispatchShutdownPanics dispatches, once a root or child shutdown is
+// complete, its first observer hook panic, then its first service shutdown
+// panic. When the first dispatch raises a panic, the service panic is
+// logged instead of dispatched, so it is never lost.
+func (s *RootScope) dispatchShutdownPanics(first hookPanic, panics *shutdownPanics) {
+	dispatched := false
+	defer func() {
+		if dispatched {
+			return
+		}
+		if scope, service, value, panicked := panics.kept(); panicked {
+			scope.logRecoveredPanic("service-shutdown", service, value)
+		}
+	}()
+
+	s.dispatchFirstPanic(first)
+	dispatched = true
+	s.dispatchShutdownPanic(panics)
 }
 
 // recoverShutdownStep calls step, a hook or a Shutdown call, and returns its

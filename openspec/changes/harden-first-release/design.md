@@ -139,7 +139,7 @@ These three methods are everything the root package uses today.
 | Debug | registration, invocation, build, and the panic value of a recovered panic |
 | Info | container start, ready, closing and closed |
 | Warn | a fallback to an unmonitored container, a health state change to degraded |
-| Error | a health scheduler failure (a stop failure included), a shutdown error, every recovered panic of an operation, the first and the later ones (service name and panic type only) |
+| Error | a health scheduler failure (a stop failure included), a shutdown error, a recovered panic not passed to `HookContainerPanic` (service name and panic type only): the first panic of an operation goes to that hook when it is set, and is logged only when it is not; later panics are logged |
 
 - **Attributes.** Every record carries the attributes `scope` and `service`, where they apply.
 - **Excluded values.** Panic values and health-check error text are emitted only at Debug, to keep secrets out of default logs (audit R3).

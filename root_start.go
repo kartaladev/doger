@@ -186,6 +186,7 @@ func (s *RootScope) keepFirstPanic(first *hookPanic, p hookPanic) {
 		s.logHookPanic(p)
 		return
 	}
+	p.services = first.services // the operation's service panics stay kept
 	*first = p
 }
 

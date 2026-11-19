@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -690,4 +692,149 @@ func TestContainerShutdown_ScopeDuringShutdownRefused(t *testing.T) {
 			assert.Empty(t, parent.Children())
 		})
 	}
+}
+
+// shutdownPanicRecorder records the HookContainerPanic calls it receives.
+type shutdownPanicRecorder struct {
+	mu    sync.Mutex
+	calls []shutdownPanicCall
+}
+
+func (r *shutdownPanicRecorder) hook(_ *RootScope, point string, value any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, shutdownPanicCall{point: point, value: value})
+}
+
+// points returns the points of the recorded calls, in order.
+func (r *shutdownPanicRecorder) points() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	points := make([]string, 0, len(r.calls))
+	for _, call := range r.calls {
+		points = append(points, call.point)
+	}
+	return points
+}
+
+func TestContainerShutdown_ServicePanicReachesHook(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// setup registers a built "svc" panicking in Shutdown and returns the
+		// shutdown to run
+		setup func(t *testing.T, opts *InjectorOpts) func()
+		want  []string
+	}{
+		{
+			name: "container_closing_hook_panics_too",
+			setup: func(t *testing.T, opts *InjectorOpts) func() {
+				t.Helper()
+				opts.HookContainerClosing = []func(context.Context, *RootScope){func(context.Context, *RootScope) { panic("closing boom") }}
+				root := NewWithOpts(opts)
+				provideBuilt(t, root, "svc", &shutdownTestPanicPlain{value: "svc boom"})
+				return func() { root.Shutdown() }
+			},
+			want: []string{"closing", "service-shutdown"},
+		},
+		{
+			name: "scope_closing_hook_panics_too",
+			setup: func(t *testing.T, opts *InjectorOpts) func() {
+				t.Helper()
+				opts.HookScopeClosing = []func(context.Context, *Scope){func(context.Context, *Scope) { panic("scope boom") }}
+				root := NewWithOpts(opts)
+				root.Scope("tenant")
+				provideBuilt(t, root, "svc", &shutdownTestPanicPlain{value: "svc boom"})
+				return func() { root.Shutdown() }
+			},
+			want: []string{"scope-closing", "service-shutdown"},
+		},
+		{
+			name: "child_scope_shutdown",
+			setup: func(t *testing.T, opts *InjectorOpts) func() {
+				t.Helper()
+				root := NewWithOpts(opts)
+				tenant := root.Scope("tenant")
+				provideBuilt(t, tenant, "svc", &shutdownTestPanicPlain{value: "svc boom"})
+				return func() { tenant.Shutdown() }
+			},
+			want: []string{"service-shutdown"},
+		},
+		{
+			name: "child_service_during_root_shutdown",
+			setup: func(t *testing.T, opts *InjectorOpts) func() {
+				t.Helper()
+				root := NewWithOpts(opts)
+				tenant := root.Scope("tenant")
+				provideBuilt(t, tenant, "svc", &shutdownTestPanicPlain{value: "svc boom"})
+				return func() { root.Shutdown() }
+			},
+			want: []string{"service-shutdown"},
+		},
+		{
+			name: "exported_service_during_root_shutdown",
+			setup: func(t *testing.T, opts *InjectorOpts) func() {
+				t.Helper()
+				root := NewWithOpts(opts)
+				tenant := root.Scope("tenant")
+				provideBuilt(t, tenant, "svc", &shutdownTestPanicPlain{value: "svc boom"})
+				require.NoError(t, ExportNamed[*shutdownTestPanicPlain](tenant, "svc"))
+				return func() { root.Shutdown() }
+			},
+			want: []string{"service-shutdown"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			recorder := &shutdownPanicRecorder{}
+			shutdown := tt.setup(t, &InjectorOpts{HookContainerPanic: recorder.hook})
+
+			shutdown()
+
+			assert.Equal(t, tt.want, recorder.points())
+		})
+	}
+}
+
+func TestContainerShutdown_KeptPanicLoggedWhenDispatchStops(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	recorder := newLogRecorder(slog.LevelDebug)
+	root := NewWithOpts(&InjectorOpts{
+		Logger: recorder.logger(),
+		// re-panics on the observer point, so the service panic is never
+		// dispatched
+		HookContainerPanic: func(_ *RootScope, point string, value any) {
+			if point == "closing" {
+				panic(value)
+			}
+		},
+		HookContainerClosing: []func(context.Context, *RootScope){func(context.Context, *RootScope) { panic("closing boom") }},
+	})
+	provideBuilt(t, root, "svc", &shutdownTestPanicPlain{value: "token=hunter2"})
+
+	is.PanicsWithValue("closing boom", func() { root.Shutdown() })
+
+	var recovered []logRecord
+	for _, rec := range recorder.withMessage("panic recovered") {
+		if rec.attrs["point"] == "service-shutdown" && rec.attrs["service"] == "svc" {
+			recovered = append(recovered, rec)
+		}
+	}
+	if is.Len(recovered, 1, "records: %v", recorder.all()) {
+		is.Equal(slog.LevelError, recovered[0].level)
+	}
+	for _, rec := range recorder.all() {
+		if strings.Contains(rec.String(), "hunter2") {
+			is.Equal(slog.LevelDebug, rec.level, "the panic value only at Debug")
+		}
+	}
+	is.NotEmpty(recorder.containing("hunter2"), "the panic value at Debug")
 }

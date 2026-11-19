@@ -383,10 +383,19 @@ type InjectorOpts struct {
 	//   - Warn: an unavailable property source, properties read after
 	//     Extend, and the container health changing to another state;
 	//   - Error: a failed service shutdown, a health scheduler failure or a
-	//     failure of its stop function, and every recovered panic ("panic
-	//     recovered", with its point and type only).
+	//     failure of its stop function, and a recovered panic that is not
+	//     passed to HookContainerPanic ("panic recovered", with its point and
+	//     type only): the first panic of an operation goes to
+	//     HookContainerPanic when it is set, and is logged only when it is
+	//     not; later panics of the operation are logged.
 	// A recovered panic's value, and a health check's error text, appear
 	// only in Debug records, since they could hold secrets.
+	//
+	// The Logger's handler must not panic. A panic it raises on the
+	// caller's goroutine propagates to the caller; one raised on a
+	// goroutine the container runs in the background, such as a service
+	// shutdown or a health check, cannot be recovered by the caller and
+	// crashes the process.
 	// Default (nil): nothing is logged, and no record is built.
 	Logger *slog.Logger
 
