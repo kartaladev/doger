@@ -332,9 +332,9 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 48. Make targets for every workspace module
 
-- [ ] 48.1 Add `make modules`, `test-all`, `lint-all` and `vuln` looping over `go list -m -f '{{.Dir}}'`, continuing past failures and naming the failing module; verify `make modules` lists every `go.work` entry and `make test-all` exits 0
-- [ ] 48.2 Add `scripts/test-make-targets.sh` that plants a failing test and a lint issue in a temp copy of each module and expects a non-zero exit naming it (scenarios "A failure in any module fails make test-all", "An issue in any module fails make lint-all"); verify the script passes
-- [ ] 48.3 Pin tool versions in `make tools` (golangci-lint, govulncheck, benchstat; no `@latest`) and drop `go get -t -u`; verify `grep -c '@latest' Makefile` prints 0
+- [x] 48.1 Add `make modules`, `test-all`, `lint-all` and `vuln` looping over `go list -m -f '{{.Dir}}'`, continuing past failures and naming the failing module; verify `make modules` lists every `go.work` entry and `make test-all` exits 0
+- [x] 48.2 Add `scripts/test-make-targets.sh` that plants a failing test and a lint issue in a temp copy of each module and expects a non-zero exit naming it (scenarios "A failure in any module fails make test-all", "An issue in any module fails make lint-all"); verify the script passes
+- [x] 48.3 Pin tool versions in `make tools` (golangci-lint, govulncheck, benchstat; no `@latest`) and drop `go get -t -u`; verify `grep -c '@latest' Makefile` prints 0
 
 ## 49. Lint configuration and adapter lint fixes
 
