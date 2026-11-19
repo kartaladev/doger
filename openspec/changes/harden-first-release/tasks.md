@@ -293,10 +293,10 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 42. Health enums and reports serialize for monitoring
 
-- [ ] 42.1 RED: add `TestHealthEnums_TextRoundTrip`, `TestHealthEnums_UnmarshalTextRejectsUnknown`, `TestHealthReport_MarshalJSON` and `TestHealthReport_MarshalJSONEdgeCases`; verify `go test -race -run 'TestHealthEnums|TestHealthReport_MarshalJSON' .` fails (no text methods; `Err` marshals as `{}`)
-- [ ] 42.2 GREEN: `MarshalText`/`UnmarshalText` on `HealthState` and `ContainerPhase`, and `MarshalJSON` on `HealthReport`/`ServiceHealth` (error string, omitted zero times, duration string, `[]` services); verify the 42.1 tests pass and `make test` is green
-- [ ] 42.3 REFACTOR: Extract Function `enumText` shared by both enums' `String` and `MarshalText`; verify `make test` and `make lint` pass
-- [ ] 42.4 Docs: add `ExampleHealthReport_json` with `// Output:` and document the JSON shape on the health docs page; verify `go test -run ExampleHealthReport_json .` passes
+- [x] 42.1 RED: add `TestHealthEnums_TextRoundTrip`, `TestHealthEnums_UnmarshalTextRejectsUnknown`, `TestHealthReport_MarshalJSON` and `TestHealthReport_MarshalJSONEdgeCases`; verify `go test -race -run 'TestHealthEnums|TestHealthReport_MarshalJSON' .` fails (no text methods; `Err` marshals as `{}`)
+- [x] 42.2 GREEN: `MarshalText`/`UnmarshalText` on `HealthState` and `ContainerPhase`, and `MarshalJSON` on `HealthReport`/`ServiceHealth` (error string, omitted zero times, duration string, `[]` services); verify the 42.1 tests pass and `make test` is green
+- [x] 42.3 REFACTOR: Extract Function `enumText` shared by both enums' `String` and `MarshalText`; verify `make test` and `make lint` pass
+- [x] 42.4 Docs: add `ExampleHealthReport_json` with `// Output:` and document the JSON shape on the health docs page; verify `go test -run ExampleHealthReport_json .` passes
 
 ## 43. Web UI escapes names and links
 

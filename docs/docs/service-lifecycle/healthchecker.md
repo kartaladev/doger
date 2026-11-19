@@ -141,7 +141,7 @@ The result of a health check does not depend on goroutine scheduling:
 
 ### Single-service checks {#single-service-checks}
 
-`doger.HealthCheck[T]`, `HealthCheckWithContext[T]`, `HealthCheckNamed` and `HealthCheckNamedWithContext` are bounded by `HealthCheckTimeout` when it is greater than zero, exactly like each check of `injector.HealthCheck()`. `HealthCheckGlobalTimeout` does not apply to them, since they check a single service. With `HealthCheckTimeout` at zero they are unbounded, unless your context has a deadline.
+`doger.HealthCheck[T]`, `HealthCheckWithContext[T]`, `HealthCheckNamed` and `HealthCheckNamedWithContext` are bounded by `HealthCheckTimeout`, exactly like each check of `injector.HealthCheck()`: with its default, 0, every check is bounded at 10s (`DefaultHealthReportCheckTimeout`), and a negative value leaves checks unbounded. `HealthCheckGlobalTimeout` does not apply to them, since they check a single service.
 
 To give them a different bound, set `HealthCheckSingleTimeout`: a positive value is their own bound, and a negative value leaves them unbounded. Its default, 0, keeps `HealthCheckTimeout` for them. The checks run by `injector.HealthCheck()` always use `HealthCheckTimeout`.
 
@@ -166,6 +166,38 @@ err := doger.HealthCheckNamedWithContext(ctx, i, "db")
 errors.Is(err, doger.ErrHealthCheckTimeout) // true
 errors.Is(err, context.Canceled)            // true
 ```
+
+## Health report JSON {#health-report-json}
+
+`HealthReport` and `ServiceHealth` marshal to JSON for monitoring endpoints, with lower-camel keys:
+
+```json
+{
+  "state": "unhealthy",
+  "phase": "ready",
+  "monitored": true,
+  "checkedAt": "2026-01-01T00:00:02Z",
+  "services": [
+    {
+      "service": {"scopeId": "<scope id>", "scopeName": "[root]", "service": "db"},
+      "tags": ["readiness"],
+      "optional": false,
+      "state": "unhealthy",
+      "error": "down",
+      "checkedAt": "2026-01-01T00:00:02Z",
+      "duration": "2s"
+    }
+  ]
+}
+```
+
+- `state` and `phase` are the names `HealthState.String()` and `ContainerPhase.String()` return (`unknown`, `healthy`, `degraded`, `unhealthy`; `idle`, `starting`, `started`, `ready`, `failed`, `closing`, `closed`). Both types implement `MarshalText` and `UnmarshalText`.
+- `error` is the error's message, omitted when the check passed.
+- `checkedAt` and `pendingSince` are RFC 3339 times, omitted when zero (no recorded result, no check in flight).
+- `duration` is a Go duration string, such as `"2s"` or `"0s"`.
+- `services` and `tags` are `[]`, never `null`.
+
+To serve another shape, map the exported fields yourself.
 
 ### Testing timeouts with a fake clock {#testing-timeouts-with-a-fake-clock}
 

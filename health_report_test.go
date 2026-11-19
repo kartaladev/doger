@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -2376,5 +2377,179 @@ func BenchmarkHealthReport_Monitored(b *testing.B) {
 		if report := i.HealthReport(); len(report.Services) != 1000 {
 			b.Fatalf("got %d entries", len(report.Services))
 		}
+	}
+}
+
+func TestHealthEnums_TextRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	type textEnum interface {
+		MarshalText() ([]byte, error)
+	}
+
+	tests := []struct {
+		name  string
+		value textEnum
+		text  string // "" when MarshalText fails
+	}{
+		{name: "HealthUnknown", value: HealthUnknown, text: "unknown"},
+		{name: "HealthHealthy", value: HealthHealthy, text: "healthy"},
+		{name: "HealthDegraded", value: HealthDegraded, text: "degraded"},
+		{name: "HealthUnhealthy", value: HealthUnhealthy, text: "unhealthy"},
+		{name: "HealthState_42", value: HealthState(42)},
+		{name: "PhaseIdle", value: PhaseIdle, text: "idle"},
+		{name: "PhaseStarting", value: PhaseStarting, text: "starting"},
+		{name: "PhaseStarted", value: PhaseStarted, text: "started"},
+		{name: "PhaseReady", value: PhaseReady, text: "ready"},
+		{name: "PhaseFailed", value: PhaseFailed, text: "failed"},
+		{name: "PhaseClosing", value: PhaseClosing, text: "closing"},
+		{name: "PhaseClosed", value: PhaseClosed, text: "closed"},
+		{name: "ContainerPhase_minus_1", value: ContainerPhase(-1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			text, err := tt.value.MarshalText()
+			if tt.text == "" {
+				is.Error(err)
+				is.Nil(text)
+				return
+			}
+			is.NoError(err)
+			is.Equal(tt.text, string(text))
+
+			switch value := tt.value.(type) {
+			case HealthState:
+				var decoded HealthState
+				is.NoError(decoded.UnmarshalText(text))
+				is.Equal(value, decoded)
+			case ContainerPhase:
+				var decoded ContainerPhase
+				is.NoError(decoded.UnmarshalText(text))
+				is.Equal(value, decoded)
+			}
+		})
+	}
+}
+
+func TestHealthEnums_UnmarshalTextRejectsUnknown(t *testing.T) {
+	t.Parallel()
+
+	for _, text := range []string{"", "Healthy", "bogus"} {
+		t.Run(fmt.Sprintf("%q", text), func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			state, phase := HealthHealthy, PhaseReady
+			is.Error(state.UnmarshalText([]byte(text)))
+			is.Error(phase.UnmarshalText([]byte(text)))
+			is.Equal(HealthHealthy, state)
+			is.Equal(PhaseReady, phase)
+		})
+	}
+}
+
+// healthReportTestAdvancing is a check that advances clock by 2s and
+// returns err.
+type healthReportTestAdvancing struct {
+	clock *fakeClock
+	err   error
+}
+
+func (c *healthReportTestAdvancing) HealthCheck() error {
+	c.clock.Advance(2 * time.Second)
+	return c.err
+}
+
+func TestHealthReport_MarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		result error
+		json   string // %s is the root scope ID
+	}{
+		{
+			name: "healthy",
+			json: `{"state":"healthy","phase":"idle","monitored":false,"checkedAt":"2026-01-01T00:00:02Z","services":[{"service":{"scopeId":"%s","scopeName":"[root]","service":"db"},"tags":["readiness"],"optional":false,"state":"healthy","checkedAt":"2026-01-01T00:00:02Z","duration":"2s"}]}`,
+		},
+		{
+			name:   "down",
+			result: errors.New("down"),
+			json:   `{"state":"unhealthy","phase":"idle","monitored":false,"checkedAt":"2026-01-01T00:00:02Z","services":[{"service":{"scopeId":"%s","scopeName":"[root]","service":"db"},"tags":["readiness"],"optional":false,"state":"unhealthy","error":"down","checkedAt":"2026-01-01T00:00:02Z","duration":"2s"}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fc := newFakeClockAt(healthReportTestEpoch)
+			i := NewWithOpts(&InjectorOpts{Clock: fc})
+			ProvideNamedValue(i, "db", &healthReportTestAdvancing{clock: fc, err: tt.result}, WithHealthTags(HealthTagReadiness))
+			r := i.HealthReport()
+
+			data, err := json.Marshal(r)
+			require.NoError(t, err)
+			assert.JSONEq(t, fmt.Sprintf(tt.json, i.ID()), string(data))
+		})
+	}
+}
+
+func TestHealthReport_MarshalJSONEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	db := ServiceDescription{ScopeID: "root-id", ScopeName: "[root]", Service: "db"}
+
+	tests := []struct {
+		name   string
+		report HealthReport
+		check  func(t *testing.T, decoded map[string]any)
+	}{
+		{
+			name:   "zero_report",
+			report: HealthReport{},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				assert.Equal(t, map[string]any{"state": "unknown", "phase": "idle", "monitored": false, "services": []any{}}, decoded)
+			},
+		},
+		{
+			name:   "in_flight_entry",
+			report: HealthReport{Services: []ServiceHealth{{Service: db, PendingSince: healthReportTestEpoch}}},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				entry := decoded["services"].([]any)[0].(map[string]any) //nolint:forcetypeassert
+				assert.Equal(t, "unknown", entry["state"])
+				assert.Equal(t, "2026-01-01T00:00:00Z", entry["pendingSince"])
+				assert.Equal(t, "0s", entry["duration"])
+				assert.NotContains(t, entry, "error")
+				assert.NotContains(t, entry, "checkedAt")
+			},
+		},
+		{
+			name:   "wrapped_error",
+			report: HealthReport{Services: []ServiceHealth{{Service: db, State: HealthUnhealthy, Err: fmt.Errorf("ping: %w", context.DeadlineExceeded)}}},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				entry := decoded["services"].([]any)[0].(map[string]any) //nolint:forcetypeassert
+				assert.Equal(t, "ping: context deadline exceeded", entry["error"])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			data, err := json.Marshal(tt.report)
+			require.NoError(t, err)
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(data, &decoded), string(data))
+			tt.check(t, decoded)
+		})
 	}
 }

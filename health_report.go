@@ -3,6 +3,7 @@ package doger
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -36,21 +37,61 @@ const (
 	HealthUnhealthy
 )
 
+// healthStateNames are the names of the HealthState constants, by value.
+var healthStateNames = []string{"unknown", "healthy", "degraded", "unhealthy"}
+
 // String returns the lower-case state name, or "HealthState(n)" for an
 // unknown value.
 func (s HealthState) String() string {
-	switch s {
-	case HealthUnknown:
-		return "unknown"
-	case HealthHealthy:
-		return "healthy"
-	case HealthDegraded:
-		return "degraded"
-	case HealthUnhealthy:
-		return "unhealthy"
-	default:
-		return fmt.Sprintf("HealthState(%d)", int(s))
+	if name, ok := enumText(s, healthStateNames); ok {
+		return name
 	}
+
+	return fmt.Sprintf("HealthState(%d)", int(s))
+}
+
+// MarshalText encodes the state as its String form, so JSON shows it by
+// name. A value outside the declared constants fails.
+func (s HealthState) MarshalText() ([]byte, error) {
+	name, ok := enumText(s, healthStateNames)
+	if !ok {
+		return nil, libErrorf("invalid health state %d", int(s))
+	}
+
+	return []byte(name), nil
+}
+
+// UnmarshalText decodes the String form of a state. Any other text fails
+// and leaves s unchanged.
+func (s *HealthState) UnmarshalText(text []byte) error {
+	value, ok := enumValue[HealthState](text, healthStateNames)
+	if !ok {
+		return libErrorf("unknown health state %q", text)
+	}
+	*s = value
+
+	return nil
+}
+
+// enumText returns the name of value among names, indexed by value, and
+// false for a value outside them.
+func enumText[E ~int](value E, names []string) (string, bool) {
+	if value < 0 || int(value) >= len(names) {
+		return "", false
+	}
+
+	return names[value], true
+}
+
+// enumValue returns the value whose name among names is text, and false
+// when none is.
+func enumValue[E ~int](text []byte, names []string) (E, bool) {
+	index := slices.Index(names, string(text))
+	if index < 0 {
+		return 0, false
+	}
+
+	return E(index), true
 }
 
 // ServiceHealth is the entry of one health-checked service in a
@@ -97,6 +138,78 @@ type HealthReport struct {
 	CheckedAt time.Time
 	// Services holds one entry per covered health check.
 	Services []ServiceHealth
+}
+
+// serviceHealthJSON is the JSON form of a ServiceHealth.
+type serviceHealthJSON struct {
+	Service      ServiceDescription `json:"service"`
+	Tags         []string           `json:"tags"`
+	Optional     bool               `json:"optional"`
+	State        HealthState        `json:"state"`
+	Error        string             `json:"error,omitempty"`
+	CheckedAt    *time.Time         `json:"checkedAt,omitempty"`
+	PendingSince *time.Time         `json:"pendingSince,omitempty"`
+	Duration     string             `json:"duration"`
+}
+
+// MarshalJSON encodes the entry with lower-camel keys: the state by name,
+// the error as its message (omitted when nil), CheckedAt and PendingSince in
+// RFC 3339 (omitted when zero) and Duration as a Go duration string.
+func (h ServiceHealth) MarshalJSON() ([]byte, error) {
+	entry := serviceHealthJSON{
+		Service:      h.Service,
+		Tags:         h.Tags,
+		Optional:     h.Optional,
+		State:        h.State,
+		CheckedAt:    nonZeroTime(h.CheckedAt),
+		PendingSince: nonZeroTime(h.PendingSince),
+		Duration:     h.Duration.String(),
+	}
+	if entry.Tags == nil {
+		entry.Tags = []string{}
+	}
+	if h.Err != nil {
+		entry.Error = h.Err.Error()
+	}
+
+	return json.Marshal(entry)
+}
+
+// healthReportJSON is the JSON form of a HealthReport.
+type healthReportJSON struct {
+	State     HealthState     `json:"state"`
+	Phase     ContainerPhase  `json:"phase"`
+	Monitored bool            `json:"monitored"`
+	CheckedAt *time.Time      `json:"checkedAt,omitempty"`
+	Services  []ServiceHealth `json:"services"`
+}
+
+// MarshalJSON encodes the report for monitoring, with lower-camel keys: the
+// state and phase by name, CheckedAt in RFC 3339 (omitted when zero) and
+// services as an array, [] when there is none; see ServiceHealth.MarshalJSON
+// for each entry.
+func (r HealthReport) MarshalJSON() ([]byte, error) {
+	report := healthReportJSON{
+		State:     r.State,
+		Phase:     r.Phase,
+		Monitored: r.Monitored,
+		CheckedAt: nonZeroTime(r.CheckedAt),
+		Services:  r.Services,
+	}
+	if report.Services == nil {
+		report.Services = []ServiceHealth{}
+	}
+
+	return json.Marshal(report)
+}
+
+// nonZeroTime returns &t, or nil for the zero time, so JSON omits it.
+func nonZeroTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+
+	return &t
 }
 
 // stateOf returns the state of a check that returned result: healthy for
