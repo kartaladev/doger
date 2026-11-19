@@ -346,15 +346,22 @@ func abortOutcome(ctx context.Context, err error) error {
 	cause := shutdownCause(ctx)
 	switch {
 	case err == nil:
-		return fmt.Errorf("doger: start aborted: %w", cause)
+		return libErrorf("start aborted: %w", cause)
 	case errors.Is(err, ErrStartAfterShutdown):
 		return err
 	case errors.Is(err, context.Cause(ctx)):
 		// carries the caller's cause already
-		return fmt.Errorf("%w (start aborted: %w)", err, ErrStartAfterShutdown)
+		return abortedWith(err, ErrStartAfterShutdown)
 	default:
-		return fmt.Errorf("%w (start aborted: %w)", err, cause)
+		return abortedWith(err, cause)
 	}
+}
+
+// abortedWith returns err followed by the abort cause, as
+// "<err> (start aborted: <cause>)". The message is led by err, so it carries
+// the library prefix only when err does.
+func abortedWith(err, cause error) error {
+	return ledErrorf(err, "%w (start aborted: %w)", cause)
 }
 
 // shutdownCause returns the cause of the run's cancellation, made to match
@@ -429,7 +436,7 @@ func (s *RootScope) runPipeline(ctx context.Context, roots []*Scope) (closing bo
 // with it.
 func (s *RootScope) runStartingHooks(startCtx context.Context) error {
 	if err := runVetoHooks(startCtx, s.hooks.containerStarting.load(), s, startingHookPanicError("container")); err != nil {
-		return withAbortCause(startCtx, fmt.Errorf("doger: container start aborted: %w", err))
+		return withAbortCause(startCtx, libErrorf("container start aborted: %w", err))
 	}
 
 	return nil
@@ -813,10 +820,10 @@ func instanceIsStarter(instance any) bool {
 // is wrapped, so errors.Is and errors.As reach it.
 func recoverAsError(r any) error {
 	if err, ok := r.(error); ok {
-		return fmt.Errorf("doger: recovered panic: %w", err)
+		return libErrorf("recovered panic: %w", err)
 	}
 
-	return fmt.Errorf("doger: recovered panic: %v", r)
+	return libErrorf("recovered panic: %v", r)
 }
 
 // checkAbort returns an error wrapping the cause when the Start-time context
@@ -824,7 +831,7 @@ func recoverAsError(r any) error {
 // cancelled Start.
 func checkAbort(startCtx context.Context) error {
 	if startCtx.Err() != nil {
-		return fmt.Errorf("doger: start aborted: %w", context.Cause(startCtx))
+		return libErrorf("start aborted: %w", context.Cause(startCtx))
 	}
 
 	return nil
@@ -834,7 +841,7 @@ func checkAbort(startCtx context.Context) error {
 // the step failed while the Start-time context was done.
 func withAbortCause(startCtx context.Context, err error) error {
 	if startCtx.Err() != nil {
-		return fmt.Errorf("%w (start aborted: %w)", err, context.Cause(startCtx))
+		return abortedWith(err, context.Cause(startCtx))
 	}
 
 	return err

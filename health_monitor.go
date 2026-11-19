@@ -169,7 +169,7 @@ func (s *RootScope) callScheduler(scheduler HealthScheduler) (stop func(context.
 	switch {
 	case panicked && s.opts.HookContainerPanic != nil:
 		s.opts.HookContainerPanic(s, "healthscheduler", recovered)
-		return nil, fmt.Errorf("doger: health scheduler panicked: %v", recovered)
+		return nil, libErrorf("health scheduler panicked: %v", recovered)
 	case panicked:
 		s.logRecoveredPanic("healthscheduler", "", recovered)
 		err = fmt.Errorf("%v", recovered)

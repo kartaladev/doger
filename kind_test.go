@@ -116,7 +116,7 @@ func TestKind_InterfaceRegistration(t *testing.T) {
 		{
 			name:     "instance_without_run",
 			instance: &kindPlain{},
-			errMsg:   "doger: service `life` does not implement `doger.Job` required by kind `scheduled`",
+			errMsg:   "doger: failed to build service `life` in scope `[root]`: service `life` does not implement `doger.Job` required by kind `scheduled`",
 			received: []string{},
 		},
 	}
@@ -138,7 +138,7 @@ func TestKind_InterfaceRegistration(t *testing.T) {
 			if tt.errMsg == "" {
 				is.NoError(err)
 			} else {
-				is.ErrorContains(err, tt.errMsg)
+				is.EqualError(err, tt.errMsg)
 			}
 			is.Equal(tt.received, rec.names())
 		})

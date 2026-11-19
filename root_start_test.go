@@ -753,7 +753,7 @@ func TestStart_AsStarterInstanceWithoutStart(t *testing.T) {
 
 	err := root.Start()
 
-	assert.ErrorContains(t, err, "doger: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
+	assert.EqualError(t, err, "doger: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
 }
 
 func TestStart_ShutdownAfterFailure(t *testing.T) {
@@ -1227,7 +1227,7 @@ func TestStartError_Fields(t *testing.T) {
 				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return nil, errBuild })
 			},
 			service: "b", op: StartOpBuild, cause: errBuild,
-			message: "doger: failed to build service `b` in scope `[root]`: doger: service \"b\" in scope \"[root]\": build failed",
+			message: "doger: failed to build service `b` in scope `[root]`: build failed",
 		},
 		{
 			name: "Start returns errBoom",
@@ -1253,7 +1253,7 @@ func TestStartError_Fields(t *testing.T) {
 				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return &startWithErr{}, nil }, DependsOnNamed("missing"))
 			},
 			service: "b", op: StartOpBuild, cause: ErrServiceNotFound,
-			message: "doger: failed to build service `b` in scope `[root]`: doger: service \"b\" in scope \"[root]\": could not find service `missing`, available services: `b`, path: `b` -> `missing`",
+			message: "doger: failed to build service `b` in scope `[root]`: could not find service `missing`, available services: `b`, path: `b` -> `missing`",
 		},
 	}
 
@@ -1276,6 +1276,7 @@ func TestStartError_Fields(t *testing.T) {
 			is.Equal(tt.op, startErr.Op)
 			is.ErrorIs(err, tt.cause)
 			is.EqualError(err, tt.message)
+			is.Equal(1, strings.Count(err.Error(), "doger: "), "the doger prefix appears once")
 		})
 	}
 }
@@ -2239,14 +2240,20 @@ func TestAbortOutcome(t *testing.T) {
 		want   string
 		same   bool // the result is returned unchanged
 	}{
-		{name: "Shutdown cause, nil", cause: ErrStartAfterShutdown, want: "doger: start aborted: doger: container is shut down"},
-		{name: "caller cause, nil", want: "doger: start aborted: doger: container is shut down: context canceled"},
-		{name: "Shutdown cause, failure", cause: ErrStartAfterShutdown, result: errBoom, want: "boom (start aborted: doger: container is shut down)"},
-		{name: "caller cause, failure", result: errBoom, want: "boom (start aborted: doger: container is shut down: context canceled)"},
+		{name: "Shutdown cause, nil", cause: ErrStartAfterShutdown, want: "doger: start aborted: container is shut down"},
+		{name: "caller cause, nil", want: "doger: start aborted: container is shut down: context canceled"},
+		{name: "Shutdown cause, failure", cause: ErrStartAfterShutdown, result: errBoom, want: "boom (start aborted: container is shut down)"},
+		{name: "caller cause, failure", result: errBoom, want: "boom (start aborted: container is shut down: context canceled)"},
 		{
 			name:   "caller cause, failure carrying it",
 			result: fmt.Errorf("boom (start aborted: %w)", context.Canceled),
-			want:   "boom (start aborted: context canceled) (start aborted: doger: container is shut down)",
+			want:   "boom (start aborted: context canceled) (start aborted: container is shut down)",
+		},
+		{
+			name:   "Shutdown cause, library failure",
+			cause:  ErrStartAfterShutdown,
+			result: newStartError(StartOpStart, nil, "db", "", errBoom),
+			want:   "doger: failed to start service `db` in scope ``: boom (start aborted: container is shut down)",
 		},
 		{name: "caller cause, failure already aborted", result: alreadyAborted, want: alreadyAborted.Error(), same: true},
 	}

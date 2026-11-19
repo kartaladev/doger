@@ -206,9 +206,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 30. Start messages carry one doger prefix
 
-- [ ] 30.1 RED: update the expected messages in `TestAbortOutcome`, `TestStartError_ConsumerBuilt`, `TestStart_AsStarterInstanceWithoutStart`, `TestKind_InvalidValues` and `TestKind_InterfaceRegistration` to a single `doger: ` prefix and add a "contains doger: once" assertion to `TestStartError_Fields` (scenarios "The abort outcome rule", "StartError values built by the consumer"); verify `go test -race -run 'TestAbortOutcome|TestStartError_' .` fails on the messages
-- [ ] 30.2 GREEN: switch StartError, abort and kind messages to the shared prefix helper so wrapped sentinel text loses its own prefix (consumer-led abort text stays unprefixed); verify the 30.1 tests pass and `make test` is green
-- [ ] 30.3 REFACTOR: Extract Function for abort-message composition if still duplicated between Start and incremental start; verify `make test` and `make lint` pass
+- [x] 30.1 RED: update the expected messages in `TestAbortOutcome`, `TestStartError_ConsumerBuilt`, `TestStart_AsStarterInstanceWithoutStart`, `TestKind_InvalidValues` and `TestKind_InterfaceRegistration` to a single `doger: ` prefix and add a "contains doger: once" assertion to `TestStartError_Fields` (scenarios "The abort outcome rule", "StartError values built by the consumer"); verify `go test -race -run 'TestAbortOutcome|TestStartError_' .` fails on the messages
+- [x] 30.2 GREEN: switch StartError, abort and kind messages to the shared prefix helper so wrapped sentinel text loses its own prefix (consumer-led abort text stays unprefixed); verify the 30.1 tests pass and `make test` is green
+- [x] 30.3 REFACTOR: Extract Function for abort-message composition if still duplicated between Start and incremental start; verify `make test` and `make lint` pass
 
 ## 31. Root shutdown winner test uses the Logger
 
