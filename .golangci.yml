@@ -74,9 +74,6 @@ linters:
           - revive
         text: "^unused-parameter:"
       - linters:
-          - revive
-        text: "^package-comments:"
-      - linters:
           - errcheck
         text: "Error return value of `.*\\.Body\\.Close` is not checked"
       # linters disabled in tests
