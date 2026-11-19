@@ -49,7 +49,7 @@ if err := doger.DeclareDependency(injector, "scheduler", "job"); err != nil {
 // on Shutdown: the scheduler stops before the job
 ```
 
-- `dependent` is resolved from the injector (`nil` means `DefaultRootScope`); `dependency` is resolved from the **dependent's own scope or its ancestors**, as `Invoke` would. An edge therefore always points to the same scope or an ancestor, which keeps it consistent with children-first shutdown.
+- `dependent` is resolved from the injector (a nil injector gives an error matching `doger.ErrNilInjector`); `dependency` is resolved from the **dependent's own scope or its ancestors**, as `Invoke` would. An edge therefore always points to the same scope or an ancestor, which keeps it consistent with children-first shutdown.
 - An unresolved name returns an error matching `doger.ErrServiceNotFound`.
 - If `dependency` already reaches `dependent`, through recorded edges or static `DependsOn` declarations (even of services not built yet), the call returns an error matching `doger.ErrCircularDependency`. A service cannot depend on itself.
 - Declaring the same edge twice changes nothing. Concurrent calls are safe.

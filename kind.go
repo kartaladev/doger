@@ -87,7 +87,7 @@ func (k Kind[T, M]) With(meta M) ProvideOption {
 	}
 }
 
-// Handle registers the kind's handler on root (nil means [DefaultRootScope]).
+// Handle registers the kind's handler on root.
 // A later call for the same kind replaces both handler and stage; handlers
 // of one stage run kind by kind, in the order kinds were first given a
 // handler. Opted-in services of a kind without a handler are built at Start,
@@ -101,7 +101,8 @@ func (k Kind[T, M]) With(meta M) ProvideOption {
 // [DeclareDependency]; edges declared during [StageBeforeStart] order the
 // Starters of the same Start. Do not call Shutdown from a handler.
 //
-// Handle panics on a zero Kind, an unknown stage or a nil handler.
+// Handle panics on a zero Kind, an unknown stage, a nil handler or a nil
+// root (with [ErrNilInjector]).
 func (k Kind[T, M]) Handle(root *RootScope, stage Stage, handler func(context.Context, Component[T, M]) error) {
 	k.mustBeCreated()
 	if stage != StageBeforeStart && stage != StageAfterStart {
@@ -111,7 +112,7 @@ func (k Kind[T, M]) Handle(root *RootScope, stage Stage, handler func(context.Co
 		panic(libErrorf("nil handler for kind `%s`", k.id.name))
 	}
 	if root == nil {
-		root = DefaultRootScope
+		panic(ErrNilInjector)
 	}
 
 	entry := k.newEntry(stage, handler)

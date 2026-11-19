@@ -29,7 +29,7 @@ A service is a member when the type it was **registered** with is assignable to 
 - lazy members are built as needed, eager values are returned as is, and transient members give a new instance on every call;
 - a provider returning a typed nil (for example a nil `*NoopHandler`) gives a nil element wrapped in `T`.
 
-A nil injector means `doger.DefaultRootScope`.
+A nil injector gives an error matching `doger.ErrNilInjector`.
 
 :::warning
 

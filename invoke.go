@@ -30,7 +30,10 @@ func invokeAnyByName(i Injector, name string) (any, error) {
 // invokeAnyByNameAs is invokeAnyByName recording the dependency edge, when
 // invoked from a provider, with the given source.
 func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, error) {
-	injector := getInjectorOrDefault(i)
+	injector, err := getInjector(i)
+	if err != nil {
+		return nil, err
+	}
 
 	vScope, isVirtualScope := injector.(*virtualScope)
 
@@ -82,7 +85,10 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 // This function is used internally by the DI container for type-safe service resolution.
 // It ensures that the returned service matches the expected type T.
 func invokeByName[T any](i Injector, name string) (T, error) {
-	injector := getInjectorOrDefault(i)
+	injector, err := getInjector(i)
+	if err != nil {
+		return empty[T](), err
+	}
 
 	vScope, isVirtualScope := injector.(*virtualScope)
 
@@ -133,7 +139,10 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 //
 // Returns the service instance with the correct type and any error that occurred during invocation.
 func invokeByGenericType[T any](i Injector) (T, error) {
-	injector := getInjectorOrDefault(i)
+	injector, err := getInjector(i)
+	if err != nil {
+		return empty[T](), err
+	}
 	serviceAliasName := inferServiceName[T]()
 
 	vScope, _ := injector.(*virtualScope)
@@ -737,7 +746,10 @@ func scopeDepth(scope *Scope) int {
 //
 // The implicit-aliasing fallback selects among matching services like invokeByGenericType.
 func invokeByTags(i Injector, structName string, structValue reflect.Value, implicitAliasing bool) error { //nolint:gocyclo
-	injector := getInjectorOrDefault(i)
+	injector, err := getInjector(i)
+	if err != nil {
+		return err
+	}
 
 	// Ensure that servicePtr is a pointer to a struct
 	if structValue.Kind() != reflect.Pointer || structValue.Elem().Kind() != reflect.Struct {

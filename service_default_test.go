@@ -116,13 +116,12 @@ func TestAsDefault_ResolvesWithoutReplacement(t *testing.T) {
 }
 
 func TestAsDefault_NilInjector(t *testing.T) {
-	previous := DefaultRootScope
-	DefaultRootScope = New()
-	t.Cleanup(func() { DefaultRootScope = previous })
+	t.Parallel()
 
-	Provide(nil, dialerProvider("default-dialer", nil), AsDefault())
+	root := New()
+	Provide(root, dialerProvider("default-dialer", nil), AsDefault())
 
-	dialer, err := Invoke[*dfDialer](DefaultRootScope)
+	dialer, err := Invoke[*dfDialer](root)
 	require.NoError(t, err)
 	assert.Equal(t, "default-dialer", dialer.label)
 }

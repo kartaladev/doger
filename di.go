@@ -188,7 +188,7 @@ func ProvideNamedTransient[T any](i Injector, name string, provider Provider[T],
 // - The service is properly created and stored
 // - Logging is performed for successful registration.
 func provide[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T], opts []ProvideOption) {
-	_i := getInjectorOrDefault(i)
+	_i := mustInjector(i)
 	scope := injectorScope(_i)
 	options := buildServiceOptions(opts)
 
@@ -427,7 +427,7 @@ func OverrideNamedTransient[T any](i Injector, name string, provider Provider[T]
 // for overriding services in the DI container. Unlike provide, it allows
 // replacing existing services without throwing an error.
 func override[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T], opts []ProvideOption) {
-	_i := getInjectorOrDefault(i)
+	_i := mustInjector(i)
 
 	// Note: We don't check if the service exists here, allowing override
 	service := serviceCtor(name, valueOrProvider)
@@ -694,12 +694,16 @@ func MustAs[Initial any, Alias any](i Injector) {
 //	// Retrieve using the alias name
 //	db := doger.MustInvokeNamed[Database](injector, "db-interface")
 func AsNamed[Initial any, Alias any](i Injector, initial string, alias string) error {
+	_i, err := getInjector(i)
+	if err != nil {
+		return err
+	}
+
 	// first, we check if Initial can be cast to Alias
 	if !genericCanCastToGeneric[Initial, Alias]() {
 		return libErrorf("`%s` does not implement `%s`", initial, alias)
 	}
 
-	_i := getInjectorOrDefault(i)
 	if ok := _i.serviceExistRec(initial); !ok {
 		return libErrorf("service `%s` has not been declared", initial)
 	}
@@ -735,8 +739,8 @@ func MustAsNamed[Initial any, Alias any](i Injector, initial string, alias strin
 /////////////////////////////////////////////////////////////////////////////
 
 // InvokeAll invokes every visible service whose registered type is
-// assignable to T, and returns them as a slice. A nil injector means
-// [DefaultRootScope].
+// assignable to T, and returns them as a slice. A nil injector gives
+// [ErrNilInjector].
 //
 // Membership is decided by registered type, without building anything: a
 // service is a member when the type it was registered with is assignable to
@@ -777,7 +781,12 @@ func MustAsNamed[Initial any, Alias any](i Injector, initial string, alias strin
 // members give a new instance on every call. Resolve once and keep the
 // result outside hot loops.
 func InvokeAll[T any](i Injector) ([]T, error) {
-	return invokeAllByGenericType[T](collectionFrom(getInjectorOrDefault(i)))
+	injector, err := getInjector(i)
+	if err != nil {
+		return nil, err
+	}
+
+	return invokeAllByGenericType[T](collectionFrom(injector))
 }
 
 // MustInvokeAll is like [InvokeAll] but panics with the error InvokeAll
@@ -790,7 +799,12 @@ func MustInvokeAll[T any](i Injector) []T {
 // name, under the same visibility, alias, self-exclusion, shadowing and
 // failure rules. With no match, it returns an empty, non-nil map.
 func InvokeAllMap[T any](i Injector) (map[string]T, error) {
-	return invokeAllMapByGenericType[T](collectionFrom(getInjectorOrDefault(i)))
+	injector, err := getInjector(i)
+	if err != nil {
+		return nil, err
+	}
+
+	return invokeAllMapByGenericType[T](collectionFrom(injector))
 }
 
 // MustInvokeAllMap is like [InvokeAllMap] but panics with the error

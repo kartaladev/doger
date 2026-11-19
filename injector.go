@@ -94,19 +94,35 @@ type Injector interface {
 	onServiceInvoke(string)
 }
 
-// getInjectorOrDefault returns the provided injector if it's not nil, otherwise returns the default root scope.
-// This function ensures that DI operations always have a valid injector to work with.
-//
-// Parameters:
-//   - i: The injector to check, can be nil
-//
-// Returns the provided injector if not nil, or DefaultRootScope if nil.
-func getInjectorOrDefault(i Injector) Injector {
-	if i != nil {
-		return i
+// getInjector returns i, or ErrNilInjector when i is nil or a typed-nil
+// *RootScope or *Scope.
+func getInjector(i Injector) (Injector, error) {
+	switch injector := i.(type) {
+	case nil:
+		return nil, ErrNilInjector
+	case *RootScope:
+		if injector == nil {
+			return nil, ErrNilInjector
+		}
+	case *Scope:
+		if injector == nil {
+			return nil, ErrNilInjector
+		}
 	}
 
-	return DefaultRootScope
+	return i, nil
+}
+
+// mustInjector returns i, or panics with ErrNilInjector when i is nil or a
+// typed-nil *RootScope or *Scope, for the entry points without an error
+// result.
+func mustInjector(i Injector) Injector {
+	injector, err := getInjector(i)
+	if err != nil {
+		panic(err)
+	}
+
+	return injector
 }
 
 // InjectorOpts contains all configuration options for the dependency injection container.

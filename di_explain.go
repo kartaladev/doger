@@ -282,7 +282,7 @@ func ExplainService[T any](i Injector) (description ExplainServiceOutput, ok boo
 //		    fmt.Println(explanation.String())
 //		}
 func ExplainNamedService(scope Injector, name string) (description ExplainServiceOutput, ok bool) {
-	_i := getInjectorOrDefault(scope)
+	_i := mustInjector(scope)
 
 	serviceAny, serviceScope, ok := _i.serviceGetRec(name)
 	if !ok {
@@ -578,7 +578,7 @@ func (idss *ExplainInjectorServiceOutput) String() string {
 //	 |   |   * 🏭 Logger
 //	 |   |   * 🔗 DatabaseInterface
 func ExplainInjector(scope Injector) ExplainInjectorOutput {
-	_i := getInjectorOrDefault(scope)
+	_i := mustInjector(scope)
 
 	ancestors := append([]Injector{_i}, castScopesToInjectors(_i.Ancestors())...)
 	reverseSlice(ancestors) // root scope first

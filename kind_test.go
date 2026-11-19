@@ -261,20 +261,17 @@ func TestKind_ReplaceHandler(t *testing.T) {
 	assert.Equal(t, []string{"start server", "second"}, events.list())
 }
 
-// TestKind_NilRootUsesDefault is not parallel: it replaces DefaultRootScope.
 func TestKind_NilRootUsesDefault(t *testing.T) {
+	t.Parallel()
 	testWithTimeout(t, time.Second)
 
-	previous := DefaultRootScope
-	DefaultRootScope = New()
-	t.Cleanup(func() { DefaultRootScope = previous })
-
+	root := New()
 	k := NewKind[Job, Spec]("k")
-	ProvideNamed(DefaultRootScope, "job", func(Injector) (*CleanupJob, error) { return &CleanupJob{}, nil }, k.With(Spec{}))
+	ProvideNamed(root, "job", func(Injector) (*CleanupJob, error) { return &CleanupJob{}, nil }, k.With(Spec{}))
 	rec := &componentRecorder[Job, Spec]{}
-	k.Handle(nil, StageBeforeStart, rec.handler)
+	k.Handle(root, StageBeforeStart, rec.handler)
 
-	require.NoError(t, DefaultRootScope.Start())
+	require.NoError(t, root.Start())
 	assert.Equal(t, []string{"job"}, rec.names())
 }
 

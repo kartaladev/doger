@@ -1,7 +1,9 @@
 package doger
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -235,4 +237,80 @@ func TestResolutionErrors_OverrideNoError(t *testing.T) {
 	got, err := InvokeNamed[int](root, "db")
 	require.NoError(t, err)
 	is.Equal(2, got)
+}
+
+type nilInjectorApp struct {
+	DB int `do:"db"`
+}
+
+func TestResolutionErrors_NilInjectorReturnsError(t *testing.T) {
+	t.Parallel()
+
+	var typedNilRoot *RootScope
+	var typedNilScope *Scope
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{name: "invoke", call: func() error { _, err := Invoke[int](nil); return err }},
+		{name: "invoke_named", call: func() error { _, err := InvokeNamed[int](nil, "db"); return err }},
+		{name: "invoke_as", call: func() error { _, err := InvokeAs[fmt.Stringer](nil); return err }},
+		{name: "invoke_all", call: func() error { _, err := InvokeAll[int](nil); return err }},
+		{name: "invoke_struct", call: func() error { _, err := InvokeStruct[nilInjectorApp](nil); return err }},
+		{name: "health_check_named", call: func() error { return HealthCheckNamed(nil, "db") }},
+		{name: "shutdown_named", call: func() error { return ShutdownNamed(nil, "db") }},
+		{name: "alias_named", call: func() error { return AsNamed[int, int](nil, "a", "b") }},
+		{name: "declare_dependency", call: func() error { return DeclareDependency(nil, "a", "b") }},
+		{name: "typed_nil_root_invoke", call: func() error { _, err := Invoke[int](typedNilRoot); return err }},
+		{name: "typed_nil_scope_invoke_named", call: func() error { _, err := InvokeNamed[int](typedNilScope, "db"); return err }},
+		{name: "extend_nil_root", call: func() error { return Extend(nil, &testExtension{name: "redis"}) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			err := tt.call()
+
+			is.ErrorIs(err, ErrNilInjector)
+			is.EqualError(err, "doger: nil injector")
+		})
+	}
+}
+
+func TestResolutionErrors_NilInjectorPanics(t *testing.T) {
+	t.Parallel()
+
+	provider := func(Injector) (int, error) { return 1, nil }
+	handler := func(context.Context, Component[Runner, struct{}]) error { return nil }
+
+	tests := []struct {
+		name string
+		call func()
+	}{
+		{name: "provide", call: func() { Provide[int](nil, provider) }},
+		{name: "provide_named_value", call: func() { ProvideNamedValue(nil, "db", 1) }},
+		{name: "provide_transient", call: func() { ProvideTransient[int](nil, provider) }},
+		{name: "override_named_value", call: func() { OverrideNamedValue(nil, "db", 1) }},
+		{name: "must_invoke", call: func() { MustInvoke[int](nil) }},
+		{name: "must_alias", call: func() { MustAs[int, int](nil) }},
+		{name: "invoke_collection", call: func() { InvokeCollection[int](nil) }},
+		{name: "explain_injector", call: func() { ExplainInjector(nil) }},
+		{name: "package", call: func() { Package(Lazy[int](provider))(nil) }},
+		{name: "runnable_handle", call: func() { Runnable.Handle(nil, StageAfterStart, handler) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			recovered := recoverPanic(tt.call)
+
+			err, ok := recovered.(error)
+			require.True(t, ok, "panic value %v must be an error", recovered)
+			assert.ErrorIs(t, err, ErrNilInjector)
+		})
+	}
 }

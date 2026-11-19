@@ -62,7 +62,7 @@ Edges declared with `DeclareDependency` during `StageBeforeStart` order the star
 ### Rules {#rules}
 
 - A later `Handle` for the same kind **replaces** both the handler and the stage.
-- A `nil` root means `doger.DefaultRootScope`.
+- A `nil` root panics with an error matching `doger.ErrNilInjector`.
 - Handlers of one stage run kind by kind, in the order kinds were first given a handler. Within a kind, components arrive in dependency order, then scope depth, then registration order.
 - The first handler error, or a recovered handler panic, stops `Start` with an error naming the kind and the service and wrapping the cause.
 - The handler receives the Start-time context, cancelled when `Start` returns or when `Shutdown` begins.

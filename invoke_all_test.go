@@ -188,16 +188,14 @@ func TestInvokeAll_EagerMembers(t *testing.T) {
 	assert.ElementsMatch(t, []string{"static", "console"}, handlerNames(handlers))
 }
 
-// TestInvokeAll_NilInjector is not parallel: it replaces DefaultRootScope.
 func TestInvokeAll_NilInjector(t *testing.T) {
+	t.Parallel()
 	testWithTimeout(t, time.Second)
 
-	previous := DefaultRootScope
-	DefaultRootScope = New()
-	t.Cleanup(func() { DefaultRootScope = previous })
-	provideHandler(DefaultRootScope, "console", newConsole)
+	root := New()
+	provideHandler(root, "console", newConsole)
 
-	handlers, err := InvokeAll[EventHandler](nil)
+	handlers, err := InvokeAll[EventHandler](root)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"console"}, handlerNames(handlers))

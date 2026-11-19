@@ -18,7 +18,7 @@ if err := doger.Extend(root, dogerredis.Extension(dogerredis.Addr("cache:6379"))
 client := doger.MustInvoke[*redis.Client](root)
 ```
 
-`Extend` takes the root container (`nil` means `doger.DefaultRootScope`) and calls the extension's `Extend` once.
+`Extend` takes the root container and calls the extension's `Extend` once. A nil root gives an error matching `doger.ErrNilInjector`.
 
 ## Where the services go {#placement}
 

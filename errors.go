@@ -54,6 +54,11 @@ var (
 	// ErrNotStarted is returned by Refresh and Scope.Start while the
 	// container's first Start has not succeeded.
 	ErrNotStarted = errors.New("doger: container not started")
+	// ErrNilInjector is matched when a nil injector, root or scope is
+	// passed, including a typed-nil *RootScope or *Scope: it is the error of
+	// the functions with an error result and the panic value of the others.
+	// No call falls back to a global container.
+	ErrNilInjector = errors.New("doger: nil injector")
 )
 
 // libPrefix starts every message the library originates.
@@ -80,7 +85,7 @@ var libSentinels = []error{
 	ErrServiceNotFound, ErrServiceNotMatch, ErrServiceTypeMismatch,
 	ErrServiceAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
-	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted,
+	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted, ErrNilInjector,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
 	ErrExtensionCycle, ErrExtensionConflict,
 }

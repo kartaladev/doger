@@ -108,6 +108,12 @@ if errors.Is(err, context.Canceled) {
 
 doger adds a trailing `...doger.ProvideOption` parameter to the registration functions and makes root `Shutdown()` run once per container. Calls compile unchanged; code that stores a registration function as a value, or relies on a second root `Shutdown()`, needs a small change. See [Upgrading to the Start lifecycle release](../upgrading/start-lifecycle.md).
 
+## Removed and renamed APIs {#removed-and-renamed-apis}
+
+| Before | After | Migration |
+| --- | --- | --- |
+| `var DefaultRootScope`, and a nil injector falling back to it | Removed. A nil injector, root or scope, including a typed-nil `*RootScope` or `*Scope`, gives `ErrNilInjector` from functions with an error result and panics with a value matching it elsewhere | Create a container with `doger.New()` and pass it explicitly |
+
 ## What stays the same {#what-stays-the-same}
 
 - The struct injection tag key is still `do` (`do:""`), and you can still override it with `InjectorOpts.StructTagKey`.

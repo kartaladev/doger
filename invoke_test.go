@@ -136,18 +136,15 @@ func TestInvokeAnyByName(t *testing.T) {
 	is.True(afterCalled, "AfterInvocationHook should be called")
 }
 
-// TestInvokeByName is not parallel: it replaces DefaultRootScope.
 func TestInvokeByName(t *testing.T) {
+	t.Parallel()
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
-	previous := DefaultRootScope
-	DefaultRootScope = New()
-	t.Cleanup(func() { DefaultRootScope = previous })
-
-	// test default injector vs scope
-	ProvideNamedValue(DefaultRootScope, "invoke-by-name-default", "bar")
-	svc, err := invokeByName[string](nil, "invoke-by-name-default")
+	// test one root vs another
+	other := New()
+	ProvideNamedValue(other, "invoke-by-name-default", "bar")
+	svc, err := invokeByName[string](other, "invoke-by-name-default")
 	is.NoError(err)
 	is.Equal("bar", svc)
 
@@ -159,7 +156,7 @@ func TestInvokeByName(t *testing.T) {
 	is.Equal("baz", svc)
 
 	// service not found
-	svc, err = invokeByName[string](nil, "not_found")
+	svc, err = invokeByName[string](i, "not_found")
 	is.Error(err)
 	is.Empty(svc)
 	is.Contains(err.Error(), "doger: could not find service `not_found`, available services: ")
@@ -286,9 +283,6 @@ func TestInvokeByGenericType(t *testing.T) {
 	is := assert.New(t)
 
 	// test default injector vs scope
-	// Note: Skipping DefaultRootScope tests due to parallel test conflicts
-
-	// test default injector vs scope
 	i := New()
 	ProvideValue(i, &lazyTest{foobar: "baz"})
 	svc2, err := invokeByGenericType[*lazyTest](i)
@@ -333,9 +327,6 @@ func TestInvokeByGenericType(t *testing.T) {
 	is.ErrorIs(err, ErrCircularDependency)
 
 	is.EqualError(err, "doger: circular dependency detected: `*github.com/kartaladev/doger.eagerTest` -> `bar` -> `*github.com/kartaladev/doger.eagerTest`")
-
-	// Test with nil injector (should use default root scope)
-	// Note: Skipping DefaultRootScope tests due to parallel test conflicts
 
 	// Test service not found for interface
 	svc4, err := invokeByGenericType[Healthchecker](i)

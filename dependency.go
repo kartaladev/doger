@@ -10,7 +10,7 @@ import (
 // handler during Start, for example to make a scheduler depend on the jobs
 // it drives.
 //
-// dependent is resolved from i (a nil i means [DefaultRootScope]), and
+// dependent is resolved from i (a nil i gives [ErrNilInjector]), and
 // dependency from the dependent's own scope or its ancestors, as Invoke
 // would. A name that cannot be resolved gives an error matching
 // [ErrServiceNotFound]. If dependency already reaches dependent through
@@ -22,7 +22,10 @@ import (
 // [StageBeforeStart]) and shutdown, but not construction, because it builds
 // nothing. Clones do not copy declared edges.
 func DeclareDependency(i Injector, dependent, dependency string) error {
-	injector := getInjectorOrDefault(i)
+	injector, err := getInjector(i)
+	if err != nil {
+		return err
+	}
 
 	_, dependentScope, ok := injector.serviceGetRec(dependent)
 	if !ok {

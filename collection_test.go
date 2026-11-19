@@ -385,20 +385,42 @@ func TestCollection_ReadDuringHolderProvider(t *testing.T) {
 	is.Equal([]string{"console"}, explainedNames(t, root, "bus", false))
 }
 
-// TestCollection_NilInjector is not parallel: it replaces DefaultRootScope.
 func TestCollection_NilInjector(t *testing.T) {
+	t.Parallel()
 	testWithTimeout(t, time.Second)
 
-	previous := DefaultRootScope
-	DefaultRootScope = New()
-	t.Cleanup(func() { DefaultRootScope = previous })
-	c := InvokeCollection[EventHandler](nil)
-	provideHandler(DefaultRootScope, "console", newConsole)
+	root := New()
+	c := InvokeCollection[EventHandler](root)
+	provideHandler(root, "console", newConsole)
 
 	handlers, err := c.All(nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"console"}, handlerNames(handlers))
+}
+
+func TestCollection_ZeroValueReadsFail(t *testing.T) {
+	t.Parallel()
+
+	var c Collection[EventHandler]
+
+	tests := []struct {
+		name string
+		read func() (any, error)
+	}{
+		{name: "all", read: func() (any, error) { return c.All(nil) }},
+		{name: "map", read: func() (any, error) { return c.Map(nil) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := tt.read()
+
+			assert.ErrorIs(t, err, ErrNilInjector)
+		})
+	}
 }
 
 // provideBus registers lazy "bus", an EventHandler holding a live collection

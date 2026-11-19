@@ -130,15 +130,14 @@ func TestExtend_Context(t *testing.T) {
 	}
 }
 
-// TestExtend_NilRoot is not parallel: it replaces DefaultRootScope.
 func TestExtend_NilRoot(t *testing.T) {
-	previous := DefaultRootScope
-	DefaultRootScope = New()
-	t.Cleanup(func() { DefaultRootScope = previous })
+	t.Parallel()
 
-	require.NoError(t, Extend(nil, &testExtension{name: "redis"}))
+	root := New()
 
-	assert.Equal(t, []string{"ext:redis"}, childNames(DefaultRootScope))
+	require.NoError(t, Extend(root, &testExtension{name: "redis"}))
+
+	assert.Equal(t, []string{"ext:redis"}, childNames(root))
 }
 
 func TestExtend_Invalid(t *testing.T) {

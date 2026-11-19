@@ -18,20 +18,15 @@ import "github.com/kartaladev/doger"
 injector := doger.New()
 ```
 
-## Global container {#global-container}
+## No global container {#no-global-container}
 
-For a quick start, you may use the default global container. This is highly discouraged in production.
+doger has no package-level container: every call acts only on the container you pass. A nil injector, root or scope, including a typed-nil `*doger.RootScope` or `*doger.Scope`, is rejected. Functions with an error result return an error matching `doger.ErrNilInjector`, and the others panic with a value matching it.
 
 ```go
-import "github.com/kartaladev/doger"
+injector := doger.New()
 
-doger.Provide(nil, ...)
-doger.Invoke(nil, ...)
-
-// equivalent to:
-
-doger.Provide(doger.DefaultRootScope, ...)
-doger.Invoke(doger.DefaultRootScope, ...)
+doger.Provide(injector, ...)
+doger.Invoke[*MyService](injector)
 ```
 
 ## Register services on container initialization {#register-services-on-container-initialization}

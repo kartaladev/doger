@@ -294,7 +294,10 @@ func HealthCheckNamed(i Injector, name string) error {
 //	    log.Printf("Main database health check failed: %v", err)
 //	}
 func HealthCheckNamedWithContext(ctx context.Context, i Injector, name string) error {
-	injector := getInjectorOrDefault(i)
+	injector, err := getInjector(i)
+	if err != nil {
+		return err
+	}
 
 	opts := injector.RootScope().opts
 	ctx, cancel := healthCheckContextWithin(ctx, opts.Clock, opts.singleHealthCheckTimeout())
@@ -416,7 +419,12 @@ func ShutdownNamed(i Injector, name string) error {
 //	    log.Printf("Main database shutdown failed: %v", err)
 //	}
 func ShutdownNamedWithContext(ctx context.Context, i Injector, name string) error {
-	return getInjectorOrDefault(i).serviceShutdown(ctx, name)
+	injector, err := getInjector(i)
+	if err != nil {
+		return err
+	}
+
+	return injector.serviceShutdown(ctx, name)
 }
 
 // MustShutdown stops a service, using type inference to determine the service name. It panics on error.

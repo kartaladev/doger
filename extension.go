@@ -163,7 +163,7 @@ func ExtendScopeName(name string) ExtendOption {
 // lowercase alphanumeric words joined by single dashes.
 var extensionNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// Extend installs ext into root, a nil root meaning [DefaultRootScope]. It
+// Extend installs ext into root; a nil root gives [ErrNilInjector]. It
 // calls ext.Extend once, with an [ExtensionContext] whose Scope is a new
 // private child scope of root, named "ext:<name>" or, for an extension with
 // an instance key, "ext:<name>/<instance>". [ExtendScopeName] renames it.
@@ -224,7 +224,7 @@ var extensionNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // [sync.Once.Do] called from its own function does.
 func Extend(root *RootScope, ext Extension, opts ...ExtendOption) error {
 	if root == nil {
-		root = DefaultRootScope
+		return ErrNilInjector
 	}
 
 	options := extendOptions{}

@@ -321,7 +321,6 @@ func declareFixture(t *testing.T) (*RootScope, *Scope) {
 	return root, tenant
 }
 
-// TestDeclareDependency is not parallel: one row replaces DefaultRootScope.
 func TestDeclareDependency(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -368,19 +367,6 @@ func TestDeclareDependency(t *testing.T) {
 					assert.Equal(t, "scheduler", explained.Dependencies[0].Service)
 				}
 				assert.Equal(t, "tenant", explained.ScopeName)
-			},
-		},
-		{
-			name: "nil_injector_uses_default_root_scope",
-			given: func(t *testing.T, root *RootScope) {
-				previous := DefaultRootScope
-				DefaultRootScope = root
-				t.Cleanup(func() { DefaultRootScope = previous })
-			},
-			injector:  func(*RootScope, *Scope) Injector { return nil },
-			dependent: "scheduler", dependency: "job-a",
-			check: func(t *testing.T, root *RootScope, _ *Scope) {
-				assert.Equal(t, []string{"job-a"}, explainedNames(t, root, "scheduler", false))
 			},
 		},
 	}

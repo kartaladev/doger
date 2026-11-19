@@ -7,27 +7,35 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestGetInjectorOrDefault is not parallel: it replaces DefaultRootScope.
-func TestGetInjectorOrDefault(t *testing.T) {
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
+func TestGetInjector(t *testing.T) {
+	t.Parallel()
 
-	is.Equal(DefaultRootScope, getInjectorOrDefault(nil))
-	is.NotEqual(DefaultRootScope, getInjectorOrDefault(New()))
+	root := New()
+	scope := root.Scope("child")
 
-	type test struct {
-		foobar string
+	tests := []struct {
+		name     string
+		injector Injector
+		want     Injector
+		err      error
+	}{
+		{name: "nil", injector: nil, err: ErrNilInjector},
+		{name: "typed_nil_root", injector: (*RootScope)(nil), err: ErrNilInjector},
+		{name: "typed_nil_scope", injector: (*Scope)(nil), err: ErrNilInjector},
+		{name: "root", injector: root, want: root},
+		{name: "scope", injector: scope, want: scope},
 	}
 
-	previous := DefaultRootScope
-	DefaultRootScope = New()
-	t.Cleanup(func() { DefaultRootScope = previous })
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	Provide(nil, func(i Injector) (*test, error) {
-		return &test{foobar: "42"}, nil
-	})
+			got, err := getInjector(tt.injector)
 
-	is.Len(DefaultRootScope.self.services, 1)
+			assert.ErrorIs(t, err, tt.err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestInjectorOpts_addHook(t *testing.T) {
