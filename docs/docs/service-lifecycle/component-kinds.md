@@ -28,11 +28,11 @@ doger.Provide(injector, NewCleanupJob, Scheduled.With(Schedule{Every: time.Hour}
 
 Registration panics when:
 
-- the registered type is a concrete type not assignable to `T` (`DI: service ... is not assignable to ... required by kind ...`);
+- the registered type is a concrete type not assignable to `T` (``doger: service `...` is not assignable to `...` required by kind `...` ``);
 - the service is transient: a factory has no single instance to handle;
 - the same kind is applied twice to one registration.
 
-A service registered under an **interface type** not assignable to `T` is checked on its instance when `Start` runs; a mismatch fails `Start` with `DI: service ... does not implement ... required by kind ...`.
+A service registered under an **interface type** not assignable to `T` is checked on its instance when `Start` runs; a mismatch fails `Start` with ``doger: service `...` does not implement `...` required by kind `...` ``.
 
 Opted-in services are built by `Start`, whether or not their kind has a handler.
 
