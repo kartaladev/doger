@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -198,10 +199,7 @@ func TestContainerShutdown_ShutdownPanicDoesNotCrashProcess(t *testing.T) {
 		if _, err := InvokeNamed[*shutdownTestPanicPlain](root, "bad"); err != nil {
 			panic(err)
 		}
-		report := root.Shutdown()
-		for _, err := range report.Errors {
-			fmt.Println(err)
-		}
+		fmt.Println(root.Shutdown().Err())
 		return
 	}
 
@@ -1084,6 +1082,154 @@ func TestContainerShutdown_ReentrantRootShutdown(t *testing.T) {
 				}
 				is.Equal(int32(1), db.calls.Load(), "Shutdown calls of db")
 				is.Equal(int32(1), closed.Load(), "Closed hook runs")
+			})
+		})
+	}
+}
+
+func TestShutdownReport_ErrUnwrap(t *testing.T) {
+	t.Parallel()
+
+	type want struct {
+		scope, service string
+		cause          error
+	}
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, root *RootScope, tenant *Scope)
+		matches  []error
+		unwrap   []want
+		contains []string // in Error(), in this order
+	}{
+		{
+			name:  "no_error",
+			setup: func(t *testing.T, root *RootScope, _ *Scope) { provideBuilt(t, root, "a", &shutdownTestCounter{}) },
+		},
+		{
+			name: "one_error",
+			setup: func(t *testing.T, root *RootScope, _ *Scope) {
+				provideBuilt(t, root, "a", &shutdownTestCounter{err: io.EOF})
+			},
+			matches:  []error{io.EOF},
+			unwrap:   []want{{"[root]", "a", io.EOF}},
+			contains: []string{"doger: shutdown errors:", "a"},
+		},
+		{
+			name: "two_errors_two_scopes",
+			setup: func(t *testing.T, root *RootScope, tenant *Scope) {
+				provideBuilt(t, tenant, "b", &shutdownTestCounter{err: io.EOF})
+				provideBuilt(t, root, "a", &shutdownTestCounter{err: io.ErrClosedPipe})
+			},
+			matches:  []error{io.EOF, io.ErrClosedPipe},
+			unwrap:   []want{{"[root]", "a", io.ErrClosedPipe}, {"tenant", "b", io.EOF}},
+			contains: []string{"doger: shutdown errors:", "a", "b"},
+		},
+		{
+			name: "panic",
+			setup: func(t *testing.T, root *RootScope, _ *Scope) {
+				provideBuilt(t, root, "a", &shutdownTestPanicPlain{value: "boom"})
+			},
+			matches:  []error{ErrShutdownPanic},
+			unwrap:   []want{{"[root]", "a", ErrShutdownPanic}},
+			contains: []string{"boom"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+			is := assert.New(t)
+
+			root := New()
+			tenant := root.Scope("tenant")
+			tt.setup(t, root, tenant)
+
+			report := root.Shutdown()
+
+			if len(tt.matches) == 0 {
+				is.NoError(report.Err())
+				is.Empty(report.Unwrap())
+				is.Empty(report.Error())
+				return
+			}
+			for _, target := range tt.matches {
+				is.ErrorIs(report.Err(), target)
+			}
+			unwrapped := report.Unwrap()
+			if is.Len(unwrapped, len(tt.unwrap)) {
+				for n, w := range tt.unwrap {
+					var serviceErr *ServiceError
+					if is.ErrorAs(unwrapped[n], &serviceErr) {
+						is.Equal(w.scope, serviceErr.Scope)
+						is.Equal(w.service, serviceErr.Service)
+						is.ErrorIs(serviceErr, w.cause)
+					}
+				}
+			}
+			text := report.Error()
+			last := -1
+			for _, part := range tt.contains {
+				index := strings.Index(text[last+1:], part)
+				if is.GreaterOrEqual(index, 0, "%q in %q after %d", part, text, last) {
+					last += 1 + index
+				}
+			}
+		})
+	}
+}
+
+func TestShutdownReport_ErrorsAsServiceError(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	root := New()
+	provideBuilt(t, root, "db", &shutdownTestCounter{err: io.EOF})
+
+	var serviceErr *ServiceError
+	if is.ErrorAs(root.Shutdown().Err(), &serviceErr) {
+		is.Equal("db", serviceErr.Service)
+		is.Equal("[root]", serviceErr.Scope)
+	}
+}
+
+func TestShutdownReport_MarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, root *RootScope)
+		want  string
+	}{
+		{
+			name:  "success",
+			setup: func(t *testing.T, root *RootScope) { provideBuilt(t, root, "a", &shutdownTestCounter{}) },
+			want:  `{"succeed":true,"shutdownTime":"0s","services":[{"scope":"[root]","service":"a"}],"errors":[]}`,
+		},
+		{
+			name: "one_error",
+			setup: func(t *testing.T, root *RootScope) {
+				provideBuilt(t, root, "b", &shutdownTestCounter{})
+				provideBuilt(t, root, "a", &shutdownTestCounter{err: errors.New("closing failed")})
+			},
+			want: `{"succeed":false,"shutdownTime":"0s","services":[{"scope":"[root]","service":"a"},{"scope":"[root]","service":"b"}],` +
+				`"errors":[{"scope":"[root]","service":"a","error":"closing failed"}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := New()
+				tt.setup(t, root)
+
+				out, err := json.Marshal(root.Shutdown())
+
+				require.NoError(t, err)
+				assert.JSONEq(t, tt.want, string(out))
 			})
 		})
 	}

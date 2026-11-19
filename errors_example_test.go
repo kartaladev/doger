@@ -1,6 +1,7 @@
 package doger
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -33,4 +34,32 @@ func ExampleServiceError() {
 	// failing service: api in [root]
 	// missing dependency: true
 	// cache is a ServiceError: false
+}
+
+// exampleClosingPool fails to close.
+type exampleClosingPool struct{}
+
+func (exampleClosingPool) Shutdown() error { return errors.New("closing failed") }
+
+func ExampleShutdownReport_Err() {
+	injector := New()
+	ProvideNamedValue(injector, "pool", exampleClosingPool{})
+
+	if err := injector.Shutdown().Err(); err != nil {
+		fmt.Println("shutdown failed:", err)
+	}
+	// Output:
+	// shutdown failed: doger: service "pool" in scope "[root]": closing failed
+}
+
+func ExampleShutdownReport_MarshalJSON() {
+	injector := New()
+	ProvideNamedValue(injector, "pool", exampleClosingPool{})
+
+	report := injector.Shutdown()
+	report.ShutdownTime = 0 // fixed for the example
+	out, _ := json.Marshal(report)
+	fmt.Println(string(out))
+	// Output:
+	// {"succeed":false,"shutdownTime":"0s","services":[{"scope":"[root]","service":"pool"}],"errors":[{"scope":"[root]","service":"pool","error":"closing failed"}]}
 }

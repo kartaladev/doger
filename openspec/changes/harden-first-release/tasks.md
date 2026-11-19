@@ -126,10 +126,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 18. ShutdownReport API
 
-- [ ] 18.1 RED: add `TestShutdownReport_ErrUnwrap`, `TestShutdownReport_ErrorsAsServiceError` and regression `TestShutdownReport_MarshalJSON` (scenarios "Err and Unwrap reflect the report", "errors.As finds the failing service", "A report marshals to JSON"); verify `go test -race -run TestShutdownReport_ .` fails to compile only on `Err`/`Unwrap`, then the JSON test fails with "object member name must be a string"
-- [ ] 18.2 GREEN: add `Err()`, `Unwrap() []error` (sorted `*ServiceError`), `MarshalJSON` (lowerCamel keys, sorted arrays, duration string) and the `doger: ` prefix in `Error()` (D11/D14); verify the 18.1 tests pass and `make test` is green
-- [ ] 18.3 REFACTOR: Extract Function `sortedServiceErrors` shared by `Error`, `Err`, `Unwrap` and `MarshalJSON`; verify `make test` and `make lint` pass
-- [ ] 18.4 Docs: fix the `ShutdownReport` doc (`Error()` is "" on success; check `Err()`) and add `ExampleShutdownReport_Err` and `ExampleShutdownReport_MarshalJSON`; verify `go test -run 'ExampleShutdownReport_' .` passes
+- [x] 18.1 RED: add `TestShutdownReport_ErrUnwrap`, `TestShutdownReport_ErrorsAsServiceError` and regression `TestShutdownReport_MarshalJSON` (scenarios "Err and Unwrap reflect the report", "errors.As finds the failing service", "A report marshals to JSON"); verify `go test -race -run TestShutdownReport_ .` fails to compile only on `Err`/`Unwrap`, then the JSON test fails with "object member name must be a string"
+- [x] 18.2 GREEN: add `Err()`, `Unwrap() []error` (sorted `*ServiceError`), `MarshalJSON` (lowerCamel keys, sorted arrays, duration string) and the `doger: ` prefix in `Error()` (D11/D14); verify the 18.1 tests pass and `make test` is green
+- [x] 18.3 REFACTOR: Extract Function `sortedServiceErrors` shared by `Error`, `Err`, `Unwrap` and `MarshalJSON`; verify `make test` and `make lint` pass
+- [x] 18.4 Docs: fix the `ShutdownReport` doc (`Error()` is "" on success; check `Err()`) and add `ExampleShutdownReport_Err` and `ExampleShutdownReport_MarshalJSON`; verify `go test -run 'ExampleShutdownReport_' .` passes
 
 ## 19. Concurrent resolution without deadlocks
 
