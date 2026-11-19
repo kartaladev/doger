@@ -8,8 +8,6 @@ import (
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // healthTarget is a service a scope-wide health check covers: key is its
@@ -119,7 +117,7 @@ func (s *Scope) healthCheckTargets(ctx context.Context, targets []healthTarget) 
 		clock := s.clock()
 		ctx = withHealthCheckDeadline(ctx, clock.Now().Add(s.rootScope.opts.HealthCheckGlobalTimeout))
 		var cancel context.CancelFunc
-		ctx, cancel = clockwork.WithTimeout(ctx, clock, s.rootScope.opts.HealthCheckGlobalTimeout)
+		ctx, cancel = withClockTimeout(ctx, clock, s.rootScope.opts.HealthCheckGlobalTimeout)
 		defer cancel()
 	}
 
@@ -439,7 +437,7 @@ type sharedCall struct {
 	// left is set once the service left the container: nothing is recorded
 	// for the call, and the callers in next get its result.
 	left  bool
-	clock clockwork.Clock
+	clock Clock
 }
 
 // joinable reports whether a caller arriving now may share the call's
@@ -451,7 +449,7 @@ func (c *sharedCall) joinable() bool {
 // claimLocked lets the check of c run, bounding its context from now when
 // it is pooled. It reports false when c was claimed already. The monitor's
 // mutex must be held.
-func (c *sharedCall) claimLocked(clock clockwork.Clock) bool {
+func (c *sharedCall) claimLocked(clock Clock) bool {
 	if c.started {
 		return false
 	}
@@ -471,7 +469,7 @@ func (c *sharedCall) claimLocked(clock clockwork.Clock) bool {
 
 // startBoundLocked starts, at now, the per-service bound of w when it waits
 // for a call claimed only now. The monitor's mutex must be held.
-func (w *callWaiter) startBoundLocked(clock clockwork.Clock, now time.Time) {
+func (w *callWaiter) startBoundLocked(clock Clock, now time.Time) {
 	if w.expire == nil || !w.deadline.IsZero() {
 		return
 	}
@@ -499,7 +497,7 @@ type callWaiter struct {
 	// deadline. Its fields after expire are guarded by the monitor's mutex.
 	expire     context.CancelCauseFunc
 	deadline   time.Time
-	boundTimer clockwork.Timer
+	boundTimer Timer
 }
 
 // completed reports whether the waiter got the result of its check.
@@ -637,7 +635,7 @@ func (s *RootScope) joinOrStart(spec waitSpec, target healthTarget, check func(c
 // newCallWaiter returns a waiter bounded as spec says. With queued, its call
 // waits for a slot: the waiter waits within spec's context, and its
 // per-service bound starts once the call is claimed (see startBoundLocked).
-func newCallWaiter(spec waitSpec, target healthTarget, clock clockwork.Clock, queued bool) *callWaiter {
+func newCallWaiter(spec waitSpec, target healthTarget, clock Clock, queued bool) *callWaiter {
 	w := &callWaiter{spec: spec, target: target, done: make(chan struct{})}
 	if !queued || spec.bound <= 0 {
 		w.ctx, w.release = healthCheckContextWithin(spec.ctx, clock, spec.bound)
@@ -661,7 +659,7 @@ func newCallWaiter(spec waitSpec, target healthTarget, clock clockwork.Clock, qu
 // spec says. With limited, a pooled call waits for a slot and bounds its
 // check from then on; any other call runs at once, bounded by the starter's
 // context. m.mu must be held.
-func (m *healthMonitor) newCallLocked(target healthTarget, check func(context.Context) checkOutcome, spec waitSpec, starter *callWaiter, limited bool, clock clockwork.Clock) *sharedCall {
+func (m *healthMonitor) newCallLocked(target healthTarget, check func(context.Context) checkOutcome, spec waitSpec, starter *callWaiter, limited bool, clock Clock) *sharedCall {
 	service := target.wrapper
 	call := &sharedCall{
 		target:       target,
@@ -862,7 +860,7 @@ func (s *RootScope) startFreshLocked(call *sharedCall) (fresh *sharedCall, takeO
 // check, or when the check returned its context's error after that context
 // ended; what the check returned otherwise, also when its starter's bound
 // ended the check's context.
-func callResult(waiter *callWaiter, call *sharedCall, clock clockwork.Clock, err error) error {
+func callResult(waiter *callWaiter, call *sharedCall, clock Clock, err error) error {
 	if cause := contextDone(waiter.ctx); cause != nil {
 		return timeoutError(cause)
 	}
@@ -883,7 +881,7 @@ func callResult(waiter *callWaiter, call *sharedCall, clock clockwork.Clock, err
 
 // checkResult is what the check of call returned, err: a timeout error when
 // it returned a context error once its context ended, err otherwise.
-func checkResult(call *sharedCall, clock clockwork.Clock, err error) error {
+func checkResult(call *sharedCall, clock Clock, err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return healthCheckResult(call.ctx, clock, err)
 	}

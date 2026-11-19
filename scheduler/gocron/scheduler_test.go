@@ -2,6 +2,8 @@ package dogergocron
 
 import (
 	"context"
+	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
 	"github.com/kartaladev/doger"
+	dogerclockwork "github.com/kartaladev/doger/clock/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -66,7 +69,7 @@ func startWith(t *testing.T, fc *clockwork.FakeClock, scheduler doger.HealthSche
 	if opts == nil {
 		opts = &doger.InjectorOpts{}
 	}
-	opts.Clock, opts.HealthScheduler = fc, scheduler
+	opts.Clock, opts.HealthScheduler = dogerclockwork.Wrap(fc), scheduler
 	i := doger.NewWithOpts(opts)
 	doger.ProvideNamedValue(i, "db", db)
 	require.NoError(t, i.Start())
@@ -360,7 +363,7 @@ func TestScheduler_RejectedJob(t *testing.T) { //nolint:paralleltest
 			ignore := goleak.IgnoreCurrent()
 
 			scheduler := must(New(tt.option))
-			stop, err := scheduler.ScheduleHealthRounds(clockwork.NewFakeClock(), func(context.Context) {})
+			stop, err := scheduler.ScheduleHealthRounds(dogerclockwork.Wrap(clockwork.NewFakeClock()), func(context.Context) {})
 
 			assert.Error(t, err)
 			assert.Nil(t, stop)
@@ -414,7 +417,7 @@ func TestScheduler_SharedStop(t *testing.T) {
 			started, release := make(chan struct{}), make(chan struct{})
 			var returned atomic.Bool
 			var once sync.Once
-			stop, err := scheduler.ScheduleHealthRounds(clockwork.NewRealClock(), func(context.Context) {
+			stop, err := scheduler.ScheduleHealthRounds(doger.RealClock(), func(context.Context) {
 				once.Do(func() { close(started) })
 				<-release
 				returned.Store(true)
@@ -437,7 +440,7 @@ func TestScheduler_SharedStop(t *testing.T) {
 			assert.True(t, returned.Load(), "the round returned before stop")
 		}},
 		{name: "owner_shut_down", run: func(t *testing.T, shared gocron.Scheduler, scheduler *Scheduler) {
-			stop, err := scheduler.ScheduleHealthRounds(clockwork.NewRealClock(), func(context.Context) {})
+			stop, err := scheduler.ScheduleHealthRounds(doger.RealClock(), func(context.Context) {})
 			require.NoError(t, err)
 			require.NoError(t, shared.Shutdown())
 
@@ -493,4 +496,138 @@ func must[T any](v T, err error) T {
 		panic(err)
 	}
 	return v
+}
+
+// consumerClock is a consumer-written doger.Clock, which gocron cannot use.
+type consumerClock struct{}
+
+func (consumerClock) Now() time.Time                              { return time.Time{} }
+func (consumerClock) Since(time.Time) time.Duration               { return 0 }
+func (consumerClock) AfterFunc(time.Duration, func()) doger.Timer { return nil }
+
+// Not parallel: goleak checks the goroutines gocron leaves.
+func TestScheduler_ClockMapping(t *testing.T) { //nolint:paralleltest
+	tests := []struct {
+		name string
+		// setup returns the options of New, the clock passed to
+		// ScheduleHealthRounds, the fake clock rounds run on (nil: the real
+		// clock) and a cleanup
+		setup       func(t *testing.T) ([]Option, doger.Clock, *clockwork.FakeClock, func())
+		unsupported bool
+	}{
+		{name: "wrapped_fake_clock", setup: func(*testing.T) ([]Option, doger.Clock, *clockwork.FakeClock, func()) {
+			fake := clockwork.NewFakeClock()
+			return nil, dogerclockwork.Wrap(fake), fake, func() {}
+		}},
+		{name: "real_clock", setup: func(*testing.T) ([]Option, doger.Clock, *clockwork.FakeClock, func()) {
+			return nil, doger.RealClock(), nil, func() {}
+		}},
+		{name: "consumer_clock", unsupported: true, setup: func(*testing.T) ([]Option, doger.Clock, *clockwork.FakeClock, func()) {
+			return nil, consumerClock{}, nil, func() {}
+		}},
+		{name: "nil", unsupported: true, setup: func(*testing.T) ([]Option, doger.Clock, *clockwork.FakeClock, func()) {
+			return nil, nil, nil, func() {}
+		}},
+		{name: "shared_scheduler_consumer_clock", setup: func(t *testing.T) ([]Option, doger.Clock, *clockwork.FakeClock, func()) {
+			t.Helper()
+			g := clockwork.NewFakeClock()
+			shared, err := gocron.NewScheduler(gocron.WithClock(g))
+			require.NoError(t, err)
+			shared.Start()
+			return []Option{WithScheduler(shared)}, consumerClock{}, g, func() { _ = shared.Shutdown() }
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { //nolint:paralleltest // goleak checks the goroutines gocron leaves
+			is := assert.New(t)
+			ignore := goleak.IgnoreCurrent()
+
+			opts, clock, fake, cleanup := tt.setup(t)
+			defer cleanup()
+			var rounds atomic.Int32
+			stop, err := must(New(opts...)).ScheduleHealthRounds(clock, func(context.Context) { rounds.Add(1) })
+
+			if tt.unsupported {
+				is.ErrorIs(err, ErrUnsupportedClock)
+				is.Nil(stop)
+				time.Sleep(20 * time.Millisecond)
+				is.Zero(rounds.Load(), "rounds run")
+				is.NoError(goleak.Find(ignore))
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, stop)
+			defer func() { is.NoError(stop(context.Background())) }()
+			require.Eventually(t, func() bool { return rounds.Load() == 1 }, 2*time.Second, time.Millisecond, "the first round did not run at once")
+			if fake != nil {
+				waitForTimer(t, fake)
+				fake.Advance(DefaultInterval)
+				require.Eventually(t, func() bool { return rounds.Load() == 2 }, 2*time.Second, time.Millisecond, "no round on the fake clock's schedule")
+			}
+		})
+	}
+}
+
+// errorRecorder is a slog.Handler keeping the "error" attribute of each
+// record, by level and message.
+type errorRecorder struct {
+	mu      sync.Mutex
+	records []errorRecord
+}
+
+type errorRecord struct {
+	level   slog.Level
+	message string
+	err     any
+}
+
+func (r *errorRecorder) Enabled(context.Context, slog.Level) bool { return true }
+
+func (r *errorRecorder) Handle(_ context.Context, record slog.Record) error {
+	rec := errorRecord{level: record.Level, message: record.Message}
+	record.Attrs(func(attr slog.Attr) bool {
+		if attr.Key == "error" {
+			rec.err = attr.Value.Any()
+		}
+		return true
+	})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = append(r.records, rec)
+	return nil
+}
+
+func (r *errorRecorder) WithAttrs([]slog.Attr) slog.Handler { return r }
+func (r *errorRecorder) WithGroup(string) slog.Handler      { return r }
+
+func (r *errorRecorder) all() []errorRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]errorRecord(nil), r.records...)
+}
+
+func TestScheduler_UnsupportedClockUnmonitored(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	recorder := &errorRecorder{}
+	i := doger.NewWithOpts(&doger.InjectorOpts{Clock: consumerClock{}, HealthScheduler: must(New()), Logger: slog.New(recorder)})
+	defer i.Shutdown()
+
+	is.NoError(i.Start())
+	is.Equal(doger.PhaseReady, i.Phase())
+	is.False(i.HealthReport(doger.IgnoreContainerPhase()).Monitored)
+
+	var found []errorRecord
+	for _, rec := range recorder.all() {
+		if rec.level == slog.LevelError && strings.Contains(rec.message, "health scheduler") {
+			found = append(found, rec)
+		}
+	}
+	if is.Len(found, 1) {
+		err, _ := found[0].err.(error)
+		is.ErrorIs(err, ErrUnsupportedClock)
+	}
 }

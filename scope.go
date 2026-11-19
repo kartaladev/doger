@@ -8,8 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // newScope creates a new Scope instance with the provided parameters.
@@ -209,7 +207,7 @@ func (s *Scope) RootScope() *RootScope {
 }
 
 // clock returns the time source of the container.
-func (s *Scope) clock() clockwork.Clock {
+func (s *Scope) clock() Clock {
 	return s.rootScope.opts.Clock
 }
 

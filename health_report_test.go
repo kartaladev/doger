@@ -10,7 +10,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,7 +73,7 @@ var healthReportTestEpoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 // healthReportTestOnClock is a Healthchecker whose check advances a fake
 // clock by takes, then returns err.
 type healthReportTestOnClock struct {
-	clock *clockwork.FakeClock
+	clock *fakeClock
 	takes time.Duration
 	err   error
 }
@@ -146,7 +145,7 @@ func TestHealthReport_Entries(t *testing.T) {
 			testWithTimeout(t, 5*time.Second)
 			is := assert.New(t)
 
-			fc := clockwork.NewFakeClockAt(healthReportTestEpoch)
+			fc := newFakeClockAt(healthReportTestEpoch)
 			i := NewWithOpts(&InjectorOpts{Clock: fc})
 			var scope Injector = i
 			if tt.child {
@@ -195,12 +194,12 @@ func TestHealthReport_TimesWithLimiter(t *testing.T) {
 		// context; it returns nil otherwise
 		blocks bool
 		// read reads the report while the check of "b" waits for the slot
-		read func(t *testing.T, i *RootScope, fc *clockwork.FakeClock) HealthReport
+		read func(t *testing.T, i *RootScope, fc *fakeClock) HealthReport
 		want func(is *assert.Assertions, entry ServiceHealth)
 	}{
 		{
 			name: "pending_since_requested",
-			read: func(t *testing.T, i *RootScope, _ *clockwork.FakeClock) HealthReport {
+			read: func(t *testing.T, i *RootScope, _ *fakeClock) HealthReport {
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				return i.HealthReportWithContext(ctx)
@@ -212,7 +211,7 @@ func TestHealthReport_TimesWithLimiter(t *testing.T) {
 		{
 			name:   "timeout_duration_from_start",
 			blocks: true,
-			read: func(_ *testing.T, i *RootScope, fc *clockwork.FakeClock) HealthReport {
+			read: func(_ *testing.T, i *RootScope, fc *fakeClock) HealthReport {
 				read := make(chan HealthReport, 1)
 				go func() { read <- i.HealthReport() }()
 				synctest.Wait()
@@ -237,7 +236,7 @@ func TestHealthReport_TimesWithLimiter(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClockAt(healthReportTestEpoch)
+				fc := newFakeClockAt(healthReportTestEpoch)
 				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckParallelism: 1, HealthCheckTimeout: 20 * time.Millisecond})
 				ProvideNamedValue(i, "a", &healthCheckTestOnClock{clock: fc, duration: time.Second})
 				forced := make(chan map[string]error, 2)
@@ -273,7 +272,7 @@ func TestHealthReport_PendingSinceBehindAbandoned(t *testing.T) {
 	testWithTimeout(t, 5*time.Second)
 
 	synctest.Test(t, func(t *testing.T) {
-		fc := clockwork.NewFakeClockAt(healthReportTestEpoch)
+		fc := newFakeClockAt(healthReportTestEpoch)
 		i := NewWithOpts(&InjectorOpts{Clock: fc})
 		var calls atomic.Int32
 		firstRelease, secondRelease := make(chan struct{}), make(chan struct{})
@@ -576,7 +575,7 @@ func TestHealthReport_MonitoredFirstCheck(t *testing.T) {
 		is := assert.New(t)
 
 		scheduler := &manualScheduler{}
-		i := NewWithOpts(&InjectorOpts{Clock: clockwork.NewFakeClockAt(healthReportTestEpoch), HealthScheduler: scheduler})
+		i := NewWithOpts(&InjectorOpts{Clock: newFakeClockAt(healthReportTestEpoch), HealthScheduler: scheduler})
 		ProvideNamedValue(i, "db", &healthReportTestSwitch{})
 		require.NoError(t, i.Start())
 		defer i.Shutdown()
@@ -594,7 +593,7 @@ func TestHealthReport_MonitoredFirstCheck(t *testing.T) {
 			is := assert.New(t)
 
 			scheduler := &manualScheduler{}
-			i := NewWithOpts(&InjectorOpts{Clock: clockwork.NewFakeClockAt(healthReportTestEpoch), HealthScheduler: scheduler})
+			i := NewWithOpts(&InjectorOpts{Clock: newFakeClockAt(healthReportTestEpoch), HealthScheduler: scheduler})
 			db := newHealthRunTestBlocking(nil)
 			ProvideNamedValue(i, "db", db)
 			require.NoError(t, i.Start())
@@ -640,7 +639,7 @@ func TestHealthReport_OnDemandTTL(t *testing.T) {
 			testWithTimeout(t, 5*time.Second)
 			is := assert.New(t)
 
-			fc := clockwork.NewFakeClock()
+			fc := newFakeClock()
 			i := NewWithOpts(&InjectorOpts{Clock: fc, HealthReportCacheTTL: tt.ttl})
 			db := &healthReportTestSwitch{}
 			ProvideNamedValue(i, "db", db)
@@ -685,7 +684,7 @@ func TestHealthReport_CachedReadsLogNothing(t *testing.T) {
 	is := assert.New(t)
 
 	log := &healthMonitorTestLog{}
-	i := NewWithOpts(&InjectorOpts{Clock: clockwork.NewFakeClock(), Logger: log.logger()})
+	i := NewWithOpts(&InjectorOpts{Clock: newFakeClock(), Logger: log.logger()})
 	for n := range 50 {
 		ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), &healthReportTestSwitch{})
 	}
@@ -720,7 +719,7 @@ func TestHealthReport_RefreshedByForced(t *testing.T) {
 			testWithTimeout(t, 5*time.Second)
 			is := assert.New(t)
 
-			fc := clockwork.NewFakeClock()
+			fc := newFakeClock()
 			i := NewWithOpts(&InjectorOpts{Clock: fc, HealthReportCacheTTL: time.Hour})
 			db := &healthReportTestSwitch{}
 			ProvideValue(i, db)
@@ -1166,7 +1165,7 @@ func TestHealthReport_ReaderBound(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckTimeout: tt.timeout})
 				db := newHealthRunTestBlocking(nil)
 				ProvideNamedValue(i, "db", db)
@@ -1256,7 +1255,7 @@ func TestHealthReport_GlobalTimeoutNotApplied(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckGlobalTimeout: 30 * time.Millisecond})
 				db := newHealthRunTestBlocking(nil)
 				ProvideNamedValue(i, "db", db)
@@ -1322,7 +1321,7 @@ func TestHealthReport_LateResultDiscarded(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		is := assert.New(t)
 
-		fc := clockwork.NewFakeClock()
+		fc := newFakeClock()
 		recorder := &healthHookRecorder{}
 		i := NewWithOpts(&InjectorOpts{Clock: fc, HealthReportCacheTTL: time.Hour})
 		i.AddServiceHealthChangedHook(recorder.serviceHook)
@@ -1433,7 +1432,7 @@ func TestHealthReport_BoundStartsAtSlot(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		fc := clockwork.NewFakeClock()
+		fc := newFakeClock()
 		i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckParallelism: 1})
 		ProvideNamedValue(i, "a", &healthCheckTestOnClock{clock: fc, duration: 9 * time.Second})
 		ProvideNamedValue(i, "b", &healthReportTestSwitch{})

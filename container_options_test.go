@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/kartaladev/doger/stacktrace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -149,7 +148,7 @@ func TestContainerOptions_CallerOptsUnchanged(t *testing.T) {
 			construct: func(opts *InjectorOpts) *RootScope { return New().CloneWithOpts(opts) },
 			effective: func(t *testing.T, root *RootScope, _ *InjectorOpts) {
 				t.Helper()
-				assert.Equal(t, clockwork.NewRealClock(), root.opts.Clock)
+				assert.Equal(t, RealClock(), root.opts.Clock)
 			},
 		},
 	}

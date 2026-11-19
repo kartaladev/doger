@@ -101,28 +101,49 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{Logger: logger})
 
 ### Clock {#clock}
 
-`InjectorOpts.Clock` is the container's time source, a [`clockwork.Clock`](https://pkg.go.dev/github.com/jonboulle/clockwork#Clock). The container reads time only from it: the `HealthCheckTimeout`, `HealthCheckSingleTimeout` and `HealthCheckGlobalTimeout` deadlines, lazy service build times (`ServiceBuildTime` in explain output), and `ShutdownReport.ShutdownTime`/`ServiceShutdownTime`.
+`InjectorOpts.Clock` is the container's time source, a `doger.Clock`: any type with `Now() time.Time`, `Since(time.Time) time.Duration` and `AfterFunc(time.Duration, func()) doger.Timer`. The container reads time only from it: the `HealthCheckTimeout`, `HealthCheckSingleTimeout` and `HealthCheckGlobalTimeout` deadlines, the health report cache and bounds, lazy service build times (`ServiceBuildTime` in explain output), and `ShutdownReport.ShutdownTime`/`ServiceShutdownTime`. It is also passed to the `HealthScheduler`.
 
-- **Default:** `nil`, which means the real clock (`clockwork.NewRealClock()`).
-- **Override:** pass a fake clock to control time in tests, for example to reach a health-check timeout without waiting for it.
+- **Default:** `nil`, which means `doger.RealClock()`, backed by the `time` package.
+- **Override:** pass a controllable clock to drive time in tests, for example to reach a health-check timeout without waiting for it. The module `github.com/kartaladev/doger/clock/clockwork` wraps a [clockwork](https://github.com/jonboulle/clockwork) clock; `dogerclockwork.Wrap(nil)` is a nil clock, so the default.
 - Child scopes and `Clone()` use the root scope's clock. `CloneWithOpts(opts)` uses `opts.Clock`.
 
 ```go
-import "github.com/jonboulle/clockwork"
+import (
+    "github.com/jonboulle/clockwork"
+    dogerclockwork "github.com/kartaladev/doger/clock/clockwork"
+)
 
-clock := clockwork.NewFakeClock()
+fake := clockwork.NewFakeClock()
 injector := doger.NewWithOpts(&doger.InjectorOpts{
-    Clock:              clock,
+    Clock:              dogerclockwork.Wrap(fake),
     HealthCheckTimeout: 5 * time.Second,
 })
 
 // ... start injector.HealthCheck() in a goroutine, then:
-clock.Advance(5 * time.Second) // a check still running now times out
+fake.Advance(5 * time.Second) // a check still running now times out
 ```
 
-:::caution
-With a fake clock, a context the container creates for a health check blocks on `ctx.Err()` until it is done (clockwork behavior). In a `HealthCheck(ctx)` method, wait on `<-ctx.Done()` instead of polling `ctx.Err()`.
+:::note Migration
+`InjectorOpts.Clock` was a `clockwork.Clock`. Replace `Clock: c` with `Clock: dogerclockwork.Wrap(c)` and require `github.com/kartaladev/doger/clock/clockwork`. The root module no longer depends on clockwork.
 :::
+
+### Health scheduler {#health-scheduler}
+
+`InjectorOpts.HealthScheduler` keeps `HealthReport()` results fresh in the background. The container calls its `ScheduleHealthRounds(clock doger.Clock, round func(ctx context.Context))` once, when it reaches `PhaseReady`, with the injector clock (`doger.RealClock()` when `Clock` is nil). The `scheduler/gocron` module provides one.
+
+A scheduler that needs a clockwork clock recovers it with `dogerclockwork.Unwrap(clock)`, which reports `false` for a clock not made by `dogerclockwork.Wrap`:
+
+```go
+func (s *myScheduler) ScheduleHealthRounds(clock doger.Clock, round func(context.Context)) (func(context.Context) error, error) {
+    cw, ok := dogerclockwork.Unwrap(clock)
+    if !ok {
+        cw = clockwork.NewRealClock()
+    }
+    // ... schedule round on cw
+}
+```
+
+An error or a panic of `ScheduleHealthRounds` leaves the container unmonitored and is logged at Error level on `InjectorOpts.Logger`; a panic value is logged at Debug level only. Migration: implementers change the parameter type from `clockwork.Clock` to `doger.Clock`.
 
 ### Start hooks {#start-hooks}
 
