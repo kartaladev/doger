@@ -132,22 +132,15 @@ else
 	fail "$sib_dir requires $sib_dep ${have:-(none)}, want $version"
 fi
 
-# released module | dependency that must not be required
-for row in \
-	". github.com/stretchr/testify" \
-	". go.uber.org/goleak" \
-	". github.com/jonboulle/clockwork"; do
-	read -r dir dep <<<"$row"
-	if have="$(requires "$dir" "$dep")"; then
-		fail "$dir requires test-only $dep $have"
-	else
-		pass "$dir does not require $dep"
-	fi
-done
-# no adapter requires testify or goleak
+# test-only requirements: testify and goleak in no released module;
+# clockwork only where non-test code uses it (clock/clockwork and
+# scheduler/gocron), which "runtime dependency that must stay" checks
 for dir in $released; do
-	[ "$dir" != "." ] || continue
-	for dep in github.com/stretchr/testify go.uber.org/goleak; do
+	for dep in github.com/stretchr/testify go.uber.org/goleak github.com/jonboulle/clockwork; do
+		if [ "$dep" = github.com/jonboulle/clockwork ] &&
+			{ [ "$dir" = clock/clockwork ] || [ "$dir" = scheduler/gocron ]; }; then
+			continue
+		fi
 		if have="$(requires "$dir" "$dep")"; then
 			fail "$dir requires test-only $dep $have"
 		else
@@ -160,7 +153,8 @@ done
 for row in \
 	". github.com/samber/go-type-to-string" \
 	"scheduler/gocron github.com/go-co-op/gocron/v2" \
-	"clock/clockwork github.com/jonboulle/clockwork"; do
+	"clock/clockwork github.com/jonboulle/clockwork" \
+	"scheduler/gocron github.com/jonboulle/clockwork"; do
 	read -r dir dep <<<"$row"
 	if [ ! -f "$src/$dir/go.mod" ] || ! grep -qw "$dir" <<<"$released"; then
 		fail "$dir is not released"

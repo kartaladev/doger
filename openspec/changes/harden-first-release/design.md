@@ -262,7 +262,7 @@ Each item gets a benchmark in `bench/` that runs before and after, with results 
 - **Dependabot.** Auto-merge is limited to semver patch and minor updates, and is gated on `github.event.pull_request.user.login == 'dependabot[bot]'`. Dependabot also covers `/scheduler/**` and `/clock/**`.
 - **Release.**
   - It requires `github.ref == 'refs/heads/main'`, or a tag that points at a commit on `main`, and the `release` environment.
-  - After stripping tests, it runs `go mod tidy` in every module while the local `replace` is still present, then pins the root version, builds, vets and runs govulncheck.
+  - After stripping tests, it drops from every module the test-only requirements (testify, goleak, clockwork) that its non-test packages do not use on any release platform, then runs `go mod tidy` while the local `replace` is still present (tidy alone keeps a requirement a dependency's graph mentions; a tidy that adds or raises a requirement fails the release), then pins the root version, builds, vets and runs govulncheck.
   - It creates the GitHub release with `generate_release_notes: true`.
 - **Lint.** `.golangci.yml` enables `gosec`, `errorlint` and `noctx`, with each suppression justified inline.
 - **Also released and checked.** The release also tags `clock/clockwork/<semver>`. Three scripts back the `release-integrity` scenarios: `scripts/check-workflows.sh` (pinning, permissions, matrix, provenance, dependabot, policy files; `--self-test`), `scripts/release-dry-run.sh <semver>` (mirrors release post-processing into a file proxy and builds a clean `GOWORK=off` consumer) and `scripts/test-make-targets.sh` (plants failures per module).
