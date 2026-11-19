@@ -10,6 +10,8 @@
 #
 # Sections (default: all of them, in this order):
 #   pinning      every "uses:" names a 40-char commit SHA and a "# v" comment
+#   safety       no pull_request_target trigger and no untrusted ${{ }}
+#                expression (github.event.*, inputs.*, head_ref) in run:
 #   permissions  top-level "permissions: contents: read"; raises only on the
 #                allowed jobs
 #   matrix       test.yml runs make test-all on 3 OSes x {1.27.x, stable};
@@ -21,7 +23,8 @@
 #                a gomod entry covers every module directory
 #   floors       minimum versions of vulnerable dependencies in go.mod files
 #   policy       SECURITY.md, CHANGELOG.md, .github/CODEOWNERS, no
-#                vercel.json, Bearer at its default log level
+#                vercel.json, Bearer at its default log level, .gitattributes
+#                keeping shell scripts and the Makefile LF on every OS
 #
 # The workflows are parsed line by line, assuming the repository's layout:
 # two-space indentation, top-level keys at column 0 and jobs at column 2.
@@ -29,7 +32,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$script_dir/.." && pwd)"
-all_sections=(pinning permissions matrix release dependabot floors policy)
+all_sections=(pinning safety permissions matrix release dependabot floors policy)
 
 failures=0
 fail() {
@@ -63,6 +66,43 @@ check_pinning() {
 				fail "$(rel "$f"):$n: action not pinned to a commit SHA with a '# vX.Y.Z' comment: ${line#"${line%%[![:space:]]*}"}"
 			fi
 		done <"$f"
+	done < <(workflows)
+}
+
+# --- safety ------------------------------------------------------------------
+
+# run_expressions prints "<line>\t<text>" for every ${{ ... }} expression
+# inside a run: script of file $1 (inline or block scalar).
+run_expressions() {
+	awk '
+		{ match($0, /^ */); indent = RLENGTH }
+		inrun && $0 !~ /^[ \t]*$/ && indent <= runindent { inrun = 0 }
+		inrun && /\$\{\{/ { print NR "\t" $0; next }
+		/^ *(- )?run:/ {
+			runindent = indent
+			v = $0; sub(/^ *(- )?run:/, "", v)
+			if (v ~ /^[ \t]*[|>]/) { inrun = 1 }
+			else if (v ~ /\$\{\{/) { print NR "\t" $0 }
+		}
+	' "$1"
+}
+
+check_safety() {
+	local f n text
+	while IFS= read -r f; do
+		# pull_request_target runs with a write token and secrets on the
+		# code of a fork's pull request
+		if grep -nE '^[[:space:]]*(-[[:space:]]+)?pull_request_target' "$f" >/dev/null ||
+			grep -nE '^on:.*pull_request_target' "$f" >/dev/null; then
+			fail "$(rel "$f"): the pull_request_target trigger is not allowed"
+		fi
+		# an expression expanded into a script is a script injection when
+		# it carries outside data; pass it through env: instead
+		while IFS=$'\t' read -r n text; do
+			if [[ "$text" =~ \$\{\{[[:space:]]*(github\.event\.|github\.head_ref|inputs\.|github\.event_name) ]]; then
+				fail "$(rel "$f"):$n: untrusted expression inside run: (pass it through env:): ${text#"${text%%[![:space:]]*}"}"
+			fi
+		done < <(run_expressions "$f")
 	done < <(workflows)
 }
 
@@ -192,6 +232,10 @@ check_release() {
 		fail "$r: the release job lacks the condition github.ref == 'refs/heads/main'"
 	grep -Eq '^    environment:[[:space:]]+release[[:space:]]*$' "$f" ||
 		fail "$r: the release job does not declare 'environment: release'"
+	# the checkout must not persist the write token for the steps that run
+	# dependency code (tests, tidy, govulncheck)
+	grep -A2 -E 'uses:[[:space:]]+actions/checkout@' "$f" | grep -Eq '^[[:space:]]+persist-credentials:[[:space:]]+false[[:space:]]*$' ||
+		fail "$r: the checkout must set 'persist-credentials: false'"
 	grep -Eq '^[[:space:]]+generate_release_notes:[[:space:]]+true' "$f" ||
 		fail "$r: the release action is not called with generate_release_notes: true"
 
@@ -258,29 +302,43 @@ check_dependabot() {
 	if [ ! -f "$wf" ]; then
 		fail "$w is missing"
 	else
-		grep -Eq "^    if:.*github\.event\.pull_request\.user\.login == 'dependabot\[bot\]'" "$wf" ||
-			fail "$w: the automerge job is not gated on github.event.pull_request.user.login == 'dependabot[bot]'"
-		local cond
-		cond="$(grep -E '^[[:space:]]+if:.*update-type' "$wf" || true)"
-		{ grep -q "version-update:semver-patch" <<<"$cond" && grep -q "version-update:semver-minor" <<<"$cond"; } ||
-			fail "$w: the merge step is not limited to semver patch and minor updates"
-		grep -q 'semver-major' <<<"$cond" &&
-			fail "$w: the merge step must not enable auto-merge for semver-major updates"
-		grep -E '^[[:space:]]+run:.*gh pr merge' "$wf" >/dev/null ||
-			fail "$w: no step enables auto-merge"
-		local merges guarded
-		merges="$(grep -cE '^[[:space:]]+run:.*gh pr merge' "$wf" || true)"
-		guarded="$(grep -B3 -E '^[[:space:]]+run:.*gh pr merge' "$wf" | grep -cE 'if:.*update-type' || true)"
-		[ "$merges" -eq "$guarded" ] ||
-			fail "$w: every 'gh pr merge' step must be gated on the update type"
+		# exact expressions: any extra "|| ..." would widen who or what merges
+		local job_if="if: github.event.pull_request.user.login == 'dependabot[bot]'"
+		local step_if="if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'"
+		local job_ifs
+		job_ifs="$(grep -E '^    if:' "$wf" | sed 's/^ *//; s/[[:space:]]*$//' || true)"
+		[ "$job_ifs" = "$job_if" ] ||
+			fail "$w: the automerge job condition must be exactly \"$job_if\" (found: ${job_ifs:-none})"
+		local merges=0 n=0 line prev_if=""
+		while IFS= read -r line || [ -n "$line" ]; do
+			n=$((n + 1))
+			if [[ "$line" =~ ^[[:space:]]+-[[:space:]] ]]; then
+				prev_if="" # a new step
+			fi
+			if [[ "$line" =~ ^[[:space:]]{8}if: ]]; then
+				prev_if="$(sed 's/^ *//; s/[[:space:]]*$//' <<<"$line")"
+			fi
+			if [[ "$line" =~ gh[[:space:]]+pr[[:space:]]+merge ]]; then
+				merges=$((merges + 1))
+				if [ "$prev_if" != "$step_if" ]; then
+					fail "$w:$n: 'gh pr merge' must be gated by exactly \"$step_if\" (found: ${prev_if:-none})"
+				fi
+			fi
+		done <"$wf"
+		[ "$merges" -gt 0 ] || fail "$w: no step enables auto-merge"
 	fi
 
 	if [ ! -f "$cfg" ]; then
 		fail ".github/dependabot.yml is missing"
 		return
 	fi
-	local dirs mod d entry covered
+	local dirs mods mod d entry covered
 	dirs="$(gomod_dirs "$cfg")"
+	# fail closed: a module list that cannot be read is a finding
+	if ! mods="$(cd "$root" && scripts/modules.sh list 2>&1)" || [ -z "$mods" ]; then
+		fail "cannot list the workspace modules (scripts/modules.sh list): ${mods:-no output}"
+		return
+	fi
 	while IFS= read -r mod; do
 		d="/${mod#./}"
 		[ "$mod" != "." ] || d="/"
@@ -294,7 +352,7 @@ check_dependabot() {
 			fi
 		done <<<"$dirs"
 		[ "$covered" -eq 1 ] || fail ".github/dependabot.yml: no gomod entry covers module directory $d"
-	done < <(cd "$root" && scripts/modules.sh list)
+	done <<<"$mods"
 }
 
 # --- floors ------------------------------------------------------------------
@@ -334,10 +392,15 @@ check_policy() {
 	else
 		grep -q 'Reporting a vulnerability' "$f" || fail "SECURITY.md lacks a 'Reporting a vulnerability' section"
 		grep -q 'Accepted advisories' "$f" || fail "SECURITY.md lacks an 'Accepted advisories' section"
-		local id
-		for id in GO-2026-6875 GO-2026-6872; do
-			sed -n '/Accepted advisories/,$p' "$f" | grep -q "$id" ||
-				fail "SECURITY.md does not list $id under 'Accepted advisories'"
+		# advisories are accepted per (id, module): scripts/govulncheck.sh
+		# reads the same rows
+		local row id mod accepted
+		accepted="$("$script_dir/govulncheck.sh" --accepted "$f" 2>&1)" ||
+			fail "SECURITY.md: cannot read the accepted advisories: $accepted"
+		for row in "GO-2026-6875 ./http/echo" "GO-2026-6872 ./http/echo"; do
+			read -r id mod <<<"$row"
+			grep -qxF "$id	$mod" <<<"$accepted" ||
+				fail "SECURITY.md does not list $id for $mod under 'Accepted advisories'"
 		done
 	fi
 
@@ -363,6 +426,26 @@ check_policy() {
 	fi
 
 	[ ! -e "$root/vercel.json" ] || fail "vercel.json must not exist (docs deploy through GitHub Pages)"
+
+	# a CRLF checkout (core.autocrlf=true on Windows) breaks bash scripts
+	# ("set -o pipefail": invalid option name) and the Makefile recipes
+	f="$root/.gitattributes"
+	if [ ! -f "$f" ]; then
+		fail ".gitattributes is missing (shell scripts and the Makefile must stay LF)"
+	else
+		local pattern
+		for pattern in '*.sh' 'Makefile'; do
+			awk -v p="$pattern" '$1 == p { for (i = 2; i <= NF; i++) if ($i == "eol=lf") found = 1 } END { exit !found }' "$f" ||
+				fail ".gitattributes does not set 'eol=lf' for $pattern"
+		done
+	fi
+	local crlf
+	crlf="$(grep -l $'\r' "$root"/scripts/*.sh "$root/Makefile" 2>/dev/null || true)"
+	local crlf_rel="" c
+	while IFS= read -r c; do
+		[ -n "$c" ] && crlf_rel+="$(rel "$c") "
+	done <<<"$crlf"
+	[ -z "$crlf_rel" ] || fail "CRLF line endings in: $crlf_rel"
 
 	f="$root/bearer.yml"
 	if [ -f "$f" ]; then
@@ -391,6 +474,7 @@ expect() {
 	fi
 }
 
+# shellcheck disable=SC2016 # the fixtures hold literal ${{ }} and $VAR text
 self_test() {
 	local tmp sha
 	tmp="$(mktemp -d)"
@@ -424,6 +508,122 @@ self_test() {
 	touch "$tmp/bad/vercel.json"
 	expect "$tmp/bad" policy fail 'vercel\.json must not exist'
 	expect "$tmp/bad" policy fail 'SECURITY\.md is missing'
+	expect "$tmp/bad" policy fail '\.gitattributes is missing'
+
+	# fixture puts content $2 into file $1 of a fresh fixture directory
+	local fx
+	fixture() {
+		fx="$(mktemp -d "$tmp/fx.XXXXXX")"
+		mkdir -p "$fx/.github/workflows" "$fx/scripts"
+	}
+	put() {
+		mkdir -p "$(dirname "$fx/$1")"
+		printf '%s\n' "$2" >"$fx/$1"
+	}
+	local head='name: T
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:'
+
+	# safety: an outside expression passed through env: is fine
+	fixture
+	put .github/workflows/test.yml "$head"'
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$TITLE"'
+	expect "$fx" safety ok
+	# ... expanded into the script it is an injection
+	put .github/workflows/test.yml "$head"'
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "${{ github.event.pull_request.title }}"'
+	expect "$fx" safety fail 'test\.yml:11: untrusted expression inside run:'
+	put .github/workflows/test.yml "$head"'
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ${{ inputs.semver }}'
+	expect "$fx" safety fail 'test\.yml:10: untrusted expression inside run:'
+	put .github/workflows/test.yml 'name: T
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs: {}'
+	expect "$fx" safety fail 'pull_request_target trigger is not allowed'
+
+	# matrix: a missing OS, Go version and make target
+	fixture
+	put .github/workflows/test.yml "$head"'
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go: ["stable"]
+    steps:
+      - run: make test'
+	expect "$fx" matrix fail "matrix 'os' lacks windows-latest"
+	expect "$fx" matrix fail "matrix 'go' lacks 1\.27\.x"
+	expect "$fx" matrix fail "no step runs 'make test-all'"
+
+	# release: no main-only condition, environment or credential guard
+	fixture
+	put .github/workflows/release.yml "$head"'
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@'"$sha"' # v7.0.1
+      - name: Create tags
+        run: git push origin v0.1.0'
+	expect "$fx" release fail "lacks the condition github\.ref == 'refs/heads/main'"
+	expect "$fx" release fail "does not declare 'environment: release'"
+	expect "$fx" release fail "must set 'persist-credentials: false'"
+	expect "$fx" release fail "no step pins the adapters"
+
+	# dependabot: a widened job or step condition, and no module list
+	fixture
+	put .github/workflows/dependabot-automerge.yaml "$head"'
+  automerge:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == '"'dependabot[bot]'"' || github.actor == '"'octocat'"'
+    steps:
+      - name: merge
+        if: steps.metadata.outputs.update-type == '"'version-update:semver-patch'"' || true
+        run: gh pr merge --auto --squash "$PR_URL"'
+	put .github/dependabot.yml 'version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /'
+	expect "$fx" dependabot fail 'the automerge job condition must be exactly'
+	expect "$fx" dependabot fail "'gh pr merge' must be gated by exactly"
+	expect "$fx" dependabot fail 'cannot list the workspace modules'
+
+	# floors: a vulnerable version below the floor
+	fixture
+	put http/fiber/go.mod 'module m
+require github.com/andybalholm/brotli v1.1.0'
+	expect "$fx" floors fail 'http/fiber/go\.mod requires github\.com/andybalholm/brotli v1\.1\.0, below the floor v1\.2\.7'
+
+	# policy: an advisory accepted for another module only, and CRLF
+	fixture
+	put SECURITY.md '## Reporting a vulnerability
+## Accepted advisories
+| Advisory | Module | Reason |
+|---|---|---|
+| GO-2026-6875 | `./http/gin` | wrong module |'
+	put .gitattributes '*.sh text eol=lf'
+	printf 'set -euo pipefail\r\n' >"$fx/scripts/x.sh"
+	expect "$fx" policy fail 'does not list GO-2026-6875 for \./http/echo'
+	expect "$fx" policy fail "\.gitattributes does not set 'eol=lf' for Makefile"
+	expect "$fx" policy fail 'CRLF line endings in: .*scripts/x\.sh'
 
 	if [ "$self_failures" -gt 0 ]; then
 		echo "$self_failures self-test check(s) failed"
@@ -460,7 +660,7 @@ done
 for section in "${sections[@]}"; do
 	before=$failures
 	case "$section" in
-	pinning | permissions | matrix | release | dependabot | floors | policy) "check_$section" ;;
+	pinning | safety | permissions | matrix | release | dependabot | floors | policy) "check_$section" ;;
 	*)
 		echo "unknown section '$section' (want: ${all_sections[*]})" >&2
 		exit 2

@@ -11,7 +11,9 @@
 # Usage: scripts/release-dry-run.sh <semver>     e.g. v0.99.0
 #
 # Nothing in the working tree or the user's module cache is modified: the
-# script works on a copy, and the consumers use private module caches.
+# script works on a copy, and the consumers use private module caches. The
+# copy holds the tracked files only, as the release's clean checkout does:
+# "git add" a new file before dry-running it.
 # Fetching third-party modules for the proxy needs network access.
 set -euo pipefail
 
@@ -47,7 +49,21 @@ pass() {
 
 src="$work/src"
 mkdir -p "$src"
-rsync -a --exclude .git --exclude .claude --exclude node_modules "$repo/" "$src/"
+# the release job works on a clean checkout: copy the tracked files only
+# (with their working-tree content), never untracked or ignored ones; a
+# tracked file deleted in the working tree is left out
+tracked_files() {
+	local f
+	git -C "$repo" ls-files -z --cached | while IFS= read -r -d '' f; do
+		[ -e "$repo/$f" ] && printf '%s\0' "$f"
+	done
+	return 0
+}
+tracked_files | rsync -a --from0 --files-from=- "$repo/" "$src/"
+[ -f "$src/go.mod" ] || {
+	echo "copying the tracked files failed" >&2
+	exit 1
+}
 cd "$src"
 
 echo "--- release steps on a copy"

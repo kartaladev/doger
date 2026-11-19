@@ -8,7 +8,8 @@
 # modified. A lint row whose linter is not enabled in .golangci.yml is
 # reported as SKIP, not as a failure.
 #
-# Usage: scripts/test-make-targets.sh [test|lint]...   (default: test lint)
+# Usage: scripts/test-make-targets.sh [test|lint|discovery|vuln]...
+#        (default: all four)
 # LINT_FLAGS is passed to make lint-all (e.g. --allow-parallel-runners).
 set -euo pipefail
 
@@ -152,14 +153,70 @@ check_lint_all() {
 	[ "$failures" -eq 0 ] || grep -E 'zz_planted|^FAIL' "$out" | sed 's/^/    | /'
 }
 
+# A module list that cannot be read must fail every loop, never pass as an
+# empty workspace: a go directive above go.work's makes "go list -m" fail.
+check_discovery() {
+	local copy out status target
+	copy="$(fresh_copy)"
+	(cd "$copy/http/chi" && go mod edit -go=1.99)
+	for target in modules test-all vuln; do
+		out="$work/discovery-$target.log"
+		status=0
+		(cd "$copy" && GOTOOLCHAIN=local make "$target") >"$out" 2>&1 || status=$?
+		if [ "$status" -ne 0 ] && ! grep -q '^all 0 modules passed' "$out"; then
+			pass "make $target fails when the module list cannot be read ($status)"
+		else
+			fail "make $target exits $status when the module list cannot be read: $(tail -1 "$out")"
+		fi
+	done
+}
+
+# Each module is scanned with its own requirements: a vulnerable version in
+# one module is not hidden by a newer one elsewhere in the workspace.
+check_vuln_isolation() {
+	local copy out status
+	copy="$(fresh_copy)"
+	(
+		cd "$copy/http/fiber"
+		export GOWORK=off
+		go mod edit -require=github.com/andybalholm/brotli@v1.1.0
+		go mod download github.com/andybalholm/brotli@v1.1.0
+		go mod tidy
+	) >"$work/downgrade.log" 2>&1 || {
+		fail "cannot plant brotli v1.1.0 in http/fiber: $(tail -3 "$work/downgrade.log")"
+		return
+	}
+	if ! grep -q 'andybalholm/brotli v1.1.0' "$copy/http/fiber/go.mod" ||
+		! grep -q 'andybalholm/brotli v1.2.7' "$copy/examples/http/fiber/go.mod"; then
+		fail "the planted downgrade did not apply (http/fiber v1.1.0, examples/http/fiber v1.2.7)"
+		return
+	fi
+	out="$work/vuln.log"
+	status=0
+	(cd "$copy" && make vuln) >"$out" 2>&1 || status=$?
+	if [ "$status" -ne 0 ] && grep -qxF 'FAIL module ./http/fiber' "$out" &&
+		grep -q 'VULNERABLE  GO-2026-6888 .* from \./http/fiber' "$out"; then
+		pass "make vuln fails on brotli v1.1.0 in ./http/fiber despite v1.2.7 elsewhere"
+	else
+		fail "make vuln exits $status and does not fail ./http/fiber on GO-2026-6888"
+	fi
+	if grep -qxF 'FAIL module ./examples/http/fiber' "$out"; then
+		fail "make vuln fails ./examples/http/fiber, which still requires brotli v1.2.7"
+	else
+		pass "make vuln passes ./examples/http/fiber (brotli v1.2.7)"
+	fi
+}
+
 targets=("$@")
-[ "${#targets[@]}" -gt 0 ] || targets=(test lint)
+[ "${#targets[@]}" -gt 0 ] || targets=(test lint discovery vuln)
 for target in "${targets[@]}"; do
 	case "$target" in
 	test) check_test_all ;;
 	lint) check_lint_all ;;
+	discovery) check_discovery ;;
+	vuln) check_vuln_isolation ;;
 	*)
-		echo "unknown target $target (want test or lint)" >&2
+		echo "unknown target $target (want test, lint, discovery or vuln)" >&2
 		exit 2
 		;;
 	esac

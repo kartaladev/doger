@@ -297,7 +297,7 @@ Examples:
   | test.yml                        | none                                          |
   | lint.yml                        | none                                          |
   | doc.yml                         | the deploy job (pages: write, id-token: write) |
-  | security.yml                    | the codeql job (security-events: write)       |
+  | security.yml                    | the codeql and trivy-codeql jobs (security-events: write, to upload to code scanning) |
   | release.yml                     | the release job (contents: write)             |
   | dependabot-automerge.yaml       | the automerge job (contents: write, pull-requests: write) |
 ```

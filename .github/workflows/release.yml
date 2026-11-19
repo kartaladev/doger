@@ -25,7 +25,12 @@ jobs:
     permissions:
       contents: write
     steps:
+    # the tests, tidy and govulncheck below run dependency code: keep the
+    # write token out of .git/config, and hand it only to the tag push and
+    # the release action
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     # the module path has no /vN suffix, so only v0 and v1 versions are
     # valid; pre-releases such as v0.2.0-rc.1 are allowed
@@ -90,6 +95,7 @@ jobs:
       env:
         SEMVER: ${{ inputs.semver }}
         ACTOR: ${{ github.triggering_actor }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
           git config --global user.name "$ACTOR"
           git config --global user.email "${ACTOR}@users.noreply.github.com"
@@ -100,7 +106,12 @@ jobs:
           for tag in "${tags[@]}"; do
             git tag "$tag"
           done
-          git push origin "${tags[@]}"
+          # the token is passed for this push only, as actions/checkout would
+          # (an http extraheader), and never written to .git/config
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push origin "${tags[@]}"
 
     - name: Release
       uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
@@ -108,3 +119,4 @@ jobs:
         name: ${{ inputs.semver }}
         tag_name: ${{ inputs.semver }}
         generate_release_notes: true
+        token: ${{ secrets.GITHUB_TOKEN }}

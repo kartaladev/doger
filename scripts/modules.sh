@@ -19,10 +19,19 @@ root_dir() {
 	go list -m -f '{{.Dir}}' github.com/kartaladev/doger
 }
 
-# prints "<relative dir>\t<absolute dir>" for every workspace module
+# prints "<relative dir>\t<absolute dir>" for every workspace module. It
+# fails closed: when go list fails or lists no module, it prints the error
+# and returns non-zero, so no caller can mistake it for an empty workspace.
 module_rows() {
-	local root dir rel
-	root="$(root_dir)"
+	local root dirs dir rel count=0
+	root="$(root_dir)" || {
+		echo "modules.sh: go list cannot find the root module" >&2
+		return 1
+	}
+	dirs="$(go list -m -f '{{.Dir}}')" || {
+		echo "modules.sh: go list -m failed; no module was run" >&2
+		return 1
+	}
 	while IFS= read -r dir; do
 		[ -n "$dir" ] || continue
 		dir="${dir%$'\r'}"
@@ -33,11 +42,23 @@ module_rows() {
 			rel=".${rel//\\//}"
 		fi
 		printf '%s\t%s\n' "$rel" "$dir"
-	done < <(go list -m -f '{{.Dir}}')
+		count=$((count + 1))
+	done <<<"$dirs"
+	if [ "$count" -eq 0 ]; then
+		echo "modules.sh: go list -m listed no module" >&2
+		return 1
+	fi
+}
+
+# all_rows holds the rows of module_rows; load_rows fills it or fails.
+all_rows=""
+load_rows() {
+	all_rows="$(module_rows)" || return 1
 }
 
 cmd_list() {
-	module_rows | cut -f1
+	load_rows || return 1
+	cut -f1 <<<"$all_rows"
 }
 
 cmd_run() {
@@ -46,6 +67,7 @@ cmd_run() {
 		return 2
 	fi
 
+	load_rows || return 1
 	local rel dir total=0
 	local -a failed=()
 	while IFS=$'\t' read -r rel dir; do
@@ -55,7 +77,7 @@ cmd_run() {
 			echo "FAIL ${rel}"
 			failed+=("$rel")
 		fi
-	done < <(module_rows)
+	done <<<"$all_rows"
 
 	echo
 	if [ "${#failed[@]}" -gt 0 ]; then
