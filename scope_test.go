@@ -1813,7 +1813,7 @@ func TestScopeShutdown_AfterContextEnded(t *testing.T) {
 				return func() int32 {
 					probe.mu.Lock()
 					defer probe.mu.Unlock()
-					return int32(len(probe.ctxs))
+					return int32(len(probe.ctxs)) //nolint:gosec // G115: the probe records one context per Shutdown call, a handful at most
 				}
 			},
 			ctx:     cancelled,

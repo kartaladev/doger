@@ -339,7 +339,7 @@ func (s *serviceExport[T]) getInstance(i Injector) (T, error) {
 
 	typed, ok := instance.(T)
 	if !ok && instance != nil {
-		return empty[T](), serviceTypeMismatch(inferServiceName[T](), source.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert
+		return empty[T](), serviceTypeMismatch(inferServiceName[T](), source.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert // the source an export resolves is a stored service wrapper
 	}
 
 	return typed, nil
@@ -353,7 +353,7 @@ func (s *serviceExport[T]) isHealthchecker() bool {
 		return false
 	}
 
-	return source.(serviceWrapperIsHealthchecker).isHealthchecker() //nolint:errcheck,forcetypeassert
+	return source.(serviceWrapperIsHealthchecker).isHealthchecker() //nolint:errcheck,forcetypeassert // the source an export resolves is a stored service wrapper
 }
 
 // healthcheck runs the health check of the source; nil once it is gone.
@@ -363,7 +363,7 @@ func (s *serviceExport[T]) healthcheck(ctx context.Context) error {
 		return nil
 	}
 
-	return source.(serviceWrapperHealthcheck).healthcheck(ctx) //nolint:errcheck,forcetypeassert
+	return source.(serviceWrapperHealthcheck).healthcheck(ctx) //nolint:errcheck,forcetypeassert // the source an export resolves is a stored service wrapper
 }
 
 func (s *serviceExport[T]) isShutdowner() bool { return false }

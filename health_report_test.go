@@ -350,7 +350,7 @@ func TestHealthReport_Order(t *testing.T) {
 
 // Not parallel: testing.AllocsPerRun counts the allocations of every
 // goroutine.
-func TestHealthReport_ReadAllocs(t *testing.T) { //nolint:paralleltest
+func TestHealthReport_ReadAllocs(t *testing.T) { //nolint:paralleltest // AllocsPerRun counts the allocations of every goroutine
 	testWithTimeout(t, 30*time.Second)
 
 	scheduler := &manualScheduler{}

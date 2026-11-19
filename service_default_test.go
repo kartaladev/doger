@@ -706,7 +706,7 @@ func raceReplaceAndResolve(t *testing.T, order func(register, invoke func(), bui
 	register := func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				assert.EqualError(t, recovered.(error), fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfConn]())) //nolint:errcheck,forcetypeassert
+				assert.EqualError(t, recovered.(error), fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfConn]()))
 			}
 		}()
 		Provide(root, func(Injector) (*dfConn, error) { return &dfConn{label: "explicit", shutdowns: &explicitShutdowns}, nil })

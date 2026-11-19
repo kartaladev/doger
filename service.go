@@ -156,18 +156,17 @@ type serviceWrapperAny interface {
 // without requiring the full serviceWrapper[T] interface.
 
 type (
-	serviceWrapperGetName            interface{ getName() string }
-	serviceWrapperGetTypeName        interface{ getTypeName() string }
-	serviceWrapperGetServiceType     interface{ getServiceType() ServiceType }
-	serviceWrapperGetReflectType     interface{ getReflectType() reflect.Type }
-	serviceWrapperGetInstanceAny     interface{ getInstanceAny(Injector) (any, error) }
-	serviceWrapperGetInstance[T any] interface{ getInstance(Injector) (T, error) } //nolint:unused
-	serviceWrapperIsHealthchecker    interface{ isHealthchecker() bool }
-	serviceWrapperHealthcheck        interface{ healthcheck(context.Context) error }
-	serviceWrapperIsShutdowner       interface{ isShutdowner() bool }
-	serviceWrapperShutdown           interface{ shutdown(context.Context) error }
-	serviceWrapperClone              interface{ clone(Injector) any }
-	serviceWrapperSource             interface {
+	serviceWrapperGetName         interface{ getName() string }
+	serviceWrapperGetTypeName     interface{ getTypeName() string }
+	serviceWrapperGetServiceType  interface{ getServiceType() ServiceType }
+	serviceWrapperGetReflectType  interface{ getReflectType() reflect.Type }
+	serviceWrapperGetInstanceAny  interface{ getInstanceAny(Injector) (any, error) }
+	serviceWrapperIsHealthchecker interface{ isHealthchecker() bool }
+	serviceWrapperHealthcheck     interface{ healthcheck(context.Context) error }
+	serviceWrapperIsShutdowner    interface{ isShutdowner() bool }
+	serviceWrapperShutdown        interface{ shutdown(context.Context) error }
+	serviceWrapperClone           interface{ clone(Injector) any }
+	serviceWrapperSource          interface {
 		source() (stacktrace.Frame, []stacktrace.Frame)
 	}
 )
@@ -260,10 +259,10 @@ func inferServiceInfo(injector Injector, name string) (serviceInfo, bool) {
 
 		return serviceInfo{
 			name:             name,
-			serviceType:      serviceAny.(serviceWrapperGetServiceType).getServiceType(), //nolint:errcheck,forcetypeassert
+			serviceType:      serviceAny.(serviceWrapperGetServiceType).getServiceType(), //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
 			serviceBuildTime: buildTime,
-			healthchecker:    serviceAny.(serviceWrapperIsHealthchecker).isHealthchecker(), //nolint:errcheck,forcetypeassert
-			shutdowner:       serviceAny.(serviceWrapperIsShutdowner).isShutdowner(),       //nolint:errcheck,forcetypeassert
+			healthchecker:    serviceAny.(serviceWrapperIsHealthchecker).isHealthchecker(), //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
+			shutdowner:       serviceAny.(serviceWrapperIsShutdowner).isShutdowner(),       //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
 		}, true
 	}
 

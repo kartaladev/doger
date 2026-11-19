@@ -212,7 +212,7 @@ func (s *serviceDefault[T]) getInstance(i Injector) (T, error) {
 
 	typed, ok := instance.(T)
 	if !ok && instance != nil {
-		return empty[T](), serviceTypeMismatch(inferServiceName[T](), target.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert
+		return empty[T](), serviceTypeMismatch(inferServiceName[T](), target.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert // the target a default yielded to is a stored service wrapper
 	}
 
 	return typed, nil
@@ -231,7 +231,7 @@ func (s *serviceDefault[T]) replacementInstance(i Injector) (T, error) {
 
 	replacement, ok := current.(serviceWrapper[T])
 	if !ok {
-		return empty[T](), serviceTypeMismatch(inferServiceName[T](), current.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert
+		return empty[T](), serviceTypeMismatch(inferServiceName[T](), current.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert // the service that replaced the default is a stored service wrapper
 	}
 
 	return replacement.getInstance(i)
@@ -306,7 +306,7 @@ func (s *serviceDefault[T]) unwrapExport() (export serviceWrapperExport, yielded
 }
 
 func (s *serviceDefault[T]) clone(newScope Injector) any {
-	return newServiceDefault(s.inner.clone(newScope).(serviceWrapper[T]), injectorScope(newScope)) //nolint:errcheck,forcetypeassert
+	return newServiceDefault(s.inner.clone(newScope).(serviceWrapper[T]), injectorScope(newScope)) //nolint:errcheck,forcetypeassert // a wrapper of T clones to a wrapper of the same T
 }
 
 func (s *serviceDefault[T]) source() (stacktrace.Frame, []stacktrace.Frame) {

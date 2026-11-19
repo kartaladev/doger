@@ -38,6 +38,8 @@ linters:
     - errorlint
     # HTTP requests built without a context
     - noctx
+    # every //nolint names its linters and says why
+    - nolintlint
 
   # disable noisy/controversial ones which you might enable later
   disable:
@@ -56,6 +58,9 @@ linters:
       min-occurrences: 3
     gocyclo:
       min-complexity: 15 # strict; lower => stricter
+    nolintlint:
+      require-explanation: true
+      require-specific: true
     modernize:
       disable:
         # its fixes change test fixture field types (int32 -> atomic.Int32)

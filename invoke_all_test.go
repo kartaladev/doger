@@ -912,7 +912,7 @@ func TestInvokeAll_ConcurrentShutdown(t *testing.T) {
 // provideEnvSourceAs registers "envSource" as a default under type T.
 func provideEnvSourceAs[T dfPropertySource](scope Injector) {
 	ProvideNamed(scope, "envSource", func(Injector) (T, error) {
-		return any(&dfEnvSource{name: "envSource"}).(T), nil //nolint:errcheck,forcetypeassert
+		return any(&dfEnvSource{name: "envSource"}).(T), nil
 	}, AsDefault())
 }
 
@@ -1060,7 +1060,7 @@ func TestInvokeAllMap_DefaultKeepsOneEntry(t *testing.T) {
 			require.Len(t, checkers, 1)
 			extPool, ok := ext.serviceGet(NameOf[*dfPool]())
 			require.True(t, ok)
-			instance, err := extPool.(serviceWrapperAny).getInstanceAny(ext) //nolint:errcheck,forcetypeassert
+			instance, err := extPool.(serviceWrapperAny).getInstanceAny(ext)
 			require.NoError(t, err)
 			assert.Same(t, instance, checkers[NameOf[*dfPool]()])
 		})

@@ -2093,7 +2093,7 @@ func pauseCollection(scope *Scope) *pausingWrapper {
 	ProvideNamedValue(scope, "pause", 0)
 	inner, _ := scope.serviceGet("pause")
 	w := &pausingWrapper{
-		serviceWrapperAny: inner.(serviceWrapperAny), //nolint:errcheck,forcetypeassert
+		serviceWrapperAny: inner.(serviceWrapperAny),
 		reached:           make(chan struct{}),
 		release:           make(chan struct{}),
 	}

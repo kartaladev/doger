@@ -246,9 +246,9 @@ func registerLocked(scope *Scope, name string, incoming serviceWrapperAny) (regi
 		incoming.setRegistrationIndex(root.nextRegIndex.Add(1) - 1)
 		scope.storeLocked(name, replaced, incoming)
 	case registerReplaced:
-		incoming.setRegistrationIndex(replaced.(serviceWrapperAny).getRegistrationIndex()) //nolint:errcheck,forcetypeassert
+		incoming.setRegistrationIndex(replaced.(serviceWrapperAny).getRegistrationIndex()) //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
 		store := func() { scope.storeLocked(name, replaced, incoming) }
-		if !replaced.(serviceWrapperSupersede).supersede(store) { //nolint:errcheck,forcetypeassert
+		if !replaced.(serviceWrapperSupersede).supersede(store) { //nolint:errcheck,forcetypeassert // registerReplaced is decided only for an unresolved default, which implements serviceWrapperSupersede
 			outcome = registerDuplicate
 		}
 	case registerSkipped, registerDuplicate:

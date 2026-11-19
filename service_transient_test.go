@@ -13,46 +13,6 @@ type transientTest struct {
 	foobar string
 }
 
-//nolint:unused
-type transientTestHeathcheckerOK struct {
-	foobar string
-}
-
-//nolint:unused
-func (t *transientTestHeathcheckerOK) HealthCheck() error {
-	return nil
-}
-
-//nolint:unused
-type transientTestHeathcheckerKO struct {
-	foobar string
-}
-
-//nolint:unused
-func (t *transientTestHeathcheckerKO) HealthCheck() error {
-	return assert.AnError
-}
-
-//nolint:unused
-type transientTestShutdownerOK struct {
-	foobar string
-}
-
-//nolint:unused
-func (t *transientTestShutdownerOK) Shutdown() error {
-	return nil
-}
-
-//nolint:unused
-type transientTestShutdownerKO struct {
-	foobar string
-}
-
-//nolint:unused
-func (t *transientTestShutdownerKO) Shutdown() error {
-	return assert.AnError
-}
-
 // transientTestService is a *serviceTransient[T] of any T, for tables whose rows differ in T.
 type transientTestService struct {
 	serviceWrapperAny

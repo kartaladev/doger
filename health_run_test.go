@@ -396,7 +396,7 @@ func (b *healthRunTestBlocking) HealthCheck() error {
 }
 
 // Not parallel: goleak checks the goroutines this test leaves.
-func TestHealthCheck_NoPileUp(t *testing.T) { //nolint:paralleltest
+func TestHealthCheck_NoPileUp(t *testing.T) { //nolint:paralleltest // goleak checks the goroutines this test leaves
 	tests := []struct {
 		name  string
 		skip  string
@@ -1640,7 +1640,7 @@ func TestHealthCheck_QueuedBehindAbandonedKeepsBound(t *testing.T) {
 }
 
 // Not parallel: goleak checks the goroutines a new container leaves.
-func TestNew_NoHealthGoroutine(t *testing.T) { //nolint:paralleltest
+func TestNew_NoHealthGoroutine(t *testing.T) { //nolint:paralleltest // goleak checks the goroutines a new container leaves
 	tests := []struct {
 		name      string
 		n         uint
@@ -1865,7 +1865,7 @@ func TestHealthCheck_QueuedDeadlineBoundary(t *testing.T) {
 			if err == nil || err.Error() != healthCheckTestDeadlineMessage {
 				unexpected++
 				if firstErr == nil {
-					firstErr = fmt.Errorf("got %v", err) //nolint:errorlint
+					firstErr = fmt.Errorf("got %v", err) //nolint:errorlint // only formats the unexpected result for the failure message; nothing unwraps it
 				}
 			}
 			i.Shutdown()

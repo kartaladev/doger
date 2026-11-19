@@ -59,7 +59,7 @@ func TestNewWithOpts(t *testing.T) {
 		HealthCheckGlobalTimeout: 42 * time.Second,
 		HealthCheckTimeout:       42 * time.Second,
 	})
-	defer i.Shutdown() //nolint: errcheck
+	defer i.Shutdown()
 
 	is.NotNil(i)
 
@@ -142,7 +142,7 @@ func TestRootScope_HealthCheckTimeouts(t *testing.T) {
 			HealthCheckParallelism:   1,
 			HealthCheckGlobalTimeout: 50 * time.Millisecond,
 		})
-		defer i.Shutdown() //nolint: errcheck
+		defer i.Shutdown()
 
 		ProvideNamedValue(i, "a", &lazyTestHeathcheckerOKTimeout{})
 		ProvideNamedValue(i, "b", &lazyTestHeathcheckerOKTimeout{})
@@ -195,8 +195,8 @@ func TestRootScope_Clone(t *testing.T) {
 	i := NewWithOpts(opts)
 	clone := i.Clone()
 
-	defer i.Shutdown()     //nolint: errcheck
-	defer clone.Shutdown() //nolint: errcheck
+	defer i.Shutdown()
+	defer clone.Shutdown()
 
 	is.NotSame(i.opts, clone.opts) // copy
 
@@ -254,8 +254,8 @@ func TestRootScope_CloneWithOpts(t *testing.T) {
 		HealthCheckTimeout:       42 * time.Second,
 	})
 
-	defer i.Shutdown()     //nolint: errcheck
-	defer clone.Shutdown() //nolint: errcheck
+	defer i.Shutdown()
+	defer clone.Shutdown()
 
 	is.Empty(i.hooks.beforeRegistration.load())
 	is.Empty(i.hooks.afterRegistration.load())
