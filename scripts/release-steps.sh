@@ -5,14 +5,21 @@
 # it from the repository root of a checkout that may be modified.
 #
 #   check-semver <semver>  exits non-zero unless semver is a v0/v1 version
-#   modules                prints the released adapter directories
+#   modules                prints every released module directory ("." for
+#                          the root), each after the siblings it requires
 #   strip                  drops examples from go.work and removes tests,
 #                          examples/, docs/ and tests/
 #   tidy                   go mod tidy in every released module
-#   pin <semver>           adapters require the root module at <semver>
-#                          and drop their local replace
+#   pin <semver>           every released module requires its released
+#                          siblings at <semver> and has no replace left
 #   verify                 go build and go vet in every released module
 #   tags <semver>          prints the tags of the release, one per line
+#
+# The released modules are derived from the go.mod files: the root and
+# every module below it outside examples/, docs/ and tests/. A released
+# module may require released siblings (the root, clock/clockwork, ...);
+# in the repository it reaches them through local replace directives.
+# Needs go and jq.
 set -euo pipefail
 
 root_module="github.com/kartaladev/doger"
@@ -27,12 +34,67 @@ check_semver() {
 	fi
 }
 
-adapters() {
+# module_dirs prints the directory of every released module, unordered:
+# every go.mod outside the unreleased trees
+module_dirs() {
+	find . \( -path ./examples -o -path ./docs -o -path ./tests -o -name node_modules -o -path "./.*" \) -prune \
+		-o -name go.mod -type f -print |
+		sed 's|^\./||; s|/\{0,1\}go\.mod$||; s|^$|.|' | sort
+}
+
+# module_path prints the module path declared by directory $1.
+module_path() {
+	(cd "$1" && go mod edit -json) | jq -r '.Module.Path'
+}
+
+# dir_paths prints "<dir>\t<module path>" for every released module.
+dir_paths() {
 	local dir
-	for dir in http/*/ scheduler/*/ clock/*/; do
-		[ -f "${dir}go.mod" ] && echo "${dir%/}"
+	while IFS= read -r dir; do
+		printf '%s\t%s\n' "$dir" "$(module_path "$dir")"
+	done < <(module_dirs)
+}
+
+# sibling_requirements prints the released module paths that directory $1
+# requires, given the "<dir>\t<path>" rows $2.
+sibling_requirements() {
+	(cd "$1" && go mod edit -json) |
+		jq -r --arg paths "$(cut -f2 <<<"$2")" '
+			($paths | split("\n")) as $released
+			| .Require // [] | .[].Path | select(. as $p | $released | index($p))'
+}
+
+# modules prints the released directories in dependency order: each one
+# after every released sibling it requires. A cycle is an error.
+modules() {
+	local rows dir path dep done_paths="" progress remaining
+	rows="$(dir_paths)"
+	remaining="$(cut -f1 <<<"$rows")"
+	while [ -n "$remaining" ]; do
+		progress=0
+		local next=""
+		while IFS= read -r dir; do
+			path="$(awk -F'\t' -v d="$dir" '$1==d{print $2}' <<<"$rows")"
+			local ready=1
+			while IFS= read -r dep; do
+				[ -n "$dep" ] || continue
+				[ "$dep" != "$path" ] || continue
+				grep -qxF "$dep" <<<"$done_paths" || ready=0
+			done < <(sibling_requirements "$dir" "$rows")
+			if [ "$ready" -eq 1 ]; then
+				echo "$dir"
+				done_paths+="$path"$'\n'
+				progress=1
+			else
+				next+="$dir"$'\n'
+			fi
+		done <<<"$remaining"
+		remaining="${next%$'\n'}"
+		if [ "$progress" -eq 0 ]; then
+			echo "release-steps.sh: a requirement cycle among: $(tr '\n' ' ' <<<"$remaining")" >&2
+			return 1
+		fi
 	done
-	return 0
 }
 
 strip() {
@@ -46,77 +108,94 @@ strip() {
 	rm -rf examples/ docs/ tests/
 }
 
-# every released module directory, the root first
-released() {
-	echo .
-	adapters
-}
-
-# go mod tidy everywhere while the adapters' local replace still points at
-# the root: with the tests gone, test-only requirements leave every go.mod
+# go mod tidy everywhere while the local replace directives still point at
+# the siblings: with the tests gone, test-only requirements leave every
+# go.mod
 tidy() {
 	local dir
 	while IFS= read -r dir; do
 		echo "go mod tidy in $dir"
 		(cd "$dir" && go mod tidy)
-	done < <(released)
+	done < <(modules)
 }
 
+# Consumers ignore replace directives, so every released module requires
+# each released sibling it uses at the version being released, and its
+# replace directives go: a released go.mod has none.
 pin() {
 	check_semver "$1"
-	local dir
-	# consumers ignore the adapters' local replace directives, so each
-	# adapter requires the root module at the version being released, and
-	# the replace goes: a released go.mod has none
+	local rows dir dep old
+	local -a edits
+	rows="$(dir_paths)"
 	while IFS= read -r dir; do
-		(cd "$dir" && go mod edit -require="$root_module@$1" -dropreplace="$root_module")
-	done < <(adapters)
+		edits=()
+		while IFS= read -r dep; do
+			[ -n "$dep" ] && edits+=("-require=$dep@$1")
+		done < <(sibling_requirements "$dir" "$rows")
+		while IFS= read -r old; do
+			[ -n "$old" ] || continue
+			if ! grep -qxF "$old" <<<"$(cut -f2 <<<"$rows")"; then
+				echo "release-steps.sh: $dir/go.mod replaces $old, which is not a released sibling; a released go.mod has no replace" >&2
+				return 1
+			fi
+			edits+=("-dropreplace=$old")
+		done < <((cd "$dir" && go mod edit -json) | jq -r '.Replace // [] | .[].Old.Path')
+		if [ "${#edits[@]}" -gt 0 ]; then
+			echo "pin in $dir: ${edits[*]}"
+			(cd "$dir" && go mod edit "${edits[@]}")
+		fi
+	done < <(modules)
 }
 
-# build and vet every post-processed module on its own (GOWORK=off). The
-# root release is not published yet, so an adapter builds with a temporary
-# copy of its go.mod (-modfile) that points the root back at this tree; the
-# released go.mod and go.sum stay as pinned.
+# Build and vet every post-processed module on its own (GOWORK=off). The
+# release is not published yet, so each module builds with a temporary
+# copy of its go.mod (-modfile) that points every released sibling back at
+# this tree; the released go.mod and go.sum stay as pinned.
 verify() {
-	local dir top tmp
+	local rows dir top tmp sib_dir sib_path
+	local -a replaces
 	top="$(pwd)"
+	rows="$(dir_paths)"
+	replaces=()
+	while IFS=$'\t' read -r sib_dir sib_path; do
+		replaces+=("-replace=$sib_path=$top/$sib_dir")
+	done <<<"$rows"
 	tmp="$(mktemp -d)"
 	# shellcheck disable=SC2064 # expand now: tmp is local
 	trap "rm -rf '$tmp'" RETURN
 	while IFS= read -r dir; do
 		echo "go build and go vet in $dir"
-		if [ "$dir" = . ]; then
-			GOWORK=off go build ./...
-			GOWORK=off go vet ./...
-			continue
-		fi
 		mkdir -p "$tmp/$dir"
 		cp "$dir/go.mod" "$tmp/$dir/go.mod"
 		[ ! -f "$dir/go.sum" ] || cp "$dir/go.sum" "$tmp/$dir/go.sum"
 		(
 			cd "$dir"
 			export GOWORK=off
-			go mod edit -modfile="$tmp/$dir/go.mod" -replace="$root_module=$top"
+			go mod edit -modfile="$tmp/$dir/go.mod" "${replaces[@]}"
 			go build -modfile="$tmp/$dir/go.mod" ./...
 			go vet -modfile="$tmp/$dir/go.mod" ./...
 		)
-	done < <(released)
+	done < <(modules)
 }
 
+# the root module is tagged <semver>, every other one <dir>/<semver>
 tags() {
 	check_semver "$1"
 	local dir
-	echo "$1"
 	while IFS= read -r dir; do
-		echo "$dir/$1"
-	done < <(adapters)
+		if [ "$dir" = . ]; then
+			echo "$1"
+		else
+			echo "$dir/$1"
+		fi
+	done < <(modules)
 }
 
 cmd="${1:-}"
 shift || true
 case "$cmd" in
 check-semver) check_semver "$@" ;;
-modules) adapters ;;
+modules) modules ;;
 strip) strip ;;
 tidy) tidy ;;
 pin) pin "$@" ;;
