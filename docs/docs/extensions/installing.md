@@ -95,7 +95,7 @@ A root `Shutdown` follows the usual rules: once its context ended, the services 
 | `ErrExtensionConflict`          | the identity is installed differently, or the private scope name is taken   |
 | `*ExtensionError` (`errors.As`) | the extension failed to install; `Name`, `Instance`, and the cause in `Err` |
 | `ErrExtensionCycle`             | extensions require each other in a cycle                                    |
-| `ErrShutdown`         | `Extend` after shutdown began                                               |
+| `ErrShutdown`                   | `Extend` after shutdown began                                               |
 
 A failing install leaves nothing behind: the private scope is shut down and removed, its exports are removed, and a later `Extend` can retry.
 

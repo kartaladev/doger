@@ -765,7 +765,7 @@ func TestExtend_RollbackFiresHooks(t *testing.T) {
 		return errors.New("dial failed")
 	}}
 
-	require.Error(t, extendNoPanic(t, root, ext))
+	require.ErrorAs(t, extendNoPanic(t, root, ext), new(*ExtensionError))
 
 	assert.Equal(t, []string{
 		"registered ext:redis " + poolName,
@@ -1499,7 +1499,7 @@ func TestExtend_Phases(t *testing.T) {
 				t.Helper()
 				root := New()
 				ProvideValue(root, failingStarter{}, AsStarter())
-				require.Error(t, root.Start())
+				require.ErrorAs(t, root.Start(), new(*StartError))
 				require.NoError(t, Extend(root, starterExtension(starts)))
 				require.ErrorIs(t, root.Refresh(), ErrNotStarted)
 				assert.Equal(t, int32(0), starts.Load())

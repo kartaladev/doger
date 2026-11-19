@@ -6,7 +6,40 @@ sidebar_position: 1
 
 # Migrating from samber/do
 
-doger is a fork of [samber/do](https://github.com/samber/do) by Samuel Berthe. Its API matches `samber/do` v2: every exported identifier, signature, option and default is unchanged. What changes is the module path, the package names, the service names the container infers from types declared in the library, and the minimum Go version.
+doger is a fork of [samber/do](https://github.com/samber/do) by Samuel Berthe. It keeps the shape of the `samber/do` v2 API (`New`, `Provide*`, `Invoke*`, scopes, health checks, shutdown) and hardens it for production use. This page lists every change a `samber/do` v2 application meets, each with its migration; code marked **Before** is `samber/do` v2, code marked **After** is doger and compiles as shown (the repository's `docs_snippets_test.go` checks it).
+
+A last section covers the APIs that changed between doger pre-releases, for code written against an early version of doger.
+
+## Go 1.27 or later {#go-1-27}
+
+doger requires Go 1.27 or later: every module declares `go 1.27`. The code sets the promoted fields of embedded structs directly in struct literals, which the compiler accepts only from Go 1.27, and it uses `sync.WaitGroup.Go` and, in its tests, `testing/synctest`. With the go command's default `GOTOOLCHAIN=auto`, building a module that requires doger downloads Go 1.27 automatically; with `GOTOOLCHAIN=local`, an older toolchain stops with "go.mod requires go >= 1.27".
+
+Requiring doger raises your module's `go` line to 1.27, and GODEBUG defaults follow that line. If it was below 1.21, this turns on `panicnil=0`: a provider that panics with `nil` used to give the zero value and a `nil` error, and now gives an error matching `*runtime.PanicNilError`, as every provider panic also matches `doger.ErrProviderPanic`:
+
+<!-- snippet: panic-nil -->
+
+```go
+injector := doger.New()
+doger.Provide(injector, func(i doger.Injector) (*Postgres, error) {
+	panic(nil)
+})
+
+_, err := doger.Invoke[*Postgres](injector)
+
+var panicNilErr *runtime.PanicNilError
+errors.As(err, &panicNilErr)           // true
+errors.Is(err, doger.ErrProviderPanic) // true
+```
+
+To restore the old `(zero, nil)` result, run the program with `GODEBUG=panicnil=1`, or add the directive to your main package:
+
+<!-- text -->
+
+```go
+//go:debug panicnil=1
+
+package main
+```
 
 ## Module path and package name {#module-path-and-package-name}
 
@@ -16,25 +49,35 @@ The module `github.com/samber/do/v2` (package `do`) becomes `github.com/kartalad
 go get github.com/kartaladev/doger@latest
 ```
 
-Replace the import path, then either rename the `do.` qualifier to `doger.`:
+**Before**
+
+<!-- before -->
 
 ```go
-import "github.com/kartaladev/doger"
-
-injector := doger.New()
-doger.Provide(injector, NewDatabase)
-```
-
-or keep your existing `do.` call sites by aliasing the import:
-
-```go
-import do "github.com/kartaladev/doger"
+import "github.com/samber/do/v2"
 
 injector := do.New()
 do.Provide(injector, NewDatabase)
 ```
 
-## Debug UI adapters {#debug-ui-adapters}
+**After**
+
+<!-- text -->
+
+```go
+import "github.com/kartaladev/doger"
+```
+
+<!-- snippet: basic -->
+
+```go
+injector := doger.New()
+doger.Provide(injector, NewDatabase)
+```
+
+To keep your `do.` call sites, alias the import: `import do "github.com/kartaladev/doger"`.
+
+### Debug UI adapters {#debug-ui-adapters}
 
 The HTTP adapters move under the root path and get a `doger` prefix, so they no longer clash with the framework they adapt:
 
@@ -47,83 +90,382 @@ The HTTP adapters move under the root path and get a `doger` prefix, so they no 
 | `github.com/samber/do/http/gin/v2`   | `github.com/kartaladev/doger/http/gin`   | `dogergin`     |
 | `github.com/samber/do/http/std/v2`   | `github.com/kartaladev/doger/http/std`   | `dogerhttpstd` |
 
-Replace the paths. Existing import aliases keep working. The debug UI routes are unchanged and stay relative to the base path you pass, so a UI mounted at `/debug/do` stays there. Its pages now show `doger` branding.
+The routes stay relative to the base path you pass. `dogerchi.Use` takes a `chi.Router` instead of a `*chi.Mux` (a wider parameter, so calls compile unchanged). The page functions and each adapter's `Use` gain a trailing `...dogerhttp.Option`, such as `dogerhttp.WithFullSourcePaths()` (show the full path of a service's source file instead of its base name) and `dogerhttp.WithErrorHandler(handler)` (receive the error of a page that fails to render): calls compile unchanged, but a variable of the old function type must be updated. The std adapter answers GET and HEAD only, and every adapter answers a render failure with a generic 500 body instead of the error text.
 
-## Inferred service names of library types {#inferred-service-names}
+### Inferred service names of library types {#inferred-service-names}
 
-Service names inferred from types embed the import path. For types declared in the library, that path changes:
+Service names inferred from types embed the import path. For types declared in the library, that path changes (`*github.com/samber/do/v2.RootScope` becomes `*github.com/kartaladev/doger.RootScope`, and so on). Never hard-code such names: compute them with `doger.NameOf[T]()`, or register the services under explicit names. Names of your own types do not change.
 
-| Type            | samber/do v2                            | doger                                       |
-| --------------- | --------------------------------------- | ------------------------------------------- |
-| `*RootScope`    | `*github.com/samber/do/v2.RootScope`    | `*github.com/kartaladev/doger.RootScope`    |
-| `Injector`      | `github.com/samber/do/v2.Injector`      | `github.com/kartaladev/doger.Injector`      |
-| `Healthchecker` | `github.com/samber/do/v2.Healthchecker` | `github.com/kartaladev/doger.Healthchecker` |
+## Error messages and sentinels {#errors}
 
-These names appear in `doger.NameOf`, in service lists, in explain output and in error messages. Never hard-code them: compute them with `doger.NameOf[T]()`, or register such services under explicit names with `ProvideNamed*` and invoke them with `InvokeNamed`.
+Every library message starts with `doger: ` once, instead of `DI: `. Match errors with `errors.Is` and `errors.As`, never by text. Sentinels and error types that are new or changed:
 
-Names of your own types and explicitly named services do not change.
+| Error                         | Matched by                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `ErrServiceTypeMismatch`      | an invocation that finds the name under another type                                             |
+| `ErrServiceAlreadyDeclared`   | a duplicate registration: the panic value of `Provide*`, the error of `Alias`/`AliasNamed`       |
+| `ErrScopeAlreadyDeclared`     | the panic value of `Scope(name)` for a name its parent already has                               |
+| `ErrNilInjector`              | a nil injector, root or scope, including a typed nil                                             |
+| `ErrProviderPanic`            | an invocation whose provider panicked; an error panic value is wrapped, so it still matches too  |
+| `ErrStructInjection`          | an invalid `InvokeStruct` target                                                                 |
+| `ErrShutdown`                 | a container or scope used after its shutdown began                                               |
+| `ErrShutdownPanic`            | a service whose `Shutdown` method or shutdown hook panicked: the panic is recovered and reported |
+| `*ServiceError` (`errors.As`) | a failure inside a service's build; it names the service and its scope                           |
+| `*StartError` (`errors.As`)   | a service or kind handler failing during `Start`, `Refresh` or `Scope.Start`                     |
 
-## Go 1.27 and panic(nil) {#go-1-27-and-panic-nil}
+A provider that panics no longer returns its error panic value as is, so do not compare it with `==`:
 
-doger requires Go 1.27 or later. With the go command's default `GOTOOLCHAIN=auto`, building a module that requires doger downloads Go 1.27 automatically; with `GOTOOLCHAIN=local`, an older toolchain refuses the build.
-
-Requiring doger raises your module's `go` line to 1.27, and GODEBUG defaults follow that line. If it was below 1.21, this turns on `panicnil=0`, which changes what an invocation returns when a provider panics with `nil`: it used to return the zero value and a `nil` error; it now returns the zero value and an error matching `*runtime.PanicNilError`. If your `go` line was already 1.21 or later, you already get this error. Every provider panic, nil or not, also matches `doger.ErrProviderPanic`, inside a `*doger.ServiceError` naming the service; an error panic value is wrapped, so `errors.Is` and `errors.As` still match it.
+<!-- snippet: provider-panic -->
 
 ```go
-doger.Provide(injector, func(i doger.Injector) (*Database, error) {
-	panic(nil)
+_, err := doger.Invoke[*Postgres](injector) // its provider panicked with errBroken
+if errors.Is(err, errBroken) {              // still true: the panic value is wrapped
+	fmt.Println("broken:", err)
+}
+if serviceErr, ok := errors.AsType[*doger.ServiceError](err); ok {
+	fmt.Println("failed service:", serviceErr.Service)
+}
+```
+
+Not-found errors list at most 10 services, followed by `and N more`.
+
+## Renamed and removed APIs {#renamed-and-removed-apis}
+
+### As becomes Alias {#alias}
+
+`As`, `AsNamed`, `MustAs` and `MustAsNamed` become `Alias`, `AliasNamed`, `MustAlias` and `MustAliasNamed`. `Alias` and `AliasNamed` return a duplicate name as an error matching `ErrServiceAlreadyDeclared` instead of panicking. `Bind` and `BindNamed` are unchanged.
+
+**Before**
+
+<!-- before -->
+
+```go
+do.Provide(injector, NewDatabase)
+do.As[*Postgres, Database](injector)
+```
+
+**After**
+
+<!-- snippet: alias -->
+
+```go
+doger.Provide(injector, NewDatabase)
+if err := doger.Alias[*Postgres, Database](injector); err != nil {
+	return err // matches doger.ErrServiceAlreadyDeclared for a taken name
+}
+```
+
+### No package-level container {#no-default-root-scope}
+
+`DefaultRootScope` is removed, and a nil injector no longer falls back to it. A nil injector, root or scope, including a typed-nil `*RootScope` or `*Scope`, gives an error matching `ErrNilInjector` from the functions with an error result, and panics with a value matching it elsewhere.
+
+**Before**
+
+<!-- before -->
+
+```go
+do.Provide(nil, NewDatabase) // registered in do.DefaultRootScope
+db := do.MustInvoke[*Postgres](nil)
+```
+
+**After**
+
+<!-- snippet: nil-injector -->
+
+```go
+injector := doger.New() // pass it explicitly; there is no package-level container
+doger.Provide(injector, NewDatabase)
+
+_, err := doger.Invoke[*Postgres](nil)
+errors.Is(err, doger.ErrNilInjector) // true
+```
+
+### Logf becomes Logger {#logger}
+
+`InjectorOpts.Logf` becomes `InjectorOpts.Logger`, a `*slog.Logger`. Each event has a fixed message and level, with `scope` and `service` attributes; panic values and health-check error text appear only at Debug level. A nil logger, the default, logs nothing.
+
+**Before**
+
+<!-- before -->
+
+```go
+injector := do.NewWithOpts(&do.InjectorOpts{
+	Logf: func(format string, args ...any) { log.Printf(format, args...) },
 })
-
-_, err := doger.Invoke[*Database](injector)
-
-var panicNilErr *runtime.PanicNilError
-errors.As(err, &panicNilErr) // true
 ```
 
-To restore the old `(zero, nil)` result, run the program with `GODEBUG=panicnil=1`, or add the directive to your main package:
+**After**
+
+<!-- snippet: logger -->
 
 ```go
-//go:debug panicnil=1
-
-package main
+injector := doger.NewWithOpts(&doger.InjectorOpts{
+	Logger: slog.Default(), // nil (the default) logs nothing
+})
 ```
 
-## Health checks on an ended context {#health-checks-on-an-ended-context}
+### MaxInvocationFrames is per container {#max-invocation-frames}
 
-In `samber/do`, a health check whose context had ended returned a random result: sometimes the timeout error, sometimes the check's own result, and sometimes a bare `context.Canceled` or `context.DeadlineExceeded`. doger decides it the same way every time:
+The package-wide `MaxInvocationFrames` variable becomes the `InjectorOpts.MaxInvocationFrames` field.
 
-- A service with a health check whose context is done when its result is observed returns the timeout error, whatever the check returned. The error matches `ErrHealthCheckTimeout` **and** the context error with `errors.Is`. Its message carries the `doger: ` prefix, for example `doger: health check timeout: context canceled`.
-- A service without a health check (a value without a `HealthCheck` method, a lazy service not invoked yet, a transient service) always reports `nil`, even on an ended context.
+**Before**
 
-If you compared a health-check error with `==` against `context.Canceled` or `context.DeadlineExceeded`, use `errors.Is` instead:
+<!-- before -->
+
+```go
+do.MaxInvocationFrames = 10
+```
+
+**After**
+
+<!-- snippet: max-frames -->
+
+```go
+injector := doger.NewWithOpts(&doger.InjectorOpts{
+	MaxInvocationFrames: 10, // 0: 100 frames; negative: none recorded
+})
+```
+
+### Per-service hooks get a context and the elapsed time {#hooks}
+
+The shutdown hooks receive the operation's context, and the "after" hooks the time the step took on the container clock. `HookAfterInvocation` receives the elapsed time but no context, because `Invoke` has none. The new start hooks follow the shutdown shape.
+
+| Hook                                    | Signature                                                                                       |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `HookBeforeShutdown`, `HookBeforeStart` | `func(ctx context.Context, scope *Scope, serviceName string)`                                   |
+| `HookAfterShutdown`, `HookAfterStart`   | `func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error)` |
+| `HookAfterInvocation`                   | `func(scope *Scope, serviceName string, elapsed time.Duration, err error)`                      |
+
+**Before**
+
+<!-- before -->
+
+```go
+injector := do.NewWithOpts(&do.InjectorOpts{
+	HookAfterInvocation: []func(scope *do.Scope, serviceName string, err error){
+		func(scope *do.Scope, serviceName string, err error) { /* ... */ },
+	},
+	HookBeforeShutdown: []func(scope *do.Scope, serviceName string){
+		func(scope *do.Scope, serviceName string) { /* ... */ },
+	},
+	HookAfterShutdown: []func(scope *do.Scope, serviceName string, err error){
+		func(scope *do.Scope, serviceName string, err error) { /* ... */ },
+	},
+})
+```
+
+**After**
+
+<!-- snippet: hooks -->
+
+```go
+injector := doger.NewWithOpts(&doger.InjectorOpts{
+	HookAfterInvocation: []func(scope *doger.Scope, serviceName string, elapsed time.Duration, err error){
+		func(scope *doger.Scope, serviceName string, elapsed time.Duration, err error) {
+			fmt.Println("invoked", serviceName, "in", elapsed)
+		},
+	},
+	HookBeforeShutdown: []func(ctx context.Context, scope *doger.Scope, serviceName string){
+		func(ctx context.Context, scope *doger.Scope, serviceName string) {
+			fmt.Println("shutting down", serviceName)
+		},
+	},
+	HookAfterShutdown: []func(ctx context.Context, scope *doger.Scope, serviceName string, elapsed time.Duration, err error){
+		func(ctx context.Context, scope *doger.Scope, serviceName string, elapsed time.Duration, err error) {
+			fmt.Println("shut down", serviceName, "in", elapsed, "err:", err)
+		},
+	},
+})
+```
+
+The `Add…Hook` methods take the same function types, and adding a hook is safe at any time: it applies from the next operation on.
+
+### Registration functions take options {#provide-options}
+
+`Provide*`, `Override*` and the `Package` helpers (`Lazy*`, `Eager*`, `Transient*`) gain a trailing `...doger.ProvideOption` parameter, for `AsStarter()`, `AsDefault()`, `DependsOn`, health tags and kinds. Every existing call compiles unchanged; a variable holding one of these functions must take the new function type.
+
+<!-- snippet: provide-options -->
+
+```go
+doger.Provide(injector, NewServer, doger.AsStarter()) // a trailing option
+
+// a registration function stored as a value has the options parameter:
+// func(doger.Injector, doger.Provider[*Postgres], ...doger.ProvideOption)
+register := doger.Provide[*Postgres]
+register(injector, NewDatabase)
+```
+
+### Other removals {#other-removals}
+
+- `DAG` is unexported; it had no public use.
+- `ServiceDescription` marshals to JSON with the keys `scopeId`, `scopeName` and `service` instead of `ScopeID`, `ScopeName` and `Service`.
+- `ExplainServiceDependencyOutput` expands each service once: a repeat is a node with `Ref: true` and no children. Follow it with `ExplainNamedService`.
+
+## Changed behavior {#changed-behavior}
+
+### Health checks are bounded {#health-checks-bounded}
+
+`HealthCheckTimeout` 0 now means 10 seconds, on `RootScope.HealthCheck`, `Scope.HealthCheck` and the per-service functions (`HealthCheckSingleTimeout` 0 inherits it). `HealthCheckGlobalTimeout` 0 or less means no global bound.
+
+<!-- snippet: health-timeout -->
+
+```go
+injector := doger.NewWithOpts(&doger.InjectorOpts{
+	HealthCheckTimeout: -1, // no bound; 0 (the default) means 10s
+})
+```
+
+A health check whose context has ended returns the timeout error every time, matching `ErrHealthCheckTimeout` and the context's error, instead of a random result:
+
+<!-- snippet: health-ended -->
 
 ```go
 err := doger.HealthCheckNamedWithContext(ctx, injector, "db")
 if errors.Is(err, context.Canceled) {
-	// ...
+	fmt.Println("the check's context was cancelled")
 }
 ```
 
-## Registration options and run-once root shutdown {#registration-options-and-root-shutdown}
+### Shutdown {#shutdown}
 
-doger adds a trailing `...doger.ProvideOption` parameter to the registration functions and makes root `Shutdown()` run once per container. Calls compile unchanged; code that stores a registration function as a value, or relies on a second root `Shutdown()`, needs a small change. See [Upgrading to the Start lifecycle release](../upgrading/start-lifecycle.md).
+- **Run once.** Root `Shutdown` runs once per container; a later call returns a copy of the first report.
+- **The report's error.** `ShutdownReport.Err()` returns nil on success and otherwise an error matching every service's error; check it instead of the report itself. `Error()` returns `""` on success. `Unwrap()` returns one `*ServiceError` per failed service, and the report marshals to JSON with `succeed`, `shutdownTime`, `services` and `errors` (arrays ordered by scope, then service).
 
-## Removed and renamed APIs {#removed-and-renamed-apis}
+<!-- snippet: shutdown-report -->
 
-| Before | After | Migration |
-| --- | --- | --- |
-| `As`, `AsNamed`, `MustAs`, `MustAsNamed` | `Alias`, `AliasNamed`, `MustAlias`, `MustAliasNamed`. A duplicate alias name is returned as an error matching `ErrServiceAlreadyDeclared` by `Alias`/`AliasNamed` instead of panicking | Rename the calls. `Bind` and `BindNamed` are unchanged |
-| `ExportAs` | `WithExportName`, same parameter. Export errors match `ErrNilInjector`, `ErrServiceNotFound`, `ErrServiceTypeMismatch` or `ErrServiceAlreadyDeclared` | Rename the call |
-| `var DefaultRootScope`, and a nil injector falling back to it | Removed. A nil injector, root or scope, including a typed-nil `*RootScope` or `*Scope`, gives `ErrNilInjector` from functions with an error result and panics with a value matching it elsewhere | Create a container with `doger.New()` and pass it explicitly |
-| `InjectorOpts.Logf func(format string, args ...any)` | `InjectorOpts.Logger *slog.Logger`: fixed messages and levels with `scope`/`service` attributes; nil logs nothing; panic values and health-check error text only at Debug | `Logger: slog.Default()`, or any `slog.Handler` |
-| `var MaxInvocationFrames` (package-wide) | `InjectorOpts.MaxInvocationFrames int`, per container: 0 means 100, a negative value turns recording off, and the cap records exactly that many frames | Set the option on each container that needs another cap |
-| Per-service hooks `HookBeforeStart`, `HookAfterStart`, `HookBeforeShutdown`, `HookAfterShutdown`, `HookAfterInvocation` (and their `Add…Hook` methods) | `HookBeforeStart`/`HookBeforeShutdown`: `func(ctx context.Context, scope *Scope, serviceName string)`; `HookAfterStart`/`HookAfterShutdown`: `func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error)`; `HookAfterInvocation`: `func(scope *Scope, serviceName string, elapsed time.Duration, err error)`. `ctx` is the operation's context; `elapsed` is measured on the container clock | Add the `ctx` and `elapsed` parameters to your hook functions |
-| `Scope(name)` panicking with a plain error for a name its parent already has | The panic value matches the new sentinel `ErrScopeAlreadyDeclared` (message ``doger: scope `<name>` has already been declared``). A child that was shut down is detached, so its name can be declared again | Match the recovered value with `errors.Is(err, doger.ErrScopeAlreadyDeclared)`, not its text |
+```go
+if err := injector.Shutdown().Err(); err != nil {
+	return err // matches each service's error with errors.Is and errors.As
+}
+```
+
+- **Bounded by its context.** `ShutdownWithContext` returns once its context ends, even while a service's `Shutdown` still runs: such services are reported with the context's error and keep running in the background. A service reached after the context ended is not shut down at all.
+
+<!-- snippet: bounded-shutdown -->
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+
+report := injector.ShutdownWithContext(ctx)
+if err := report.Err(); errors.Is(err, context.DeadlineExceeded) {
+	// services still shutting down at the deadline keep running in the
+	// background; the report names them
+	fmt.Println(err)
+}
+```
+
+- **Panics are recovered.** A panicking `Shutdown` method or shutdown hook no longer crashes the process: it is reported with an error matching `ErrShutdownPanic`, and the other services still shut down.
+- **No reuse after shutdown.** Invoking, registering, aliasing, exporting or creating a scope on a container whose shutdown began fails with `ErrShutdown` (returned, or as a panic value for the functions without an error result). Build a new container instead.
+
+<!-- snippet: after-shutdown -->
+
+```go
+injector.Shutdown()
+
+_, err := doger.Invoke[*Postgres](injector)
+errors.Is(err, doger.ErrShutdown) // true: build a new container instead
+```
+
+- **Shut-down child scopes are detached**, so a child scope's name can be declared again after its shutdown. Declaring an attached child's name twice panics with `ErrScopeAlreadyDeclared`:
+
+<!-- snippet: duplicate-scope -->
+
+```go
+declareTwice := func() (err error) {
+	defer func() { err, _ = recover().(error) }()
+	injector.Scope("tenant")
+	injector.Scope("tenant")
+	return nil
+}
+
+err := declareTwice()
+errors.Is(err, doger.ErrScopeAlreadyDeclared) // true: doger: scope `tenant` has already been declared
+```
+
+## New options {#new-options}
+
+Every `InjectorOpts` field `samber/do` v2 had is kept, apart from `Logf`. These are new; each has a default that works with zero configuration:
+
+| Field                                                    | Default                                                                    | Purpose                                                                                                            |
+| -------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `Logger`                                                 | nil: no logging                                                            | levelled `log/slog` records (replaces `Logf`)                                                                      |
+| `MaxInvocationFrames`                                    | 0: 100 frames                                                              | invocation frames kept per service for Explain; negative turns recording off                                       |
+| `Clock`                                                  | nil: the real clock                                                        | the container clock for timeouts, health timing and hook elapsed times                                             |
+| `HookAfterBuild`                                         | none                                                                       | called with each newly built instance                                                                              |
+| `HookBeforeStart`, `HookAfterStart`                      | none                                                                       | around each Starter's `Start`                                                                                      |
+| `HookContainerStarting` … `HookContainerClosed`          | none                                                                       | container lifecycle: Starting (may veto), Started, Ready, Failed, Closing, Closed                                  |
+| `HookScopeStarting` … `HookScopeClosed`                  | none                                                                       | scope lifecycle for `Scope.Start` and scope shutdown                                                               |
+| `HookContainerPanic`                                     | nil: an observer hook's panic is raised again once the operation completed | receives the first recovered panic of an observer hook, a service shutdown, a health check or the health scheduler |
+| `HookServiceHealthChanged`, `HookContainerHealthChanged` | none                                                                       | health state transitions                                                                                           |
+| `HealthCheckSingleTimeout`                               | 0: `HealthCheckTimeout`                                                    | bound of the single-service health functions                                                                       |
+| `HealthReportCacheTTL`                                   | 1s                                                                         | how long `HealthReport` reuses a recorded result                                                                   |
+| `HealthScheduler`                                        | nil: checks run on demand                                                  | runs scheduled health rounds, such as `scheduler/gocron`                                                           |
+| `EnableStarterAutoDetection`                             | false                                                                      | also start every type with a `Start` method, without `AsStarter()`                                                 |
+| `StartParallelism`                                       | 0: sequential                                                              | Starters started at a time                                                                                         |
+| `EnableRunnerAutoDetection`                              | false                                                                      | also run every type with `Run(ctx) error` at Start, without `AsRunnable()`                                         |
+| `PropertySource`                                         | nil: environment variables prefixed `DOGER_`                               | where extensions read their configuration                                                                          |
+
+`HealthCheckParallelism`, `HealthCheckGlobalTimeout`, `HealthCheckTimeout` (now 10s when 0), `StructTagKey` and the registration and invocation hooks keep their meaning.
+
+### Starting the container {#start}
+
+doger adds `Start`: it builds and starts, in dependency order, the services registered with `AsStarter()`. `samber/do` has no `Start`, so nothing starts until you opt services in. Auto-detection, which also starts every type with a `Start` method, is a doger feature you can turn on:
+
+<!-- snippet: starter -->
+
+```go
+injector := doger.New()
+doger.Provide(injector, NewServer, doger.AsStarter()) // started by injector.Start()
+
+// or opt into auto-detection, a doger feature: every registered type
+// with a Start method is started too
+auto := doger.NewWithOpts(&doger.InjectorOpts{EnableStarterAutoDetection: true})
+```
+
+See [Upgrading to the Start lifecycle release](../upgrading/start-lifecycle.md) for the lifecycle, and [the options page](../container/options.md) for every option.
 
 ## What stays the same {#what-stays-the-same}
 
-- The struct injection tag key is still `do` (`do:""`), and you can still override it with `InjectorOpts.StructTagKey`.
-- `ErrServiceNotFound`, `ErrServiceNotMatch`, `ErrCircularDependency` and `ErrHealthCheckTimeout` still match with `errors.Is`. Their messages, like every library message, now start with `doger: ` instead of `DI: `, so match errors with `errors.Is`/`errors.As`, not by text.
-- Every other exported identifier, signature, option and default, apart from the additions above.
+- The struct injection tag key is still `do` (`do:""`), and `InjectorOpts.StructTagKey` still overrides it.
+- `ErrServiceNotFound`, `ErrServiceNotMatch`, `ErrCircularDependency` and `ErrHealthCheckTimeout` still match with `errors.Is`.
+- Lazy, eager and transient registrations, scopes, `Override*`, `InvokeStruct`, health checks and `ShutdownOnSignals` work as before, apart from the changes above.
 
-doger also adds one option, `InjectorOpts.Clock`. It defaults to the real clock, so you do not need to set it. See [Clock](../container/options.md#clock).
+## From a doger pre-release {#from-a-doger-pre-release}
+
+Code written against an early doger version also meets these renames:
+
+| Before                                                                | After                                                                                                                                                                                                     | Migration                                                                                                                    |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `Flatten()`                                                           | `ExtendIntoRoot()`                                                                                                                                                                                        | Rename the call; `Extend` with a nil root returns `ErrNilInjector`                                                           |
+| `ExportAs(name)`                                                      | `WithExportName(name)`                                                                                                                                                                                    | Rename the call                                                                                                              |
+| `var Runnable`                                                        | `func Runnable() Kind[Runner, struct{}]`                                                                                                                                                                  | `Runnable.Handle(...)` becomes `Runnable().Handle(...)`                                                                      |
+| `HealthReportOption` struct                                           | a function type                                                                                                                                                                                           | None for `MatchHealthTags`/`IgnoreContainerPhase`; a `HealthReportOption{}` literal no longer compiles                       |
+| `Stage`, `DependencySource` starting at 0                             | constants start at 1; 0 is invalid                                                                                                                                                                        | Use the named constants                                                                                                      |
+| `DisableStarterAutoDetection`                                         | `EnableStarterAutoDetection`, false by default                                                                                                                                                            | Add `AsStarter()` to the services that must start                                                                            |
+| `Clock clockwork.Clock`, `HealthScheduler` taking a `clockwork.Clock` | `doger.Clock`                                                                                                                                                                                             | Wrap a clockwork clock with `dogerclockwork.Wrap` (module `github.com/kartaladev/doger/clock/clockwork`)                     |
+| `ErrStartAfterShutdown`                                               | `ErrShutdown`                                                                                                                                                                                             | Rename the sentinel                                                                                                          |
+| `dogergocron` running on any `clockwork.Clock` the container held     | it maps `doger.RealClock()` and clocks made by `dogerclockwork.Wrap`; any other `doger.Clock` makes `ScheduleHealthRounds` fail with `dogergocron.ErrUnsupportedClock`, leaving the container unmonitored | Wrap a consumer-written clock with `dogerclockwork.Wrap`, or pass your own gocron scheduler with `dogergocron.WithScheduler` |
+
+<!-- snippet: prerelease -->
+
+```go
+_ = doger.Extend(root, ext, doger.ExtendIntoRoot()) // was Flatten()
+
+doger.Runnable().Handle(root, doger.StageAfterStart, func(ctx context.Context, c doger.Component[doger.Runner, struct{}]) error {
+	return c.Instance.Run(ctx) // was Runnable.Handle
+})
+
+_ = root.HealthReport(doger.MatchHealthTags(doger.HealthTagReadiness), doger.IgnoreContainerPhase())
+
+errors.Is(root.Start(), doger.ErrShutdown) // was ErrStartAfterShutdown
+```
+
+<!-- snippet: clock -->
+
+```go
+fake := clockwork.NewFakeClock()
+injector := doger.NewWithOpts(&doger.InjectorOpts{
+	Clock: dogerclockwork.Wrap(fake), // was Clock: fake
+})
+```

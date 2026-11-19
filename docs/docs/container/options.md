@@ -85,11 +85,11 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
 
 `InjectorOpts.Logger` takes any `*slog.Logger`. When it is nil (the default) the container logs nothing, not even to `slog.Default()`, and builds no record. Each event has a fixed message and level, with the attributes `scope` (the scope name) and `service` where they apply:
 
-| Level | Messages |
-| --- | --- |
-| Debug | `service registered`, `service overridden`, `service invoked`, `service exported`, `requested shutdown`, `health check started`, `health check failed` (with `error`), `property source selected`, `panic value` (with `value`) |
-| Info | `container started`, `container ready`, `container closing`, `container closed`, `extension disabled`, `container health changed` back to healthy |
-| Warn | `property source unavailable` (with `source_type`), `properties read after extend`, `container health changed` to another state |
+| Level | Messages                                                                                                                                                                                                                                                                                                                                                                |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Debug | `service registered`, `service overridden`, `service invoked`, `service exported`, `requested shutdown`, `health check started`, `health check failed` (with `error`), `property source selected`, `panic value` (with `value`)                                                                                                                                         |
+| Info  | `container started`, `container ready`, `container closing`, `container closed`, `extension disabled`, `container health changed` back to healthy                                                                                                                                                                                                                       |
+| Warn  | `property source unavailable` (with `source_type`), `properties read after extend`, `container health changed` to another state                                                                                                                                                                                                                                         |
 | Error | `service shutdown failed` (with `error`), `health scheduler failed` (with `error`), `health scheduler stop failed` (with `error`), `panic recovered` (with `point` and `panic_type`) for a recovered panic not passed to `HookContainerPanic`: the first panic of an operation goes to that hook when it is set (logged only when it is not), and later ones are logged |
 
 A recovered panic's value and a health check's error text appear only at Debug level, so they stay out of production logs that could expose secrets.

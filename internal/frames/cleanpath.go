@@ -52,12 +52,14 @@ func removeGoPath(path string) string {
 // The function:
 //   - Makes the path relative to the longest matching dir/src directory
 //   - Returns the original path if no match is found
+//
+// path comes from a runtime frame, whose file paths use forward slashes on
+// every OS, so the result keeps them; the GOPATH directories use the OS
+// separator and are converted before the comparison.
 func removeGoPathDirs(path string, dirs []string) string {
 	for _, dir := range dirs {
-		srcdir := filepath.Join(dir, "src")
-		rel, err := filepath.Rel(srcdir, path)
-		// filepath.Rel can traverse parent directories, don't want those
-		if err == nil && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		srcdir := strings.TrimSuffix(filepath.ToSlash(dir), "/") + "/src/"
+		if rel, ok := strings.CutPrefix(path, srcdir); ok && rel != "" {
 			return rel
 		}
 	}

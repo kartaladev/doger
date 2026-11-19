@@ -1510,9 +1510,9 @@ func TestScope_Shutdown_NoDependencies(t *testing.T) {
 	_, errA := InvokeNamed[*shutdownRecorder](i, "svc-a")
 	_, errB := InvokeNamed[*shutdownRecorder](i, "svc-b")
 	_, errC := InvokeNamed[*shutdownRecorder](i, "svc-c")
-	is.Error(errA)
-	is.Error(errB)
-	is.Error(errC)
+	is.ErrorIs(errA, ErrShutdown)
+	is.ErrorIs(errB, ErrShutdown)
+	is.ErrorIs(errC, ErrShutdown)
 }
 
 // Test services for context expiration testing
@@ -1957,7 +1957,7 @@ func TestScope_HealthCheckWithContextExpiration_Timeout(t *testing.T) {
 		is.NotEmpty(results)
 		is.Len(results, 1)
 		for _, err := range results {
-			is.Error(err)
+			is.ErrorIs(err, ErrHealthCheckTimeout)
 			// Check if it's a timeout error (could be wrapped)
 			is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded")
 		}
@@ -2001,7 +2001,7 @@ func TestScope_HealthCheckWithContextExpiration_Cancellation(t *testing.T) {
 		is.NotEmpty(results)
 		is.Len(results, 1)
 		for _, err := range results {
-			is.Error(err)
+			is.ErrorIs(err, ErrHealthCheckTimeout)
 			// Check if it's a cancellation error (could be wrapped)
 			is.True(errors.Is(err, context.Canceled) || err.Error() == "doger: health check timeout: context canceled")
 		}
@@ -2139,7 +2139,7 @@ func TestScope_HealthCheckWithContextExpiration_GlobalTimeoutOption(t *testing.T
 		// Should have healthcheck errors due to timeout
 		is.NotEmpty(results)
 		for _, err := range results {
-			is.Error(err)
+			is.ErrorIs(err, ErrHealthCheckTimeout)
 			// Check if it's a timeout error (could be wrapped)
 			is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded")
 		}
@@ -2183,7 +2183,7 @@ func TestScope_ContextExpiration_ShutdownAndHealthcheckSameTimeout(t *testing.T)
 	is.NotEmpty(healthcheckResults)
 	is.Len(healthcheckResults, 1)
 	for _, err := range healthcheckResults {
-		is.Error(err)
+		is.ErrorIs(err, ErrHealthCheckTimeout)
 		// Check if it's a timeout error (could be wrapped)
 		is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded")
 	}

@@ -955,7 +955,7 @@ func TestStart_ShutdownAfterFailure(t *testing.T) {
 	}, AsStarter())
 	ProvideNamed(root, "c", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{name: "c", rec: rec}, nil }, AsStarter())
 
-	require.Error(t, root.Start())
+	require.ErrorIs(t, root.Start(), errBoom)
 	root.Shutdown()
 
 	is.ElementsMatch([]string{"a", "shutdown a", "shutdown b", "shutdown c"}, rec.list())

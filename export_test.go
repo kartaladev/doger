@@ -207,7 +207,7 @@ func TestExport_SourceMustBeOwn(t *testing.T) {
 	Provide(a, clientProvider("client-1", nil))
 
 	err := Export[*exClient](b)
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrServiceNotFound)
 	assert.Contains(t, err.Error(), fmt.Sprintf("doger: service `%s` has not been declared", NameOf[*exClient]()))
 }
 

@@ -64,7 +64,7 @@ func TestContainerOptions_Isolated(t *testing.T) {
 
 	_, err := InvokeNamed[int](b, "int")
 
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrServiceNotFound)
 	assert.ErrorIs(t, err, ErrServiceNotFound)
 }
 

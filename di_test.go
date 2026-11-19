@@ -144,7 +144,7 @@ func TestProvide(t *testing.T) {
 
 	// Test that error services are handled correctly
 	instance3, err3 := Invoke[test](i)
-	is.Error(err3)
+	is.ErrorAs(err3, new(*ServiceError))
 	is.Empty(instance3)
 	is.EqualError(err3, `doger: service "github.com/kartaladev/doger.test" in scope "[root]": error`)
 }
@@ -212,7 +212,7 @@ func TestProvideNamed(t *testing.T) {
 
 	// Test that error services are handled correctly
 	instance3, err3 := InvokeNamed[test](i, "foobar")
-	is.Error(err3)
+	is.ErrorAs(err3, new(*ServiceError))
 	is.Empty(instance3)
 	is.EqualError(err3, `doger: service "foobar" in scope "[root]": error`)
 }
@@ -418,7 +418,7 @@ func TestProvideTransient(t *testing.T) {
 
 	// Test that error services are handled correctly
 	instance3, err3 := Invoke[test](i)
-	is.Error(err3)
+	is.ErrorAs(err3, new(*ServiceError))
 	is.Empty(instance3)
 	is.EqualError(err3, `doger: service "github.com/kartaladev/doger.test" in scope "[root]": error`)
 }
@@ -488,7 +488,7 @@ func TestProvideNamedTransient(t *testing.T) {
 
 	// Test that error services are handled correctly
 	instance3, err3 := InvokeNamed[test](i, "foobar")
-	is.Error(err3)
+	is.ErrorAs(err3, new(*ServiceError))
 	is.Empty(instance3)
 	is.EqualError(err3, `doger: service "foobar" in scope "[root]": error`)
 }
@@ -761,7 +761,7 @@ func TestInvoke(t *testing.T) {
 	is.True(s0b.built)
 
 	_, err2 := Invoke[*test](i)
-	is.Error(err2)
+	is.ErrorIs(err2, ErrServiceNotFound)
 	is.EqualError(err2, "doger: could not find service `*github.com/kartaladev/doger.test`, available services: `github.com/kartaladev/doger.test`")
 
 	ProvideNamedValue(i, NameOf[any](), 0)
@@ -816,7 +816,7 @@ func TestInvokeNamed(t *testing.T) {
 	is.Len(i.self.services, 2)
 
 	service0, err0 := InvokeNamed[string](i, "plop")
-	is.Error(err0)
+	is.ErrorIs(err0, ErrServiceNotFound)
 	is.Empty(service0)
 
 	instance1, err1 := InvokeNamed[test](i, "hello")
