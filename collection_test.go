@@ -280,9 +280,8 @@ func TestCollection_ReadOutcomes(t *testing.T) {
 			},
 			check: func(t *testing.T, handlers []EventHandler, err error) {
 				t.Helper()
-				assert.NoError(t, err)
-				assert.NotNil(t, handlers)
-				assert.Empty(t, handlers)
+				assert.ErrorIs(t, err, ErrShutdown)
+				assert.Nil(t, handlers)
 			},
 		},
 		{

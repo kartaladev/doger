@@ -52,6 +52,13 @@ var (
 	// Shutdown interrupted returns matches it, and the cause of the context of
 	// a health check in flight (see [context.Cause]).
 	ErrStartAfterShutdown = errors.New("doger: container is shut down")
+	// ErrShutdown is matched once a scope's shutdown has begun: by the error
+	// of Invoke*, Alias* and Export* on that scope, by the panic value of
+	// Provide*, Override* and Scope() on it, and by the error of an
+	// invocation that looked a service up before its shutdown and would
+	// have built it again. A container cannot be reused after Shutdown:
+	// build a new one.
+	ErrShutdown = errors.New("doger: container is shut down")
 	// ErrNotStarted is returned by Refresh and Scope.Start while the
 	// container's first Start has not succeeded.
 	ErrNotStarted = errors.New("doger: container not started")
@@ -108,7 +115,7 @@ var libSentinels = []error{
 	ErrServiceNotFound, ErrServiceNotMatch, ErrServiceTypeMismatch,
 	ErrServiceAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
-	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted, ErrNilInjector,
+	ErrAlreadyStarted, ErrStartAfterShutdown, ErrShutdown, ErrNotStarted, ErrNilInjector,
 	ErrStructInjection, ErrProviderPanic, ErrShutdownPanic,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
 	ErrExtensionCycle, ErrExtensionConflict,

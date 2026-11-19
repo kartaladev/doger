@@ -802,9 +802,8 @@ func TestInvokeAll_AfterShutdown(t *testing.T) {
 
 	handlers, err := InvokeAll[EventHandler](root)
 
-	require.NoError(t, err)
-	assert.NotNil(t, handlers)
-	assert.Empty(t, handlers)
+	require.ErrorIs(t, err, ErrShutdown)
+	assert.Nil(t, handlers)
 }
 
 func TestInvokeAll_ConcurrentSingleBuild(t *testing.T) {
@@ -898,8 +897,13 @@ func TestInvokeAll_ConcurrentShutdown(t *testing.T) {
 	wg.Wait()
 	close(outcomes)
 
+	// a read either completed before the shutdown closed the scope, or is
+	// refused
 	for o := range outcomes {
-		is.NoError(o.err)
+		if o.err != nil {
+			is.ErrorIs(o.err, ErrShutdown)
+			continue
+		}
 		is.GreaterOrEqual(o.length, 0)
 		is.LessOrEqual(o.length, 2)
 	}

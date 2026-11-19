@@ -237,12 +237,11 @@ func TestRaceConditionShutdownInvocation(t *testing.T) {
 
 	wg.Wait()
 
-	// Today an invoke racing Shutdown returns the instance or, once the
-	// service is removed, ErrServiceNotFound. Groups 14-15 of
-	// harden-first-release change the latter to ErrShutdown.
+	// An invoke racing Shutdown returns the instance, or ErrShutdown once
+	// the root scope is closed.
 	for i := 0; i < numOperations; i += 2 {
 		if invokeErrors[i] != nil {
-			is.ErrorIs(invokeErrors[i], doger.ErrServiceNotFound)
+			is.ErrorIs(invokeErrors[i], doger.ErrShutdown)
 		}
 	}
 
@@ -258,9 +257,9 @@ func TestRaceConditionShutdownInvocation(t *testing.T) {
 		}
 	}
 
-	// After concurrent shutdown/invocation, the service should no longer be invokable
+	// After concurrent shutdown/invocation, the closed root refuses it
 	_, finalErr := doger.InvokeNamed[*raceShutdowner](root, "shutdown-race-service")
-	is.ErrorIs(finalErr, doger.ErrServiceNotFound)
+	is.ErrorIs(finalErr, doger.ErrShutdown)
 }
 
 // TestRaceConditionSlowServiceInvocation tests race conditions with slow service resolution

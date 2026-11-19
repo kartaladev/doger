@@ -35,6 +35,9 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 	if err != nil {
 		return nil, err
 	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
+		return nil, err
+	}
 
 	vScope, isVirtualScope := injector.(*virtualScope)
 
@@ -90,6 +93,9 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 	if err != nil {
 		return empty[T](), err
 	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
+		return empty[T](), err
+	}
 
 	vScope, isVirtualScope := injector.(*virtualScope)
 
@@ -142,6 +148,9 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 func invokeByGenericType[T any](i Injector) (T, error) {
 	injector, err := getInjector(i)
 	if err != nil {
+		return empty[T](), err
+	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
 		return empty[T](), err
 	}
 	serviceAliasName := inferServiceName[T]()
@@ -237,6 +246,10 @@ type collectionMember struct {
 // source, in default order. When ordered is true, a separate stable pass
 // then sorts them by WithOrder or Order(), once every member is built.
 func invokeCollection(source collectionSource, target reflect.Type, ordered bool) ([]collectionMember, error) {
+	if err := injectorScope(source.from).checkOpen(); err != nil {
+		return nil, err
+	}
+
 	candidates := collectionCandidatesFor(source, target)
 	members := make([]collectionMember, 0, len(candidates))
 	err := buildMembers(source, candidates, func(candidate collectionCandidate, instance any) {

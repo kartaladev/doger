@@ -98,10 +98,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 14. Closed scopes and no resurrection
 
-- [ ] 14.1 RED: regression `TestContainerShutdown_NoResurrection` plus `TestContainerShutdown_InvokeAfterShutdownNamed`, `TestContainerShutdown_ConcurrentInvokeDuringShutdown`, `TestContainerShutdown_ClosedScopeRefuses`, `TestContainerShutdown_SecondShutdownNoop` and `TestContainerShutdown_ScopeDuringShutdownRefused` (container-shutdown closed-scope scenarios); verify `go test -race -run 'TestContainerShutdown_(NoResurrection|InvokeAfterShutdownNamed|ConcurrentInvokeDuringShutdown|ClosedScopeRefuses|SecondShutdownNoop|ScopeDuringShutdownRefused)' .` fails (built 2 vs shut down 1; compile error only on `ErrShutdown`)
-- [ ] 14.2 GREEN: add `ErrShutdown` (replacing `ErrStartAfterShutdown`), a scope close flag set under the write lock before children are listed and checked by Invoke*, registration, Alias*/Export* and `Scope()`, and a Terminal wrapper state so a build after shutdown returns `ErrShutdown` (D2); verify the 14.1 tests pass and `make test` is green
-- [ ] 14.3 REFACTOR: Extract Function `(*Scope).checkOpen` shared by registration, invocation and `Scope()`; verify `make test` and `make lint` pass
-- [ ] 14.4 Docs: godoc for `ErrShutdown`, `Scope()`, `Provide*` and `Invoke*` (closed-scope behavior), migration note "a container cannot be reused after Shutdown" and `ExampleRootScope_Shutdown_closed`; verify `go test -run ExampleRootScope_Shutdown_closed .` passes
+- [x] 14.1 RED: regression `TestContainerShutdown_NoResurrection` plus `TestContainerShutdown_InvokeAfterShutdownNamed`, `TestContainerShutdown_ConcurrentInvokeDuringShutdown`, `TestContainerShutdown_ClosedScopeRefuses`, `TestContainerShutdown_SecondShutdownNoop` and `TestContainerShutdown_ScopeDuringShutdownRefused` (container-shutdown closed-scope scenarios); verify `go test -race -run 'TestContainerShutdown_(NoResurrection|InvokeAfterShutdownNamed|ConcurrentInvokeDuringShutdown|ClosedScopeRefuses|SecondShutdownNoop|ScopeDuringShutdownRefused)' .` fails (built 2 vs shut down 1; compile error only on `ErrShutdown`)
+- [x] 14.2 GREEN: add `ErrShutdown` (replacing `ErrStartAfterShutdown`), a scope close flag set under the write lock before children are listed and checked by Invoke*, registration, Alias*/Export* and `Scope()`, and a Terminal wrapper state so a build after shutdown returns `ErrShutdown` (D2); verify the 14.1 tests pass and `make test` is green
+- [x] 14.3 REFACTOR: Extract Function `(*Scope).checkOpen` shared by registration, invocation and `Scope()`; verify `make test` and `make lint` pass
+- [x] 14.4 Docs: godoc for `ErrShutdown`, `Scope()`, `Provide*` and `Invoke*` (closed-scope behavior), migration note "a container cannot be reused after Shutdown" and `ExampleRootScope_Shutdown_closed`; verify `go test -run ExampleRootScope_Shutdown_closed .` passes
 
 ## 15. Start and health use ErrShutdown, with defined precedence
 

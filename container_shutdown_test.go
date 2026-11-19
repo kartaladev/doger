@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -377,4 +378,316 @@ func TestContainerShutdown_PanicHookRepanics(t *testing.T) {
 
 	is.PanicsWithValue("boom", func() { root.Shutdown() })
 	is.Equal(PhaseClosed, root.Phase())
+}
+
+// closedTestCounts counts the builds and Shutdown calls of closedTestSvc
+// values.
+type closedTestCounts struct {
+	builds, shutdowns atomic.Int32
+}
+
+// closedTestSvc is a service counting its Shutdown calls in counts.
+type closedTestSvc struct{ counts *closedTestCounts }
+
+func (s *closedTestSvc) Shutdown() error {
+	s.counts.shutdowns.Add(1)
+	return nil
+}
+
+func (s *closedTestSvc) Name() string { return "svc" }
+
+// closedTestIface is implemented by *closedTestSvc.
+type closedTestIface interface{ Name() string }
+
+// provideClosedTestSvc registers the lazy name of i, counting in counts.
+func provideClosedTestSvc(i Injector, name string, counts *closedTestCounts) {
+	ProvideNamed(i, name, func(Injector) (*closedTestSvc, error) {
+		counts.builds.Add(1)
+		return &closedTestSvc{counts: counts}, nil
+	})
+}
+
+// recoverError calls fn and returns the error it panicked with: nil when it
+// did not panic, an error describing the value when it is not an error.
+func recoverError(fn func()) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if e, ok := r.(error); ok {
+				err = e
+				return
+			}
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	fn()
+	return nil
+}
+
+func TestContainerShutdown_NoResurrection(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	counts := &closedTestCounts{}
+	lookedUp, shutDown := make(chan struct{}), make(chan struct{})
+	var invocations atomic.Int32
+	root := NewWithOpts(&InjectorOpts{HookBeforeInvocation: []func(*Scope, string){func(_ *Scope, name string) {
+		if name == "svc" && invocations.Add(1) == 2 {
+			close(lookedUp)
+			<-shutDown
+		}
+	}}})
+	provideClosedTestSvc(root, "svc", counts)
+	_, err := InvokeNamed[*closedTestSvc](root, "svc")
+	require.NoError(t, err)
+
+	type result struct {
+		svc *closedTestSvc
+		err error
+	}
+	results := make(chan result, 1)
+	go func() {
+		svc, err := InvokeNamed[*closedTestSvc](root, "svc")
+		results <- result{svc, err}
+	}()
+	<-lookedUp
+	root.Shutdown()
+	close(shutDown)
+
+	got := <-results
+	is.Nil(got.svc)
+	is.ErrorIs(got.err, ErrShutdown)
+	is.Equal(int32(1), counts.builds.Load(), "builds")
+	is.Equal(int32(1), counts.shutdowns.Load(), "Shutdown calls")
+}
+
+func TestContainerShutdown_InvokeAfterShutdownNamed(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	counts := &closedTestCounts{}
+	root := New()
+	provideClosedTestSvc(root, "svc", counts)
+	_, err := InvokeNamed[*closedTestSvc](root, "svc")
+	require.NoError(t, err)
+	require.NoError(t, ShutdownNamed(root, "svc"))
+
+	_, err = InvokeNamed[*closedTestSvc](root, "svc")
+
+	is.ErrorIs(err, ErrServiceNotFound)
+	is.Equal(int32(1), counts.builds.Load(), "builds")
+}
+
+func TestContainerShutdown_ConcurrentInvokeDuringShutdown(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 30*time.Second)
+
+	for repeat := range 50 {
+		counts := &closedTestCounts{}
+		root := New()
+		scopes := make([]*Scope, 10)
+		for n := range scopes {
+			scopes[n] = root.Scope(fmt.Sprintf("s%d", n))
+			provideClosedTestSvc(scopes[n], "svc", counts)
+		}
+
+		var unexpected atomic.Pointer[error]
+		var wg sync.WaitGroup
+		for g := range 32 {
+			wg.Go(func() {
+				for n := g; ; n++ {
+					_, err := InvokeNamed[*closedTestSvc](scopes[n%len(scopes)], "svc")
+					if err != nil {
+						if !errors.Is(err, ErrShutdown) && !errors.Is(err, ErrServiceNotFound) {
+							unexpected.Store(&err)
+						}
+						return
+					}
+				}
+			})
+		}
+		root.Shutdown()
+		wg.Wait()
+
+		if err := unexpected.Load(); err != nil {
+			t.Fatalf("repeat %d: unexpected error %v", repeat, *err)
+		}
+		require.Equal(t, counts.builds.Load(), counts.shutdowns.Load(), "repeat %d: builds and Shutdown calls", repeat)
+	}
+}
+
+func TestContainerShutdown_ClosedScopeRefuses(t *testing.T) {
+	t.Parallel()
+
+	type outcome int
+	const (
+		returnsShutdown outcome = iota
+		panicsShutdown
+		returnsInstance
+	)
+
+	tests := []struct {
+		name     string
+		shutRoot bool // root.Shutdown(), else tenant.Shutdown()
+		onRoot   bool // the call targets the root, else "tenant"
+		call     func(i Injector) error
+		outcome  outcome
+	}{
+		{name: "root_invoke", shutRoot: true, onRoot: true, outcome: returnsShutdown, call: func(i Injector) error {
+			_, err := Invoke[*closedTestSvc](i)
+			return err
+		}},
+		{name: "root_invoke_named", shutRoot: true, onRoot: true, outcome: returnsShutdown, call: func(i Injector) error {
+			_, err := InvokeNamed[*closedTestSvc](i, "svc")
+			return err
+		}},
+		{name: "root_invoke_all", shutRoot: true, onRoot: true, outcome: returnsShutdown, call: func(i Injector) error {
+			_, err := InvokeAll[*closedTestSvc](i)
+			return err
+		}},
+		{name: "root_provide", shutRoot: true, onRoot: true, outcome: panicsShutdown, call: func(i Injector) error {
+			return recoverError(func() { ProvideNamedValue(i, "late", 1) })
+		}},
+		{name: "root_override", shutRoot: true, onRoot: true, outcome: panicsShutdown, call: func(i Injector) error {
+			return recoverError(func() { OverrideNamedValue(i, "svc", &closedTestSvc{}) })
+		}},
+		{name: "root_scope", shutRoot: true, onRoot: true, outcome: panicsShutdown, call: func(i Injector) error {
+			return recoverError(func() { i.Scope("late") })
+		}},
+		{name: "root_alias", shutRoot: true, onRoot: true, outcome: returnsShutdown, call: func(i Injector) error {
+			return AliasNamed[*closedTestSvc, closedTestIface](i, "svc", "i")
+		}},
+		{name: "tenant_invoke_named", outcome: returnsShutdown, call: func(i Injector) error {
+			_, err := InvokeNamed[*closedTestSvc](i, "svc")
+			return err
+		}},
+		{name: "tenant_provide", outcome: panicsShutdown, call: func(i Injector) error {
+			return recoverError(func() { ProvideNamedValue(i, "late", 1) })
+		}},
+		{name: "tenant_scope", outcome: panicsShutdown, call: func(i Injector) error {
+			return recoverError(func() { i.Scope("late") })
+		}},
+		{name: "tenant_closed_root_invoke_named", onRoot: true, outcome: returnsInstance, call: func(i Injector) error {
+			svc, err := InvokeNamed[*closedTestSvc](i, "svc")
+			if err == nil && svc == nil {
+				return errors.New("no instance")
+			}
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			root := New()
+			tenant := root.Scope("tenant")
+			for _, scope := range []Injector{root, tenant} {
+				provideClosedTestSvc(scope, "svc", &closedTestCounts{})
+				_, err := InvokeNamed[*closedTestSvc](scope, "svc")
+				require.NoError(t, err)
+			}
+			if tt.shutRoot {
+				root.Shutdown()
+			} else {
+				tenant.Shutdown()
+			}
+
+			var target Injector = tenant
+			if tt.onRoot {
+				target = root
+			}
+			err := tt.call(target)
+
+			switch tt.outcome {
+			case returnsShutdown, panicsShutdown:
+				assert.ErrorIs(t, err, ErrShutdown)
+			case returnsInstance:
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestContainerShutdown_SecondShutdownNoop(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		firstRoot bool
+	}{
+		{name: "tenant_then_tenant"},
+		{name: "root_then_tenant", firstRoot: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+			is := assert.New(t)
+
+			root := New()
+			tenant := root.Scope("tenant")
+			svc := &shutdownTestCounter{}
+			provideBuilt(t, tenant, "svc", svc)
+			if tt.firstRoot {
+				root.Shutdown()
+			} else {
+				tenant.Shutdown()
+			}
+
+			report := tenant.Shutdown()
+
+			is.True(report.Succeed)
+			is.Empty(report.Services)
+			is.Equal(int32(1), svc.calls.Load(), "Shutdown calls")
+		})
+	}
+}
+
+func TestContainerShutdown_ScopeDuringShutdownRefused(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// opts returns the options whose closing hook creates a scope "late"
+		// and stores the panic in got; parent is the scope whose children
+		// must be empty afterwards
+		setup func(got *error) (root *RootScope, parent *Scope)
+	}{
+		{name: "container_closing", setup: func(got *error) (*RootScope, *Scope) {
+			var root *RootScope
+			root = NewWithOpts(&InjectorOpts{HookContainerClosing: []func(context.Context, *RootScope){func(context.Context, *RootScope) {
+				*got = recoverError(func() { root.Scope("late") })
+			}}})
+			root.Scope("a")
+			return root, root.self
+		}},
+		{name: "scope_closing", setup: func(got *error) (*RootScope, *Scope) {
+			var a *Scope
+			root := NewWithOpts(&InjectorOpts{HookScopeClosing: []func(context.Context, *Scope){func(_ context.Context, scope *Scope) {
+				if scope == a {
+					*got = recoverError(func() { a.Scope("late") })
+				}
+			}}})
+			a = root.Scope("a")
+			return root, a
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			var got error
+			root, parent := tt.setup(&got)
+
+			root.Shutdown()
+
+			assert.ErrorIs(t, got, ErrShutdown)
+			assert.Empty(t, parent.Children())
+		})
+	}
 }

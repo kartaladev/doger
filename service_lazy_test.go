@@ -866,7 +866,6 @@ func TestServiceLazy_shutdown(t *testing.T) {
 			is := assert.New(t)
 
 			is.False(tt.service.built())
-			is.NoError(tt.service.shutdown(ctx))
 			_, _ = tt.service.getInstance(nil)
 			is.True(tt.service.built())
 			if tt.wantErr == nil {
@@ -874,6 +873,11 @@ func TestServiceLazy_shutdown(t *testing.T) {
 			} else {
 				is.Equal(tt.wantErr, tt.service.shutdown(ctx))
 			}
+			is.False(tt.service.built())
+
+			// a shut-down service is never built again
+			_, err := tt.service.getInstance(nil)
+			is.ErrorIs(err, ErrShutdown)
 			is.False(tt.service.built())
 		})
 	}

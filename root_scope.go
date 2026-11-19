@@ -319,6 +319,7 @@ func (s *RootScope) shutdownAsWinner(ctx context.Context, ticket closeTicket, fi
 	defer func() { s.finishClose(report) }()
 
 	s.self.log(slog.LevelInfo, "container closing")
+	s.self.close() // before the Closing hooks: nothing is registered from now on
 	s.stopScheduling(ctx)
 
 	startErr := waitForStart(ctx, ticket)

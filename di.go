@@ -47,6 +47,10 @@ func NameOf[T any]() string {
 // Provide registers a service in the DI container, using type inference.
 // The service will be lazily instantiated when first requested.
 //
+// Once the shutdown of the scope has begun, Provide and the other Provide*
+// and Override* functions panic with an error matching [ErrShutdown]: a
+// container cannot be reused after Shutdown.
+//
 // Play: https://go.dev/play/p/4JutUJ5Rqau
 //
 // Example:
@@ -199,6 +203,9 @@ func provide[T any, A any](i Injector, name string, valueOrProvider A, serviceCt
 func tryProvide[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T], opts []ProvideOption) error {
 	_i := mustInjector(i)
 	scope := injectorScope(_i)
+	if err := scope.checkOpen(); err != nil {
+		return err
+	}
 	options := buildServiceOptions(opts)
 
 	// without a default involved, a duplicate fails first, as it always did
@@ -236,6 +243,10 @@ func registerLocked(scope *Scope, name string, incoming serviceWrapperAny) (regi
 	root := scope.rootScope
 
 	scope.mu.Lock()
+	if err := scope.checkOpen(); err != nil {
+		scope.mu.Unlock()
+		return registerDuplicate, err
+	}
 	replaced, outcome := scope.services[name], registerStored
 	if replaced != nil {
 		outcome = sameScopeOutcome(replaced, incoming)
@@ -456,6 +467,11 @@ func override[T any, A any](i Injector, name string, valueOrProvider A, serviceC
 
 // Invoke retrieves and instantiates a service from the DI container using type inference.
 // The service will be created if it hasn't been instantiated yet (for lazy services).
+//
+// Once the shutdown of the invoking scope has begun, Invoke and the other
+// Invoke* functions return an error matching [ErrShutdown]. A service is
+// never built again after its shutdown: an invocation that looked it up just
+// before gets ErrShutdown too.
 //
 // Play: https://go.dev/play/p/4JutUJ5Rqau
 //
@@ -707,6 +723,9 @@ func MustAlias[Initial any, Target any](i Injector) {
 func AliasNamed[Initial any, Target any](i Injector, initial string, alias string) error {
 	_i, err := getInjector(i)
 	if err != nil {
+		return err
+	}
+	if err := injectorScope(_i).checkOpen(); err != nil {
 		return err
 	}
 

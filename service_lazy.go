@@ -27,6 +27,9 @@ type serviceLazy[T any] struct {
 
 	// lazy loading
 	built bool
+	// terminal is set once the service was shut down: it is never built
+	// again, so a caller that looked it up before gets ErrShutdown
+	terminal bool
 	// published holds the instance once built, nil otherwise; health
 	// checks read it without s.mu, which a build holds for the whole
 	// provider call.
@@ -99,6 +102,9 @@ func (s *serviceLazy[T]) instanceOrBuild(i Injector) (instance T, built bool, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.terminal {
+		return empty[T](), false, shutDownServiceError(s.name)
+	}
 	if !s.built {
 		if err := s.build(i); err != nil {
 			return empty[T](), false, err
@@ -141,6 +147,12 @@ func onAfterBuild(i Injector, name string, instance any) {
 	if scope := injectorScope(i); scope != nil {
 		scope.RootScope().hooks.onAfterBuild(scope, name, instance)
 	}
+}
+
+// shutDownServiceError is the error of an invocation of the service name
+// once it was shut down.
+func shutDownServiceError(name string) error {
+	return libErrorMatching(ErrShutdown, "service `%s` is shut down", name)
 }
 
 // injectorScope returns the *Scope behind an injector a wrapper receives
@@ -241,7 +253,8 @@ func (s *serviceLazy[T]) shutdown(ctx context.Context) error {
 	s.mu.Lock()
 
 	defer func() {
-		// whatever the outcome, reset `build` flag and instance
+		// whatever the outcome, reset `build` flag and instance, for good
+		s.terminal = true
 		s.built = false
 		s.instance = empty[T]()
 		s.published.Store(nil)

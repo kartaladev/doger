@@ -34,7 +34,7 @@ Each entry gives the change and its migration.
 | Per-service hook signatures `HookBeforeStart`, `HookAfterStart`, `HookBeforeShutdown`, `HookAfterShutdown`, `HookAfterInvocation` | Start and shutdown hooks take `(ctx, scope, serviceName)`, and their "after" hooks also `elapsed time.Duration, err error`; `HookAfterInvocation` takes `(scope, serviceName, elapsed, err)` without a context | Add the `ctx`/`elapsed` parameters to your hook functions. |
 | `dogerchi.Use(*chi.Mux, …)` | `dogerchi.Use(chi.Router, …)` | Source-compatible; the parameter is wider. |
 | `RootScope.HealthCheck()` unbounded | Bounded by 10s by default | `HealthCheckTimeout: -1` for unbounded. |
-| Starting or resolving on a container after shutdown | `ErrShutdown` | Build a new container. |
+| Starting, resolving, registering or creating a scope on a container after shutdown | `ErrShutdown`: `Invoke*`, `InvokeAll*`, collection reads, `Alias*` and `Export*` return it; `Provide*`, `Override*` and `Scope()` panic with it, also from Closing hooks. A container cannot be reused after Shutdown | Build a new container. |
 | An error panic value from a provider returned as is | Wrapped: matches `ErrProviderPanic` and the original | Keep using `errors.Is`/`errors.As`; don't compare with `==`. |
 | Web UI page functions and adapter `Use` | Gain a variadic `...dogerhttp.Option` | Source-compatible; no change needed. |
 | `ServiceDescription` JSON keys `ScopeID`, `ScopeName`, `Service` | `scopeId`, `scopeName`, `service` (also changes Explain JSON) | Update JSON consumers. |

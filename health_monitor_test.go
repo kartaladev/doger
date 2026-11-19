@@ -642,10 +642,11 @@ func TestHealthScheduler_RootScopeShutdownEndsRecording(t *testing.T) {
 				must1(InvokeNamed[int](i, "provider"))
 				received.Shutdown()
 
-				ProvideNamedValue(i, "db", &healthReportTestSwitch{})
+				registered := recoverError(func() { ProvideNamedValue(i, "db", &healthReportTestSwitch{}) })
 				report := tt.calls(i)
 
-				is.Equal(HealthUnknown, healthReportTestEntry(t, report, "db").State)
+				is.ErrorIs(registered, ErrShutdown)
+				is.Empty(report.Services)
 				is.Equal(PhaseIdle, report.Phase)
 				time.Sleep(10 * time.Millisecond) // let a stray hook call land
 				is.Empty(recorder.serviceCalls())

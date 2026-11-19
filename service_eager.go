@@ -30,7 +30,8 @@ type serviceEager[T any] struct {
 	depsMu       sync.Mutex
 	depsResolved bool
 
-	built atomic.Bool // the after-build hook ran
+	built    atomic.Bool // the after-build hook ran
+	terminal atomic.Bool // shut down: invocations get ErrShutdown
 }
 
 func newServiceEager[T any](name string, instance T) *serviceEager[T] {
@@ -71,6 +72,9 @@ func (s *serviceEager[T]) getInstance(i Injector) (T, error) {
 	// recorded is then in this file, as before (invocation-frame rule, D16)
 	s.recordInvocationFrame(invocationFrameCap(i), func() (stacktrace.Frame, bool) { return stacktrace.NewFrameFromCaller() }) //nolint:gocritic // see above
 
+	if s.terminal.Load() {
+		return empty[T](), shutDownServiceError(s.name)
+	}
 	if err := s.resolveDependsOn(i); err != nil {
 		return empty[T](), err
 	}
@@ -137,6 +141,8 @@ func (s *serviceEager[T]) isShutdowner() bool {
 }
 
 func (s *serviceEager[T]) shutdown(ctx context.Context) error {
+	s.terminal.Store(true)
+
 	switch instance := any(s.instance).(type) {
 	case ShutdownerWithContextAndError:
 		if ctx.Err() != nil {

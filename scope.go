@@ -85,6 +85,10 @@ type Scope struct {
 	// in its allocation size class (see the phase fields there).
 	defaults atomic.Int32
 	exports  atomic.Int32
+
+	// closed is set, under mu as a writer, once the scope's shutdown began;
+	// it is never cleared (see checkOpen)
+	closed atomic.Bool
 }
 
 // scopeClosing is the shutdown state of a child scope.
@@ -121,10 +125,16 @@ func (s *Scope) Name() string {
 //
 // Play: https://go.dev/play/p/pao_03UdGE2
 //
-// Panics if a scope with the same name already exists in the parent.
+// Panics if a scope with the same name already exists in the parent, and
+// with an error matching [ErrShutdown] once the shutdown of s has begun,
+// including from its Closing hooks: a scope is never left behind a shutdown.
 func (s *Scope) Scope(name string, packages ...func(Injector)) *Scope {
 	s.mu.Lock()
 
+	if err := s.checkOpen(); err != nil {
+		s.mu.Unlock()
+		panic(err)
+	}
 	if _, ok := s.childScopes[name]; ok {
 		s.mu.Unlock()
 		panic(libErrorf("scope `%s` has already been declared", name))
@@ -141,6 +151,27 @@ func (s *Scope) Scope(name string, packages ...func(Injector)) *Scope {
 	}
 
 	return child
+}
+
+// checkOpen returns an error matching ErrShutdown once the shutdown of s
+// began, and nil before. A nil s, the scope of an Injector implemented
+// outside this package, is open.
+func (s *Scope) checkOpen() error {
+	if s != nil && s.closed.Load() {
+		return libErrorMatching(ErrShutdown, "scope `%s` is shut down", s.name)
+	}
+
+	return nil
+}
+
+// close marks s as closed, under its write lock, so a registration or a
+// child scope creation holding the lock either completed before or is
+// refused.
+func (s *Scope) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.closed.Store(true)
 }
 
 // hasChild reports whether s has a direct child scope named name.
@@ -450,8 +481,12 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // scope), it stops health scheduling as root Shutdown does, without the
 // Closing and Closed hooks, and leaves the container phase unchanged. Health
 // recording and the health hooks end there for good: a check run afterwards,
-// by any path, records no result and calls no hook, so services registered
-// later stay HealthUnknown in reports.
+// by any path, records no result and calls no hook.
+//
+// A scope is closed once its shutdown begins: from then on, registrations
+// and Scope() on it panic, and invocations return, with an error matching
+// [ErrShutdown]. A second Shutdown of a closed scope succeeds with nothing to
+// do.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
@@ -482,6 +517,10 @@ func (s *Scope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 // first scope hook panic in first instead of raising it.
 func (s *Scope) shutdownWithContext(ctx context.Context, first *hookPanic) (report *ShutdownReport) {
 	start := s.clock().Now()
+
+	// closed before its children are listed: a scope created from now on is
+	// refused instead of left running
+	s.close()
 
 	// child scopes only: the root's own scope fires no scope hook and follows
 	// root Shutdown's model
@@ -901,9 +940,17 @@ func (s *Scope) serviceGetRec(name string) (any, *Scope, bool) {
 //   - name: The name to register the service under
 //   - service: The service instance to register
 func (s *Scope) serviceSet(name string, service any) {
+	if err := s.checkOpen(); err != nil {
+		panic(err)
+	}
+
 	s.RootScope().hooks.onBeforeRegistration(s, name)
 
 	s.mu.Lock()
+	if err := s.checkOpen(); err != nil {
+		s.mu.Unlock()
+		panic(err)
+	}
 	replaced, ok := s.services[name]
 	// readers holding an unresolved default resolve its name again
 	previous, isDefault := replaced.(serviceWrapperSupersede)

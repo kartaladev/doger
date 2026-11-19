@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -193,4 +194,23 @@ func ExampleRootScope_AddAfterBuildHook() {
 	_ = MustInvokeNamed[*exampleBuiltCache](root, "cache") // cached: no build
 	// Output:
 	// built cache (*doger.exampleBuiltCache) in [root]
+}
+
+func ExampleRootScope_Shutdown_closed() {
+	injector := New()
+	ProvideNamedValue(injector, "greeting", "hello")
+	injector.Shutdown()
+
+	// A container cannot be reused after Shutdown: build a new one.
+	_, err := InvokeNamed[string](injector, "greeting")
+	fmt.Println(errors.Is(err, ErrShutdown))
+
+	defer func() {
+		err, _ := recover().(error)
+		fmt.Println(errors.Is(err, ErrShutdown))
+	}()
+	ProvideNamedValue(injector, "late", "too late")
+	// Output:
+	// true
+	// true
 }

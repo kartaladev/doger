@@ -87,6 +87,16 @@ func Export[T any](from *Scope, opts ...ExportOption) error {
 // ExportNamed is like [Export] for the service registered as name in from.
 // The service is published as name unless [WithExportName] renames it.
 func ExportNamed[T any](from *Scope, name string, opts ...ExportOption) error {
+	if from != nil {
+		if err := from.checkOpen(); err != nil {
+			return err
+		}
+		if from.parentScope != nil {
+			if err := from.parentScope.checkOpen(); err != nil {
+				return err
+			}
+		}
+	}
 	published := buildExportOptions(name, opts).published
 	source, err := validateExport(from, name, published, reflect.TypeFor[T]())
 	if err != nil {
