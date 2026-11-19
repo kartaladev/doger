@@ -1780,7 +1780,7 @@ func TestHealthCheck_GoexitAllWaiters(t *testing.T) {
 		is := assert.New(t)
 
 		panics := &healthRunTestPanicRecorder{}
-		log := newLogRecorder(slog.LevelInfo)
+		log := newLogRecorder(slog.LevelDebug)
 		i := NewWithOpts(&InjectorOpts{HookContainerPanic: panics.hook, Logger: log.logger()})
 		release := make(chan struct{})
 		ProvideNamedValue(i, "db", healthReportTestFunc{check: func(context.Context) error {
@@ -1810,6 +1810,11 @@ func TestHealthCheck_GoexitAllWaiters(t *testing.T) {
 			is.Equal("healthcheck", recovered[0].attrs["point"])
 			is.Equal("db", recovered[0].attrs["service"])
 			is.Equal("runtime.Goexit", recovered[0].attrs["panic_type"])
+		}
+		values := log.withMessage("panic value")
+		if is.Len(values, 1, "one Debug record for the one check") {
+			is.Equal(slog.LevelDebug, values[0].level)
+			is.Equal("runtime.Goexit", values[0].attrs["value"])
 		}
 		i.Shutdown()
 	})

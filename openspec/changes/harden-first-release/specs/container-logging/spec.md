@@ -110,7 +110,7 @@ And the handler recorded exactly 8000 "service invoked" records
 <!-- cases: 10 compatibility: BREAKING: messages change from "DI: ..." printf strings to fixed slog messages -->
 
 ### Requirement: Panic values and health error text stay at Debug level
-A recovered panic that is not passed to `HookContainerPanic` SHALL be logged at Error level with message `panic recovered`; the first panic of an operation goes to `HookContainerPanic` when that option is set and is logged only when it is not, and later panics of the operation are logged. The record SHALL carry the attributes `scope`, `service` (when it concerns one), `point` and `panic_type` (the `%T` of the value), and the value itself SHALL appear only in a separate Debug record `panic value`. Health-check error text SHALL appear only in Debug records.
+A recovered panic that is not passed to `HookContainerPanic` SHALL be logged at Error level with message `panic recovered`; the first panic of an operation goes to `HookContainerPanic` when that option is set and is logged only when it is not, and later panics of the operation are logged. The record SHALL carry the attributes `scope`, `service` (when it concerns one), `point` and `panic_type` (the `%T` of the value, or `runtime.Goexit` for a health check that exits its goroutine, which has no panic value), and the value itself SHALL appear only in a separate Debug record `panic value` (whose `value` is `runtime.Goexit` for such a check). Health-check error text SHALL appear only in Debug records.
 
 #### Scenario: A panic value is not logged above Debug
 ```gherkin

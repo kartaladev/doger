@@ -2513,6 +2513,30 @@ func healthReportTestFirstEntry(t *testing.T, decoded map[string]any) map[string
 	return entry
 }
 
+func TestHealthReport_MarshalJSONOutOfRange(t *testing.T) {
+	t.Parallel()
+
+	db := ServiceDescription{ScopeID: "root-id", ScopeName: "[root]", Service: "db"}
+
+	tests := []struct {
+		name   string
+		report HealthReport
+	}{
+		{name: "state_42", report: HealthReport{State: HealthState(42)}},
+		{name: "phase_minus_1", report: HealthReport{Phase: ContainerPhase(-1)}},
+		{name: "entry_state_9", report: HealthReport{Services: []ServiceHealth{{Service: db, State: HealthState(9)}}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := json.Marshal(tt.report)
+			assert.Error(t, err)
+		})
+	}
+}
+
 func TestHealthReport_MarshalJSONEdgeCases(t *testing.T) {
 	t.Parallel()
 

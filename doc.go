@@ -45,8 +45,10 @@
 // [RootScope.Scope] creates a child scope. A child resolves its own services
 // first, then its ancestors'; a parent never sees a child's services unless
 // the child publishes them with [Export]. A scope is shut down with its
-// descendants, by its own Shutdown or by its root's. [RootScope.Clone] copies
-// a container's registrations, without the instances already built.
+// descendants, by its own Shutdown or by its root's; once its shutdown has
+// begun, invoking or registering on it fails with [ErrShutdown].
+// [RootScope.Clone] copies a container's registrations, without the instances
+// already built.
 //
 // # Lifecycle
 //
@@ -66,8 +68,9 @@
 // checked by [RootScope.HealthCheck], by the single-service [HealthCheck] and
 // [HealthCheckNamed], and by [RootScope.HealthReport], which classifies each
 // service ([WithHealthTags], [AsOptionalHealth]) into a [HealthReport] that
-// marshals to JSON. Every check is bounded: InjectorOpts.HealthCheckTimeout is
-// 10s by default ([DefaultHealthReportCheckTimeout]). A [HealthScheduler] set
+// marshals to JSON. Checks are bounded by default (10s,
+// [DefaultHealthReportCheckTimeout]); InjectorOpts.HealthCheckTimeout changes
+// the bound, and a negative value removes it. A [HealthScheduler] set
 // in InjectorOpts keeps the report fresh in the background once the container
 // is ready.
 //

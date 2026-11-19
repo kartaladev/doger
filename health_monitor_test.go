@@ -1577,13 +1577,26 @@ func TestHealthMonitor_Guards(t *testing.T) {
 		is := assert.New(t)
 
 		i := New()
+		var mu sync.Mutex
+		var states []HealthState // current state of each container transition
+		i.AddContainerHealthChangedHook(func(_ *RootScope, _, current HealthState) {
+			mu.Lock()
+			defer mu.Unlock()
+			states = append(states, current)
+		})
 		db := &healthReportTestSwitch{}
+		db.set(errors.New("down"))
 		ProvideNamedValue(i, "db", db)
-		is.Equal(HealthHealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
+		is.Equal(HealthUnhealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
 
-		// a listing without "db" drops its record and membership
+		// a listing without "db" drops its record and membership, and the
+		// container's state no longer counts it
 		i.health.keepOnly(map[any]healthTarget{})
 		i.deliverTransitions()
+
+		mu.Lock()
+		is.Equal([]HealthState{HealthUnhealthy, HealthHealthy}, states, "container states")
+		mu.Unlock()
 
 		i.health.mu.Lock()
 		_, recorded := i.health.records[i.self.services["db"]]
@@ -1638,7 +1651,7 @@ func TestHealthMonitor_Guards(t *testing.T) {
 		})
 	})
 
-	t.Run("scheduler_double_start_guard", func(t *testing.T) {
+	t.Run("scheduling_stopped_before_ready", func(t *testing.T) {
 		t.Parallel()
 		testWithTimeout(t, 5*time.Second)
 		is := assert.New(t)

@@ -381,6 +381,21 @@ Examples:
   | the zero HealthReport{}                                                                                         | equals {"state":"unknown","phase":"idle","monitored":false,"services":[]}                       |
   | a report whose "db" entry has a check in flight since 2026-01-01T00:00:00Z and no recorded result               | has for "db" "state":"unknown", "pendingSince":"2026-01-01T00:00:00Z", "duration":"0s", and no "error" or "checkedAt" key |
   | a report whose "db" entry has Err set to a wrapped error fmt.Errorf("ping: %w", context.DeadlineExceeded)        | has for "db" "error":"ping: context deadline exceeded"                                          |
+  | a report whose "db" entry has Err set to errors.New("")                                                         | has for "db" "error":""                                                                         |
+  | a report whose "db" entry has nil Tags                                                                          | has for "db" "tags":[]                                                                          |
+```
+
+#### Scenario: A hand-built report with an out-of-range enum does not marshal
+```gherkin
+Given a HealthReport built by the consumer with <field>
+When the consumer calls json.Marshal on it
+Then the error is not nil
+
+Examples:
+  | field                                                  |
+  | State HealthState(42)                                  |
+  | Phase ContainerPhase(-1)                               |
+  | one entry for "db" with State HealthState(9)           |
 ```
 
 <!-- cases: 1 default: a zero-config report marshals with no option -->
