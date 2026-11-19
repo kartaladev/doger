@@ -1,6 +1,7 @@
 package dogerhttp
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -422,4 +423,88 @@ func TestPages_BasePathEscaped(t *testing.T) {
 			"link %q does not start with the escaped base path", link.Href)
 	}
 	assert.Equal(t, 2, internal, "the scope and service links")
+}
+
+// layers returns a graph where "top" depends on all services of layer 1 and
+// each service of layers 1 to n-1 depends on all services of the next
+// layer, with width services per layer.
+func layers(n, width int) webuitest.Graph {
+	name := func(layer, i int) string { return fmt.Sprintf("l%d-%d", layer, i) }
+	layer := func(l int) []string {
+		names := make([]string, width)
+		for i := range width {
+			names[i] = name(l, i)
+		}
+
+		return names
+	}
+
+	g := webuitest.Graph{"top": layer(1)}
+	for l := 1; l <= n; l++ {
+		var next []string
+		if l < n {
+			next = layer(l + 1)
+		}
+		for i := range width {
+			g[name(l, i)] = next
+		}
+	}
+
+	return g
+}
+
+func TestPages_TreeSizeFollowsGraph(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		graph   webuitest.Graph
+		entries int
+		refs    int
+	}{
+		{name: "no_dependencies", graph: webuitest.Graph{"top": nil}},
+		{name: "one_dependency", graph: webuitest.Graph{"top": {"a"}, "a": nil}, entries: 1},
+		{name: "chain", graph: webuitest.Graph{"top": {"a"}, "a": {"b"}, "b": {"c"}, "c": nil}, entries: 3},
+		{name: "diamond", graph: webuitest.Graph{"top": {"a", "b"}, "a": {"c"}, "b": {"c"}, "c": nil}, entries: 4, refs: 1},
+		{name: "ten_layers_of_three", graph: layers(10, 3), entries: 84, refs: 54},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := doger.New()
+			tt.graph.Provide(t, root, "top")
+
+			html, err := ServiceHTML("/debug/doger", root, root.ID(), "top")
+			require.NoError(t, err)
+
+			entries, refs := webuitest.CountEntries(webuitest.DependencyEntries(t, html))
+			assert.Equal(t, tt.entries, entries, "entries")
+			assert.Equal(t, tt.refs, refs, "references")
+		})
+	}
+}
+
+func TestPages_ReferenceLinks(t *testing.T) {
+	t.Parallel()
+
+	root := doger.New()
+	webuitest.Graph{"top": {"a", "b"}, "a": {"c"}, "b": {"c"}, "c": nil}.Provide(t, root, "top")
+
+	html, err := ServiceHTML("/debug/doger", root, root.ID(), "top")
+	require.NoError(t, err)
+
+	var c []webuitest.DependencyEntry
+	for _, entry := range webuitest.DependencyEntries(t, html) {
+		if entry.Name == "c" {
+			c = append(c, entry)
+		}
+	}
+	require.Len(t, c, 2)
+
+	assert.False(t, c[0].Ref, "the first entry for c is expanded")
+	assert.True(t, c[1].Ref, "the second entry for c is a reference")
+	assert.Equal(t, "/debug/doger/service?scope_id="+root.ID()+"&service_name=c", c[1].Href)
+	assert.False(t, c[1].HasChildren, "a reference has no children")
 }

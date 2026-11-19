@@ -213,3 +213,8 @@ func TestWebUI_ConcurrentViewing(t *testing.T) {
 	t.Parallel()
 	webuitest.ConcurrentViewing(t, mount)
 }
+
+func TestWebUI_LayeredGraphBounded(t *testing.T) {
+	t.Parallel()
+	webuitest.LayeredGraphBounded(t, mount)
+}

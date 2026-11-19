@@ -196,3 +196,8 @@ func TestWebUI_BehindAuthMiddleware(t *testing.T) {
 		return appDoer(t, app)
 	})
 }
+
+func TestWebUI_LayeredGraphBounded(t *testing.T) {
+	t.Parallel()
+	webuitest.LayeredGraphBounded(t, mount)
+}
