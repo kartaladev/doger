@@ -130,7 +130,7 @@ func TestServiceAlias_getInstanceAny(t *testing.T) {
 	// Test alias in child scope accessing parent service (should not work)
 	parentService := newServiceAlias[*lazyTestHeathcheckerOK, Healthchecker]("github.com/kartaladev/doger.Healthchecker", childScope, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK")
 	parentInstance, parentErr := parentService.getInstanceAny(parentScope)
-	is.Error(parentErr)
+	is.ErrorIs(parentErr, ErrServiceNotFound)
 	is.Nil(parentInstance) // For interface types, zero value is nil
 
 	// Test stacktrace functionality
@@ -201,7 +201,7 @@ func TestServiceAlias_getInstance(t *testing.T) {
 	// Test alias in child scope accessing parent service (should not work)
 	parentService := newServiceAlias[*lazyTestHeathcheckerOK, Healthchecker]("github.com/kartaladev/doger.Healthchecker", childScope, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK")
 	parentInstance, parentErr := parentService.getInstance(parentScope)
-	is.Error(parentErr)
+	is.ErrorIs(parentErr, ErrServiceNotFound)
 	is.Nil(parentInstance) // For interface types, zero value is nil
 
 	// Test stacktrace functionality
@@ -299,7 +299,7 @@ func TestServiceAlias_isHealthchecker(t *testing.T) {
 			service := tt.service(i)
 			is.False(service.isHealthchecker())
 			_, err := service.getInstanceAny(i)
-			is.Error(err)
+			is.ErrorIs(err, ErrServiceNotFound)
 			is.False(service.isHealthchecker())
 		})
 	}
@@ -381,7 +381,7 @@ func TestServiceAlias_healthcheck(t *testing.T) {
 	service6 := newServiceAlias[*lazyTestHeathcheckerOK, Healthchecker]("github.com/kartaladev/doger.Healthchecker", i2, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK")
 	_, _ = service6.getInstanceAny(i2)
 	err := service6.healthcheck(canceledCtx)
-	is.Error(err)
+	is.ErrorIs(err, context.Canceled)
 	is.ErrorContains(err, "context canceled")
 
 	// Test with timeout context
@@ -389,7 +389,7 @@ func TestServiceAlias_healthcheck(t *testing.T) {
 	defer cancel2()
 	time.Sleep(2 * time.Millisecond)
 	err2 := service6.healthcheck(timeoutCtx)
-	is.Error(err2)
+	is.ErrorIs(err2, context.DeadlineExceeded)
 	is.ErrorContains(err2, "context deadline exceeded")
 
 	// Test with value context - verify context value is received

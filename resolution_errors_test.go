@@ -486,7 +486,7 @@ func TestResolutionErrors_DuplicateScope(t *testing.T) {
 			err := panicError(t, func() { created = tt.run(root) })
 
 			if tt.panicMsg != "" {
-				require.Error(t, err, "the call panics")
+				require.ErrorIs(t, err, ErrScopeAlreadyDeclared, "the call panics")
 				assert.ErrorIs(t, err, ErrScopeAlreadyDeclared)
 				assert.EqualError(t, err, tt.panicMsg)
 				return

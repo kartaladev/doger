@@ -2006,7 +2006,7 @@ func healthReportTestInPhase(t *testing.T, i *RootScope, phase ContainerPhase) (
 	case PhaseFailed:
 		open()
 		ProvideNamedValue(i, "starter", &healthReportTestStarter{release: gate, err: errors.New("boom")}, AsStarter())
-		require.Error(t, i.Start())
+		require.ErrorAs(t, i.Start(), new(*StartError))
 		close(done)
 	case PhaseClosing:
 		i.AddContainerClosingHook(func(context.Context, *RootScope) { <-gate })

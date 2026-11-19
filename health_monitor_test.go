@@ -239,7 +239,7 @@ func TestHealthScheduler_CalledAtReady(t *testing.T) {
 			action: func(t *testing.T, i *RootScope) {
 				t.Helper()
 				ProvideNamedValue(i, "starter", &healthReportTestStarter{release: closedChan(), err: errors.New("boom")}, AsStarter())
-				require.Error(t, i.Start())
+				require.ErrorAs(t, i.Start(), new(*StartError))
 			},
 			calls: 0, readyCalls: -1,
 		},

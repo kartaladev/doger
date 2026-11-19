@@ -449,7 +449,7 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 				root := New()
 				ProvideNamed(root, "a", func(Injector) (int, error) { return 0, errors.New("boom") })
 				_, err := InvokeNamed[int](root, "a")
-				require.Error(t, err)
+				require.ErrorAs(t, err, new(*ServiceError))
 
 				return err.Error()
 			},

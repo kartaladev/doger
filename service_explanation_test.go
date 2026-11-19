@@ -229,7 +229,7 @@ func TestExplain_RetryRecordsEdgeOnce(t *testing.T) {
 	})
 
 	_, err := InvokeNamed[*explainEdgeA](root, "a")
-	must.Error(err)
+	must.ErrorAs(err, new(*ServiceError))
 	for range 2 {
 		_, err = InvokeNamed[*explainEdgeA](root, "a")
 		must.NoError(err)

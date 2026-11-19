@@ -437,7 +437,7 @@ func TestServiceHooks_ElapsedOnFailure(t *testing.T) {
 	})
 
 	_, err := InvokeNamed[int](root, "svc")
-	require.Error(t, err)
+	require.ErrorAs(t, err, new(*ServiceError))
 
 	calls := r.of("svc")
 	if is.Len(calls, 1) {

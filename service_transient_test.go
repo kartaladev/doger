@@ -315,7 +315,7 @@ func TestServiceTransient_getInstanceAny(t *testing.T) {
 
 			is.NotPanics(func() {
 				instance, err := tt.service.getInstanceAny(i)
-				is.Error(err)
+				is.ErrorAs(err, new(*ServiceError))
 				is.Empty(instance)
 				is.Equal(tt.wantErr, err)
 			})
@@ -380,7 +380,7 @@ func TestServiceTransient_getInstance(t *testing.T) {
 
 			is.NotPanics(func() {
 				instance, err := tt.service.getInstance(i)
-				is.Error(err)
+				is.ErrorAs(err, new(*ServiceError))
 				is.Empty(instance)
 				is.Equal(tt.wantErr, err)
 			})

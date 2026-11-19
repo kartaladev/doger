@@ -375,7 +375,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 - [x] 53.8 Add `TestShutdownOnSignals_Default` (SIGUSR1 through a test-only signal set) and give `ExampleRootScope_ShutdownOnSignals` a runnable `// Output:`; verify `go test -race -run ShutdownOnSignals .` passes
 - [x] 53.9 Harden the `tests` package: goleak `TestMain`, a `testWithTimeout` with a 5s floor reporting through `t` instead of `os.Exit`, and real report/error assertions in `TestParallelShutdown`, `TestConcurrentHealthCheckDuringShutdown`, `TestConcurrentBlockingOperations` and `TestRaceConditionShutdownInvocation`; verify `go test -race -count=20 -shuffle=on ./tests` passes
 - [x] 53.10 Replace the `time.Sleep` synchronisation in `scheduler/gocron/scheduler_test.go` with channel handshakes or a fake clock; verify `go test -race -count=50 -shuffle=on ./...` in `scheduler/gocron` passes
-- [ ] 53.11 Tighten bare `Error` assertions on hot paths (invoke, shutdown, start, health) to `ErrorIs`/`ErrorAs` with the expected sentinel; verify `make test` passes
+- [x] 53.11 Tighten bare `Error` assertions on hot paths (invoke, shutdown, start, health) to `ErrorIs`/`ErrorAs` with the expected sentinel; verify `make test` passes
 
 ## 54. Performance (behavior-preserving, D17)
 
