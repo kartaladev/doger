@@ -805,9 +805,9 @@ func TestContainerShutdown_KeptPanicLoggedWhenDispatchStops(t *testing.T) {
 	testWithTimeout(t, 5*time.Second)
 	is := assert.New(t)
 
-	recorder := newLogRecorder(slog.LevelDebug)
+	logger, recorder := newRecordingLogger(t, slog.LevelDebug)
 	root := NewWithOpts(&InjectorOpts{
-		Logger: recorder.logger(),
+		Logger: logger,
 		// re-panics on the observer point, so the service panic is never
 		// dispatched
 		HookContainerPanic: func(_ *RootScope, point string, value any) {

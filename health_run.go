@@ -700,7 +700,7 @@ func (m *healthMonitor) newCallLocked(target healthTarget, check func(context.Co
 // passed since it took the slot, so a check ignoring its context never
 // stalls the calls queued behind it.
 func (s *RootScope) startCall(call *sharedCall) {
-	call.target.scope.log(slog.LevelDebug, "health check requested", slog.String("service", call.target.name))
+	call.target.scope.log(slog.LevelDebug, "health check started", slog.String("service", call.target.name))
 
 	if !call.pooled {
 		go s.runCall(call)

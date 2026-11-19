@@ -136,7 +136,7 @@ These three methods are everything the root package uses today.
 
 | Level | Events |
 |---|---|
-| Debug | registration, invocation, build, `requested shutdown` (the first record of the winning root Shutdown), and the panic value of a recovered panic |
+| Debug | registration, invocation, build, `health check started`, `requested shutdown` (the first record of the winning root Shutdown), and the panic value of a recovered panic |
 | Info | container start, ready, closing and closed |
 | Warn | a fallback to an unmonitored container, a health state change to degraded |
 | Error | a health scheduler failure (a stop failure included), a shutdown error, a recovered panic not passed to `HookContainerPanic` (service name and panic type only): the first panic of an operation goes to that hook when it is set, and is logged only when it is not; later panics are logged |
