@@ -2,7 +2,7 @@ package doger
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"maps"
 	"reflect"
 	"sync"
@@ -339,8 +339,6 @@ func (s *Scope) ListProvidedServices() []ServiceDescription {
 
 	services = orderedUniq(services)
 
-	s.logf("exported list of services: %v", services)
-
 	return services
 }
 
@@ -368,8 +366,6 @@ func (s *Scope) ListInvokedServices() []ServiceDescription {
 	}
 
 	services = orderedUniq(services)
-
-	s.logf("exported list of invoked services: %v", services)
 
 	return services
 }
@@ -445,7 +441,7 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // ctx ends first, the report fails with an error keyed by this scope with an
 // empty service name, wrapping ctx.Err(), and the running shutdown goes on.
 // If the running shutdown panics before producing a report (for example in a
-// custom Logf), the joined calls get a failed report containing "doger: scope
+// custom Logger handler), the joined calls get a failed report containing "doger: scope
 // shutdown did not complete". Never shut a scope down synchronously from its
 // own Closing or Closed hooks, or from its services' Shutdown: it would wait
 // for itself.
@@ -483,7 +479,6 @@ func (s *Scope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 // shutdownWithContext shuts the scope and its children down, keeping the
 // first scope hook panic in first instead of raising it.
 func (s *Scope) shutdownWithContext(ctx context.Context, first *hookPanic) (report *ShutdownReport) {
-	s.logf("requested shutdown")
 	start := s.clock().Now()
 
 	// child scopes only: the root's own scope fires no scope hook and follows
@@ -511,7 +506,6 @@ func (s *Scope) shutdownWithContext(ctx context.Context, first *hookPanic) (repo
 		}
 
 		rep2 := s.shutdownServicesInParallel(ctx)
-		s.logf("shut down services")
 
 		if isChild {
 			s.runScopeObserverHooks(ctx, "scope-closed", s.rootScope.hooks.scopeClosed.load(), first)
@@ -557,7 +551,7 @@ func (s *Scope) joinClose() (run *scopeCloseRun, winner bool) {
 
 // finishScopeClose publishes the report of the winning shutdown and releases
 // the shutdowns that joined it. A nil report means the winner panicked
-// before producing one, for example in a custom Logf.
+// before producing one, for example in a custom Logger handler.
 func (s *Scope) finishScopeClose(run *scopeCloseRun, report *ShutdownReport) {
 	if report == nil {
 		report = s.failureReport(libErrorf("scope shutdown did not complete"))
@@ -801,8 +795,6 @@ func (s *Scope) clone(root *RootScope, parent *Scope) *Scope {
 	for name, index := range childScopes {
 		clone.childScopes[name] = index.clone(root, clone)
 	}
-
-	s.logf("injector cloned")
 
 	return clone
 }
@@ -1092,11 +1084,12 @@ func (s *Scope) serviceShutdown(ctx context.Context, name string) error {
 
 	service, ok := serviceAny.(serviceWrapperShutdown)
 	if ok {
-		s.logf("requested shutdown for service %s", name)
-
 		s.RootScope().hooks.onBeforeShutdown(s, name)
 		err = service.shutdown(ctx)
 		s.RootScope().hooks.onAfterShutdown(s, name, err)
+		if err != nil {
+			s.log(slog.LevelError, "service shutdown failed", slog.String("service", name), slog.Any("error", err))
+		}
 	} else {
 		// Should never happen.
 		panic(libErrorf("service `%s` is not shutdowner", name))
@@ -1124,13 +1117,22 @@ func (s *Scope) onServiceInvoke(name string) {
 	}
 }
 
-// logf logs a formatted message with the scope name prefix.
-// This method is used internally for consistent logging across the scope.
-//
-// Parameters:
-//   - format: The format string for the log message
-//   - args: Arguments to format the message with
-func (s *Scope) logf(format string, args ...any) {
-	format = fmt.Sprintf("DI <scope=%s>: %s", s.name, format)
-	s.RootScope().opts.Logf(format, args...)
+// log emits a record at level with message msg and the attributes scope
+// (the name of s) and attrs to the container's Logger, unless it discards
+// level: then no record is built.
+func (s *Scope) log(level slog.Level, msg string, attrs ...slog.Attr) {
+	if !s.logEnabled(level) {
+		return
+	}
+
+	all := make([]slog.Attr, 0, len(attrs)+1)
+	all = append(all, slog.String("scope", s.name))
+	all = append(all, attrs...)
+	s.rootScope.opts.Logger.LogAttrs(context.Background(), level, msg, all...)
+}
+
+// logEnabled reports whether the container's Logger keeps records at level,
+// so that a caller can skip building costly attributes.
+func (s *Scope) logEnabled(level slog.Level) bool {
+	return s.rootScope.opts.Logger.Enabled(context.Background(), level)
 }

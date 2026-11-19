@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -65,9 +67,7 @@ func (s *Server) Shutdown() error {
 func main() {
 	// Create injector with options
 	injector := doger.NewWithOpts(&doger.InjectorOpts{
-		Logf: func(format string, args ...any) {
-			fmt.Printf("[DI] "+format+"\n", args...)
-		},
+		Logger:             slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		HealthCheckTimeout: 5 * time.Second,
 	})
 

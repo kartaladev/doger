@@ -180,7 +180,7 @@ func TestScopeHooks_LaterPanicLogged(t *testing.T) {
 	logs := &callRecorder{}
 	panics := &callRecorder{}
 	root := NewWithOpts(&InjectorOpts{
-		Logf: func(format string, args ...any) { logs.record(fmt.Sprintf(format, args...)) },
+		Logger: lineLogger(logs.record),
 		HookContainerPanic: func(_ *RootScope, point string, recovered any) {
 			panics.record(fmt.Sprintf("%s %v", point, recovered))
 		},
@@ -193,10 +193,8 @@ func TestScopeHooks_LaterPanicLogged(t *testing.T) {
 	tenant.Shutdown()
 
 	is.Equal([]string{"scope-closing first"}, panics.list())
-	is.Contains(logs.list(), "doger: scope-closing hook panicked: second")
-	for _, line := range logs.list() {
-		is.NotContains(line, "container scope-closing")
-	}
+	is.Contains(logs.list(), "ERROR panic recovered scope=[root] point=scope-closing panic_type=string")
+	is.Contains(logs.list(), "DEBUG panic value scope=[root] point=scope-closing value=second")
 }
 
 // scopeShutdowner records "shutdown <scope>" when shut down.

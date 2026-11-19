@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -357,17 +358,23 @@ type InjectorOpts struct {
 	// every hook of the list has run, and so has the rest of Start or
 	// Shutdown. hook names the point ("started", "ready", "failed",
 	// "closing" or "closed"); later panics of the same operation are logged
-	// with Logf. Start or Shutdown then returns its normal result. Scope
+	// to Logger (see Logger). Start or Shutdown then returns its normal result. Scope
 	// observer hooks follow the same policy for Scope.Start and a child
 	// scope shutdown, with the points "scope-started", "scope-closing" and
 	// "scope-closed". Default (nil): re-panic with the recovered value.
 	// Panics in Starting hooks are vetoes and never reach it.
 	HookContainerPanic func(scope *RootScope, hook string, recovered any)
 
-	// Logf is the logging function used by the DI container for internal logging.
-	// If not provided, no logging will occur. This function should handle the format
-	// string and arguments similar to fmt.Printf.
-	Logf func(format string, args ...any)
+	// Logger receives the container's log records, each with a fixed
+	// message and level and the attributes "scope" and "service" where they
+	// apply: Debug for registrations, invocations, exports and health check
+	// failures; Info for container start, ready, closing and closed; Warn
+	// for an unavailable property source or a degraded container; Error for
+	// a failed service shutdown, a health scheduler failure and a recovered
+	// panic. A recovered panic's value, and a health check's error text,
+	// appear only in Debug records, since they could hold secrets.
+	// Default (nil): nothing is logged, and no record is built.
+	Logger *slog.Logger
 
 	// HealthCheckParallelism caps the health checks running at once among
 	// those started by HealthCheck(), HealthReport reads and scheduled
@@ -542,11 +549,11 @@ func cloneHooks[T any](s []T) []T {
 	return append([]T{}, s...)
 }
 
-// initDefaults replaces unset options with their defaults: a no-op Logf
-// and the real clock.
+// initDefaults replaces unset options with their defaults: a discard
+// logger and the real clock.
 func (o *InjectorOpts) initDefaults() {
-	if o.Logf == nil {
-		o.Logf = noOpLogf
+	if o.Logger == nil {
+		o.Logger = discardLogger
 	}
 
 	if o.Clock == nil {

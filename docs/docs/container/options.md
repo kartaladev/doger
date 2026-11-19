@@ -68,9 +68,7 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
     HookBeforeStart:        []func(scope *doger.Scope, serviceName string){},
     HookAfterStart:         []func(scope *doger.Scope, serviceName string, err error){},
 
-    Logf: func(format string, args ...any) {
-        // ...
-    },
+    Logger: slog.Default(), // nil: nothing is logged
 
     HealthCheckParallelism:   100,
     HealthCheckGlobalTimeout: 1 * time.Second,
@@ -81,6 +79,24 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
     DisableStarterAutoDetection: false, // true: Start only starts AsStarter() services
     StartParallelism: 0, // 0 or 1: sequential; n > 1: up to n Starters at a time
 })
+```
+
+### Logging {#logging}
+
+`InjectorOpts.Logger` takes any `*slog.Logger`. When it is nil (the default) the container logs nothing, not even to `slog.Default()`, and builds no record. Each event has a fixed message and level, with the attributes `scope` (the scope name) and `service` where they apply:
+
+| Level | Messages |
+| --- | --- |
+| Debug | `service registered`, `service overridden`, `service invoked`, `service exported`, `health check failed` (with `error`), `property source selected`, `panic value` (with `value`) |
+| Info | `container started`, `container ready`, `container closing`, `container closed`, `extension disabled`, `container health changed` back to healthy |
+| Warn | `property source unavailable` (with `source_type`), `properties read after extend`, `health scheduler stop failed`, `container health changed` to another state |
+| Error | `service shutdown failed` (with `error`), `health scheduler failed`, `panic recovered` (with `point` and `panic_type`) |
+
+A recovered panic's value and a health check's error text appear only at Debug level, so they stay out of production logs that could expose secrets.
+
+```go
+logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+injector := doger.NewWithOpts(&doger.InjectorOpts{Logger: logger})
 ```
 
 ### Clock {#clock}

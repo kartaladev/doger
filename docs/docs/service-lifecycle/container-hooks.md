@@ -165,7 +165,7 @@ Concurrent `Shutdown` callers that wait for the first one are released once serv
 
 ## Panics {#panics}
 
-A panic in a Started, Ready, Failed, Closing or Closed hook is recovered. The remaining hooks of that list still run, and so does the rest of `Start` or `Shutdown`, including its phase transitions: services are still shut down, and waiters are released. Once the operation is complete, the **first** recovered panic is passed, on the calling goroutine, to `InjectorOpts.HookContainerPanic` with the hook point name (`started`, `ready`, `failed`, `closing` or `closed`). Later panics of the same operation are logged with `Logf`.
+A panic in a Started, Ready, Failed, Closing or Closed hook is recovered. The remaining hooks of that list still run, and so does the rest of `Start` or `Shutdown`, including its phase transitions: services are still shut down, and waiters are released. Once the operation is complete, the **first** recovered panic is passed, on the calling goroutine, to `InjectorOpts.HookContainerPanic` with the hook point name (`started`, `ready`, `failed`, `closing` or `closed`). Later panics of the same operation are logged to `InjectorOpts.Logger`: an Error `panic recovered` record with the hook point and the panic's type, and the value only in a Debug `panic value` record.
 
 By default, `HookContainerPanic` is nil and the operation **re-panics** with the recovered value, like per-service hooks do. Set it to log instead, and `Start` or `Shutdown` returns its normal result:
 

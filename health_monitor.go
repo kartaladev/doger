@@ -3,6 +3,7 @@ package doger
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/jonboulle/clockwork"
@@ -138,7 +139,7 @@ func (s *RootScope) stopScheduling(ctx context.Context) {
 func (s *RootScope) callStop(ctx context.Context, stop func(context.Context) error) {
 	recovered, panicked := callHookSafely(func() {
 		if err := stop(context.WithoutCancel(ctx)); err != nil {
-			s.opts.Logf("doger: health scheduler stop failed: %v", err)
+			s.self.log(slog.LevelWarn, "health scheduler stop failed", slog.Any("error", err))
 		}
 	})
 	switch {
@@ -146,7 +147,7 @@ func (s *RootScope) callStop(ctx context.Context, stop func(context.Context) err
 	case s.opts.HookContainerPanic != nil:
 		s.opts.HookContainerPanic(s, "healthscheduler", recovered)
 	default:
-		s.opts.Logf("doger: health scheduler stop panicked: %v", recovered)
+		s.logRecoveredPanic("healthscheduler", "", recovered)
 	}
 }
 
@@ -170,12 +171,15 @@ func (s *RootScope) callScheduler(scheduler HealthScheduler) (stop func(context.
 		s.opts.HookContainerPanic(s, "healthscheduler", recovered)
 		return nil, fmt.Errorf("doger: health scheduler panicked: %v", recovered)
 	case panicked:
+		s.logRecoveredPanic("healthscheduler", "", recovered)
 		err = fmt.Errorf("%v", recovered)
 	case err == nil && stop == nil:
 		stop = func(context.Context) error { return nil }
 	}
 	if err != nil {
-		s.opts.Logf("doger: health scheduler failed: %v", err)
+		if !panicked {
+			s.self.log(slog.LevelError, "health scheduler failed", slog.Any("error", err))
+		}
 		if stop != nil {
 			// a schedule partly started is stopped at once
 			s.callStop(context.Background(), stop)
@@ -308,6 +312,13 @@ func (s *RootScope) deliverTransitions() {
 // deliverTransition calls the hooks of transition, in order, skipping nil
 // ones.
 func (s *RootScope) deliverTransition(transition healthTransition, serviceHooks []func(*Scope, string, ServiceHealth, ServiceHealth), containerHooks []func(*RootScope, HealthState, HealthState)) {
+	if !transition.service {
+		level := slog.LevelWarn
+		if transition.containerCurrent == HealthHealthy {
+			level = slog.LevelInfo
+		}
+		s.self.log(level, "container health changed", slog.String("previous", transition.containerPrevious.String()), slog.String("current", transition.containerCurrent.String()))
+	}
 	if transition.service {
 		for _, hook := range serviceHooks {
 			if hook != nil {
@@ -337,7 +348,7 @@ func (s *RootScope) callHealthHook(call func()) {
 		s.opts.HookContainerPanic(s, "healthchanged", recovered)
 		return
 	}
-	s.opts.Logf("doger: health hook panicked: %v", recovered)
+	s.logRecoveredPanic("healthchanged", "", recovered)
 }
 
 // AddServiceHealthChangedHook adds a hook called when a service's recorded

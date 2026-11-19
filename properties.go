@@ -1,7 +1,11 @@
 package doger
 
 import (
+	"errors"
+	"fmt"
+	"log/slog"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -103,7 +107,7 @@ func (p Properties) Lookup(key string) (string, bool) {
 	}
 	if p.x != nil && p.x.closed.Load() {
 		p.x.lateLog.Do(func() {
-			p.root.opts.Logf("doger: properties of extension %s read after its Extend returned", p.x.name())
+			p.root.self.log(slog.LevelWarn, "properties read after extend", slog.String("extension", p.x.name()))
 		})
 		return "", false
 	}
@@ -161,11 +165,12 @@ func decidePropertySource(root *RootScope) PropertySource {
 		var err error
 		source, err = InvokeNamed[PropertySource](root, name)
 		if err != nil {
-			root.opts.Logf("doger: property source unavailable, every property is unset: %T", err) // the type only: the message could hold a secret
+			// the type only: the message could hold a secret
+			root.self.log(slog.LevelWarn, "property source unavailable", slog.String("source_type", sourceErrorType(err)))
 			source = noProperties{}
 		}
 	}
-	root.opts.Logf("doger: property source %T", source)
+	root.self.log(slog.LevelDebug, "property source selected", slog.String("source_type", fmt.Sprintf("%T", source)))
 
 	return source
 }
@@ -222,4 +227,21 @@ func ExtensionProperties(i Injector) (Properties, bool) {
 	}
 
 	return Properties{}, false
+}
+
+// sourceErrorType returns the type of err once the library's own wrappers
+// (such as *ServiceError) are removed: the type of the error the property
+// source's provider returned.
+func sourceErrorType(err error) string {
+	for {
+		t := reflect.TypeOf(err)
+		if t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		inner := errors.Unwrap(err)
+		if t.PkgPath() != reflect.TypeFor[ServiceError]().PkgPath() || inner == nil {
+			return fmt.Sprintf("%T", err)
+		}
+		err = inner
+	}
 }

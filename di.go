@@ -1,6 +1,7 @@
 package doger
 
 import (
+	"log/slog"
 	"reflect"
 )
 
@@ -222,7 +223,7 @@ func tryProvide[T any, A any](i Injector, name string, valueOrProvider A, servic
 	}
 
 	root.hooks.onAfterRegistration(scope, name)
-	root.opts.Logf("doger: service %s injected", name)
+	scope.log(slog.LevelDebug, "service registered", slog.String("service", name))
 
 	return nil
 }
@@ -450,7 +451,7 @@ func override[T any, A any](i Injector, name string, valueOrProvider A, serviceC
 	service.setOptions(options)
 	_i.serviceSet(name, service) // @TODO: should we unload/shutdown the previous service ?
 
-	_i.RootScope().opts.Logf("doger: service %s overridden", name)
+	injectorScope(_i).log(slog.LevelDebug, "service overridden", slog.String("service", name))
 }
 
 // Invoke retrieves and instantiates a service from the DI container using type inference.

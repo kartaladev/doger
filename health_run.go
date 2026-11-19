@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
 	"time"
@@ -114,8 +115,6 @@ func visibleCheckers(s *Scope) []healthTarget {
 // healthCheckTargets runs the checks of targets, once per wrapper, under the
 // global health check timeout, and returns their results by key.
 func (s *Scope) healthCheckTargets(ctx context.Context, targets []healthTarget) map[string]error {
-	s.logf("requested health check")
-
 	if s.rootScope.opts.HealthCheckGlobalTimeout > 0 {
 		clock := s.clock()
 		ctx = withHealthCheckDeadline(ctx, clock.Now().Add(s.rootScope.opts.HealthCheckGlobalTimeout))
@@ -141,7 +140,12 @@ func (s *Scope) healthCheckTargets(ctx context.Context, targets []healthTarget) 
 		results[target.key] = byWrapper[target.wrapper]
 	}
 
-	s.logf("got health check results: %v", results)
+	// the error text could hold a secret: Debug only
+	for _, target := range targets {
+		if err := byWrapper[target.wrapper]; err != nil {
+			target.scope.log(slog.LevelDebug, "health check failed", slog.String("service", target.name), slog.Any("error", err))
+		}
+	}
 
 	return results
 }
@@ -698,7 +702,7 @@ func (m *healthMonitor) newCallLocked(target healthTarget, check func(context.Co
 // passed since it took the slot, so a check ignoring its context never
 // stalls the calls queued behind it.
 func (s *RootScope) startCall(call *sharedCall) {
-	call.target.scope.logf("requested health check for service %s", call.target.name)
+	call.target.scope.log(slog.LevelDebug, "health check requested", slog.String("service", call.target.name))
 
 	if !call.pooled {
 		go s.runCall(call)

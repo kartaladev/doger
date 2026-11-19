@@ -389,13 +389,13 @@ func TestScopeShutdown_JoinedWinnerPanics(t *testing.T) {
 		is := assert.New(t)
 
 		entered, release := make(chan struct{}), make(chan struct{})
-		var panicked atomic.Bool
 		root := NewWithOpts(&InjectorOpts{
-			// the winning shutdown panics after its services shut down
-			Logf: func(format string, _ ...any) {
-				if format == "DI <scope=tenant>: shut down services" && panicked.CompareAndSwap(false, true) {
-					panic("log-boom")
-				}
+			// the winning shutdown panics after its services shut down: in
+			// the record of its second Closed hook panic
+			Logger: panickingLogger(func(rec logRecord) bool { return rec.message == "panic recovered" }, "log-boom"),
+			HookScopeClosed: []func(context.Context, *Scope){
+				func(context.Context, *Scope) { panic("first") },
+				func(context.Context, *Scope) { panic("second") },
 			},
 		})
 		root.AddScopeClosingHook(func(context.Context, *Scope) {

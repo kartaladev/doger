@@ -115,6 +115,7 @@ doger adds a trailing `...doger.ProvideOption` parameter to the registration fun
 | `As`, `AsNamed`, `MustAs`, `MustAsNamed` | `Alias`, `AliasNamed`, `MustAlias`, `MustAliasNamed`. A duplicate alias name is returned as an error matching `ErrServiceAlreadyDeclared` by `Alias`/`AliasNamed` instead of panicking | Rename the calls. `Bind` and `BindNamed` are unchanged |
 | `ExportAs` | `WithExportName`, same parameter. Export errors match `ErrNilInjector`, `ErrServiceNotFound`, `ErrServiceTypeMismatch` or `ErrServiceAlreadyDeclared` | Rename the call |
 | `var DefaultRootScope`, and a nil injector falling back to it | Removed. A nil injector, root or scope, including a typed-nil `*RootScope` or `*Scope`, gives `ErrNilInjector` from functions with an error result and panics with a value matching it elsewhere | Create a container with `doger.New()` and pass it explicitly |
+| `InjectorOpts.Logf func(format string, args ...any)` | `InjectorOpts.Logger *slog.Logger`: fixed messages and levels with `scope`/`service` attributes; nil logs nothing; panic values and health-check error text only at Debug | `Logger: slog.Default()`, or any `slog.Handler` |
 | `var MaxInvocationFrames` (package-wide) | `InjectorOpts.MaxInvocationFrames int`, per container: 0 means 100, a negative value turns recording off, and the cap records exactly that many frames | Set the option on each container that needs another cap |
 
 ## What stays the same {#what-stays-the-same}

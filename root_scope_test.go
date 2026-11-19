@@ -3,8 +3,7 @@ package doger
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,7 +22,7 @@ func TestNew(t *testing.T) {
 	i := New()
 	is.NotNil(i)
 
-	is.NotNil(i.opts.Logf)
+	is.NotNil(i.opts.Logger)
 	is.Empty(i.hooks.beforeRegistration.load())
 	is.Empty(i.hooks.afterRegistration.load())
 	is.Empty(i.hooks.beforeInvocation.load())
@@ -54,7 +53,7 @@ func TestNewWithOpts(t *testing.T) {
 		HookBeforeShutdown:     []func(*Scope, string){},
 		HookAfterShutdown:      []func(*Scope, string, error){},
 
-		Logf: func(format string, args ...any) {},
+		Logger: slog.New(slog.DiscardHandler),
 
 		HealthCheckParallelism:   42,
 		HealthCheckGlobalTimeout: 42 * time.Second,
@@ -64,7 +63,7 @@ func TestNewWithOpts(t *testing.T) {
 
 	is.NotNil(i)
 
-	is.NotNil(i.opts.Logf)
+	is.NotNil(i.opts.Logger)
 	is.Empty(i.hooks.beforeRegistration.load())
 	is.Empty(i.hooks.afterRegistration.load())
 	is.Empty(i.hooks.beforeInvocation.load())
@@ -186,7 +185,7 @@ func TestRootScope_Clone(t *testing.T) {
 		HookBeforeShutdown:     []func(*Scope, string){},
 		HookAfterShutdown:      []func(*Scope, string, error){},
 
-		Logf: func(format string, args ...any) {},
+		Logger: slog.New(slog.DiscardHandler),
 
 		HealthCheckParallelism:   42,
 		HealthCheckGlobalTimeout: 42 * time.Second,
@@ -199,7 +198,7 @@ func TestRootScope_Clone(t *testing.T) {
 	defer i.Shutdown()     //nolint: errcheck
 	defer clone.Shutdown() //nolint: errcheck
 
-	is.NotEqual(i.opts, clone.opts) // copy
+	is.NotSame(i.opts, clone.opts) // copy
 
 	tests := []struct {
 		name string
@@ -219,7 +218,7 @@ func TestRootScope_Clone(t *testing.T) {
 			is.Empty(tt.opts.HookAfterInvocation)
 			is.Empty(tt.opts.HookBeforeShutdown)
 			is.Empty(tt.opts.HookAfterShutdown)
-			is.NotNil(tt.opts.Logf)
+			is.NotNil(tt.opts.Logger)
 			is.NotNil(tt.opts.HealthCheckParallelism)
 			is.NotNil(tt.opts.HealthCheckGlobalTimeout)
 			is.NotNil(tt.opts.HealthCheckTimeout)
@@ -248,7 +247,7 @@ func TestRootScope_CloneWithOpts(t *testing.T) {
 		HookBeforeShutdown:     []func(*Scope, string){},
 		HookAfterShutdown:      []func(*Scope, string, error){},
 
-		Logf: func(format string, args ...any) {},
+		Logger: slog.New(slog.DiscardHandler),
 
 		HealthCheckParallelism:   42,
 		HealthCheckGlobalTimeout: 42 * time.Second,
@@ -264,7 +263,7 @@ func TestRootScope_CloneWithOpts(t *testing.T) {
 	is.Empty(i.hooks.afterInvocation.load())
 	is.Empty(i.hooks.beforeShutdown.load())
 	is.Empty(i.hooks.afterShutdown.load())
-	is.NotNil(i.opts.Logf)
+	is.NotNil(i.opts.Logger)
 	is.Empty(i.opts.HealthCheckParallelism)
 	is.Empty(i.opts.HealthCheckGlobalTimeout)
 	is.Empty(i.opts.HealthCheckTimeout)
@@ -275,7 +274,7 @@ func TestRootScope_CloneWithOpts(t *testing.T) {
 	is.Empty(clone.hooks.afterInvocation.load())
 	is.Empty(clone.hooks.beforeShutdown.load())
 	is.Empty(clone.hooks.afterShutdown.load())
-	is.NotNil(clone.opts.Logf)
+	is.NotNil(clone.opts.Logger)
 	is.Equal(uint(42), clone.opts.HealthCheckParallelism)
 	is.Equal(42*time.Second, clone.opts.HealthCheckGlobalTimeout)
 	is.Equal(42*time.Second, clone.opts.HealthCheckTimeout)
@@ -713,11 +712,9 @@ func TestRootScope_ShutdownWinnerPanic(t *testing.T) {
 			is := assert.New(t)
 
 			root := NewWithOpts(&InjectorOpts{
-				Logf: func(format string, args ...any) {
-					if strings.Contains(fmt.Sprintf(format, args...), "requested shutdown") {
-						panic("log-boom")
-					}
-				},
+				// the first record of the winning shutdown (group 31 moves
+				// this to "requested shutdown")
+				Logger: panickingLogger(func(rec logRecord) bool { return rec.message == "container closing" }, "log-boom"),
 			})
 			is.PanicsWithValue("log-boom", func() { root.Shutdown() })
 

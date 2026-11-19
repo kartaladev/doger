@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -686,18 +685,18 @@ func TestHealthReport_CachedReadsLogNothing(t *testing.T) {
 	is := assert.New(t)
 
 	log := &healthMonitorTestLog{}
-	i := NewWithOpts(&InjectorOpts{Clock: clockwork.NewFakeClock(), Logf: log.logf})
+	i := NewWithOpts(&InjectorOpts{Clock: clockwork.NewFakeClock(), Logger: log.logger()})
 	for n := range 50 {
 		ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), &healthReportTestSwitch{})
 	}
 	i.HealthReport()
-	is.Len(log.containing("requested health check for service"), 50, "lines of the first read")
+	is.Len(log.containing("health check requested"), 50, "records of the first read")
 
 	for range 10 {
 		i.HealthReport() // within the TTL: on the fake clock, no time passes
 	}
 
-	is.Len(log.containing("requested health check for service"), 50, "lines after the cached reads")
+	is.Len(log.containing("health check requested"), 50, "records after the cached reads")
 }
 
 func TestHealthReport_RefreshedByForced(t *testing.T) {
@@ -897,11 +896,11 @@ func TestHealthReport_NotRecordedLeftBeforeStart(t *testing.T) {
 			// check of "a", after it listed "b"
 			var child *Scope
 			var armed atomic.Bool
-			opts := &InjectorOpts{Logf: func(format string, args ...any) {
-				if strings.HasSuffix(fmt.Sprintf(format, args...), "requested health check for service a") && armed.CompareAndSwap(true, false) {
+			opts := &InjectorOpts{Logger: hookLogger(func(rec logRecord) {
+				if rec.message == "health check requested" && rec.attrs["service"] == "a" && armed.CompareAndSwap(true, false) {
 					is.True(child.Shutdown().Succeed)
 				}
-			}}
+			})}
 			scheduler := &manualScheduler{}
 			if tt.started {
 				opts.HealthScheduler = scheduler
@@ -960,11 +959,11 @@ func TestHealthReport_TimeoutNotRecordedLeftBeforeStart(t *testing.T) {
 				// check of "a", after it listed "b"
 				var child *Scope
 				var armed atomic.Bool
-				opts := &InjectorOpts{HealthCheckTimeout: 20 * time.Millisecond, Logf: func(format string, args ...any) {
-					if strings.HasSuffix(fmt.Sprintf(format, args...), "requested health check for service a") && armed.CompareAndSwap(true, false) {
+				opts := &InjectorOpts{HealthCheckTimeout: 20 * time.Millisecond, Logger: hookLogger(func(rec logRecord) {
+					if rec.message == "health check requested" && rec.attrs["service"] == "a" && armed.CompareAndSwap(true, false) {
 						is.True(child.Shutdown().Succeed)
 					}
-				}}
+				})}
 				scheduler := &manualScheduler{}
 				if tt.started {
 					opts.HealthScheduler = scheduler
@@ -1022,11 +1021,11 @@ func TestHealthReport_LeftBeforeReadNotChecked(t *testing.T) {
 			// check of "a", after it listed "b"
 			var child *Scope
 			var armed atomic.Bool
-			opts := &InjectorOpts{Logf: func(format string, args ...any) {
-				if strings.HasSuffix(fmt.Sprintf(format, args...), "requested health check for service a") && armed.CompareAndSwap(true, false) {
+			opts := &InjectorOpts{Logger: hookLogger(func(rec logRecord) {
+				if rec.message == "health check requested" && rec.attrs["service"] == "a" && armed.CompareAndSwap(true, false) {
 					is.True(child.Shutdown().Succeed)
 				}
-			}}
+			})}
 			scheduler := &manualScheduler{}
 			if tt.started {
 				opts.HealthScheduler = scheduler

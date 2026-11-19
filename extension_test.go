@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -343,7 +344,7 @@ func TestExtend_DeclinedReplacementRestores(t *testing.T) {
 			t.Parallel()
 
 			var logs logLines
-			root := NewWithOpts(&InjectorOpts{Logf: logs.logf})
+			root := NewWithOpts(&InjectorOpts{Logger: logs.logger()})
 			var calls atomic.Int32
 			require.NoError(t, extendNoPanic(t, root, requiringExtension[kindCache]("cache", &redisExtension{Addr: "default:6379", calls: &calls})))
 
@@ -865,10 +866,12 @@ type logLines struct {
 	lines []string
 }
 
-func (l *logLines) logf(format string, args ...any) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+func (l *logLines) logger() *slog.Logger {
+	return lineLogger(func(line string) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		l.lines = append(l.lines, line)
+	})
 }
 
 // containing returns the recorded lines containing text.
@@ -929,8 +932,8 @@ func TestExtend_Disabled(t *testing.T) {
 		instance string
 		line     string
 	}{
-		{name: "no_instance", instance: "", line: "extension metrics disabled"},
-		{name: "instance", instance: "eu", line: "extension metrics/eu disabled"},
+		{name: "no_instance", instance: "", line: "INFO extension disabled scope=[root] extension=metrics"},
+		{name: "instance", instance: "eu", line: "INFO extension disabled scope=[root] extension=metrics/eu"},
 	}
 
 	for _, tt := range tests {
@@ -938,7 +941,7 @@ func TestExtend_Disabled(t *testing.T) {
 			t.Parallel()
 
 			var logs logLines
-			root := NewWithOpts(&InjectorOpts{Logf: logs.logf})
+			root := NewWithOpts(&InjectorOpts{Logger: logs.logger()})
 			ext := disabledExtension[kindMetrics]("metrics")
 			ext.instance = tt.instance
 
@@ -1367,7 +1370,7 @@ func TestExtensionContext_AfterExtend(t *testing.T) {
 			t.Parallel()
 
 			var logs logLines
-			root := NewWithOpts(&InjectorOpts{Logf: logs.logf, PropertySource: mapSource{"redis.addr": "a:1"}})
+			root := NewWithOpts(&InjectorOpts{Logger: logs.logger(), PropertySource: mapSource{"redis.addr": "a:1"}})
 			var stored *ExtensionContext
 			require.NoError(t, extendNoPanic(t, root, &testExtension{name: "redis", extend: func(x *ExtensionContext) error {
 				stored = x

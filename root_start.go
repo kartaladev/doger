@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
 )
@@ -139,8 +140,10 @@ func (s *RootScope) dispatchAfterStart(ctx context.Context, err error, first *ho
 		return
 	}
 
+	s.self.log(slog.LevelInfo, "container started")
 	s.runObserverHooks(ctx, "started", s.hooks.containerStarted.load(), first)
 	if s.markReady() {
+		s.self.log(slog.LevelInfo, "container ready")
 		s.startScheduling()
 	}
 	s.runObserverHooks(ctx, "ready", s.hooks.containerReady.load(), first)
@@ -178,13 +181,24 @@ func (s *RootScope) keepFirstPanic(first *hookPanic, p hookPanic) {
 
 // logHookPanic logs an observer hook panic that is not dispatched.
 func (s *RootScope) logHookPanic(p hookPanic) {
-	if p.subject == "scope" {
-		// scope points name their subject already: "scope-closing"
-		s.opts.Logf("doger: %s hook panicked: %v", p.point, p.value)
-		return
-	}
+	s.logRecoveredPanic(p.point, "", p.value)
+}
 
-	s.opts.Logf("doger: container %s hook panicked: %v", p.point, p.value)
+// logRecoveredPanic logs a recovered panic: an Error record with its point
+// and the type of its value, and the value itself only in a Debug record,
+// since it could hold a secret. service is "" when it concerns none.
+func (s *RootScope) logRecoveredPanic(point, service string, value any) {
+	var attrs []slog.Attr
+	if service != "" {
+		attrs = append(attrs, slog.String("service", service))
+	}
+	attrs = append(attrs, slog.String("point", point))
+	if s.self.logEnabled(slog.LevelError) {
+		s.self.log(slog.LevelError, "panic recovered", append(attrs, slog.String("panic_type", fmt.Sprintf("%T", value)))...)
+	}
+	if s.self.logEnabled(slog.LevelDebug) {
+		s.self.log(slog.LevelDebug, "panic value", append(attrs, slog.String("value", fmt.Sprint(value)))...)
+	}
 }
 
 // dispatchFirstPanic dispatches the first observer hook panic of an

@@ -65,6 +65,7 @@ Examples:
   | an extension declining with ErrExtensionDisabled              | extension disabled            | INFO  | extension=<its name>                        |
   | the container health changing from healthy to degraded        | container health changed      | WARN  | previous=healthy current=degraded           |
   | the container health changing from degraded to healthy        | container health changed      | INFO  | previous=degraded current=healthy           |
+  | a health check of "svc" returning errors.New("x")              | health check failed           | DEBUG | scope=[root] service=svc error=x            |
 ```
 
 #### Scenario: Records below the handler's level are dropped

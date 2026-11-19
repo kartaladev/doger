@@ -3,6 +3,7 @@ package doger
 import (
 	"cmp"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
 	"sort"
@@ -67,7 +68,7 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 
 	serviceScope.onServiceInvoke(name)
 
-	injector.RootScope().opts.Logf("doger: service %s invoked", name)
+	serviceScope.log(slog.LevelDebug, "service invoked", slog.String("service", name))
 
 	return instance, nil
 }
@@ -123,7 +124,7 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 
 	serviceScope.onServiceInvoke(name)
 
-	injector.RootScope().opts.Logf("doger: service %s invoked", name)
+	serviceScope.log(slog.LevelDebug, "service invoked", slog.String("service", name))
 
 	return instance, nil
 }
@@ -186,7 +187,7 @@ func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, re
 
 	scope.onServiceInvoke(realName)
 
-	injector.RootScope().opts.Logf("doger: service %s invoked", hookName)
+	scope.log(slog.LevelDebug, "service invoked", slog.String("service", hookName))
 
 	return instance, nil
 }

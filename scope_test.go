@@ -1400,15 +1400,12 @@ func TestScope_logs(t *testing.T) {
 	is := assert.New(t)
 
 	// Test logging functionality with custom log function
-	logMessages := []string{}
-	logf := func(format string, args ...any) {
-		message := fmt.Sprintf(format, args...)
-		logMessages = append(logMessages, message)
-	}
+	// records arrive from health check goroutines too
+	logs := &callRecorder{}
 
 	// Create injector with custom logging
 	injector := NewWithOpts(&InjectorOpts{
-		Logf: logf,
+		Logger: lineLogger(logs.record),
 	})
 
 	// Test logging during service registration
@@ -1440,22 +1437,22 @@ func TestScope_logs(t *testing.T) {
 	_ = injector.serviceShutdown(ctx, "shutdown-service")
 
 	// Verify that log messages were generated
-	is.NotEmpty(logMessages)
+	is.NotEmpty(logs.list())
 
 	// Check for specific log message patterns
 	hasHealthCheckLog := false
-	hasShutdownLog := false
-	for _, message := range logMessages {
+	hasInvocationLog := false
+	for _, message := range logs.list() {
 		if strings.Contains(message, "health check") {
 			hasHealthCheckLog = true
 		}
-		if strings.Contains(message, "shutdown") {
-			hasShutdownLog = true
+		if strings.Contains(message, "service invoked") {
+			hasInvocationLog = true
 		}
 	}
 
 	is.True(hasHealthCheckLog, "Should have health check log message")
-	is.True(hasShutdownLog, "Should have shutdown log message")
+	is.True(hasInvocationLog, "Should have invocation log message")
 
 	// Test logging without custom log function (should not panic)
 	injectorNoLog := New()
@@ -1465,7 +1462,7 @@ func TestScope_logs(t *testing.T) {
 
 	// Test logging with nil log function (should not panic)
 	injectorNilLog := NewWithOpts(&InjectorOpts{
-		Logf: nil,
+		Logger: nil,
 	})
 	injectorNilLog.serviceSet("nil-log-service", newServiceEager("nil-log-service", "nil-log-value"))
 	_, err = invokeByName[string](injectorNilLog, "nil-log-service")
@@ -1478,7 +1475,7 @@ func TestScope_logs(t *testing.T) {
 	is.NoError(err)
 
 	// Verify that child scope logging also works
-	is.NotEmpty(logMessages)
+	is.NotEmpty(logs.list())
 }
 
 type shutdownRecorder struct{ called *int32 }
@@ -2699,11 +2696,7 @@ func TestScopeShutdown_ExportingChildJoinAfterPanic(t *testing.T) {
 		is := assert.New(t)
 
 		root := NewWithOpts(&InjectorOpts{
-			Logf: func(format string, _ ...any) {
-				if strings.Contains(format, "hook panicked") {
-					panic("logf")
-				}
-			},
+			Logger:           panickingLogger(func(rec logRecord) bool { return rec.message == "panic recovered" }, "logf"),
 			HookScopeClosing: []func(context.Context, *Scope){func(context.Context, *Scope) { panic("closing") }},
 		})
 		tenant := root.Scope("tenant")

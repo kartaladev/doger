@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"log/slog"
 	"maps"
 	"os"
 	"os/signal"
@@ -15,8 +16,8 @@ import (
 // DefaultRootScopeName is the default name for the root scope.
 const DefaultRootScopeName = "[root]"
 
-// noOpLogf is a no-operation logging function used as a default when no logger is provided.
-var noOpLogf = func(format string, args ...any) {}
+// discardLogger is the logger of a container without InjectorOpts.Logger.
+var discardLogger = slog.New(slog.DiscardHandler)
 
 // New creates a new dependency injection container with default options.
 // This is the primary entry point for creating a new DI container.
@@ -57,9 +58,7 @@ func New(packages ...func(Injector)) *RootScope {
 // Example:
 //
 //	opts := &doger.InjectorOpts{
-//	    Logf: func(format string, args ...any) {
-//	        log.Printf(format, args...)
-//	    },
+//	    Logger:                 slog.Default(),
 //	    HealthCheckParallelism: 10,
 //	}
 //	injector := doger.NewWithOpts(opts)
@@ -85,8 +84,6 @@ func NewWithOpts(opts *InjectorOpts, packages ...func(Injector)) *RootScope {
 	if opts.HealthCheckParallelism > 0 {
 		root.healthSlots = make(chan struct{}, opts.HealthCheckParallelism)
 	}
-
-	root.opts.Logf("doger: injector created")
 
 	for _, pkg := range packages {
 		pkg(root)
@@ -232,7 +229,7 @@ func (s *RootScope) Shutdown() *ShutdownReport { return s.ShutdownWithContext(co
 //     whose only error is keyed by the root scope with an empty service name
 //     and wraps ctx.Err(). The first caller's shutdown keeps running.
 //   - If the first caller panics before producing a report (for example in
-//     a custom Logf), the panic propagates to it, and every other caller gets
+//     a custom Logger handler), the panic propagates to it, and every other caller gets
 //     a failed report containing "doger: root shutdown did not complete".
 //   - A nil ctx is treated as context.Background().
 //   - Services registered on the root after the first Shutdown are not shut
@@ -290,6 +287,7 @@ func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 
 	var first hookPanic
 	report := s.shutdownAsWinner(ctx, ticket, &first)
+	s.self.log(slog.LevelInfo, "container closed")
 
 	// pointClosed: closeDone is closed, so code here may call Shutdown().
 	runObserverHooksWith(s, "container", "closed", s.hooks.containerClosed.load(), &first, func(hook func(context.Context, *RootScope, *ShutdownReport)) {
@@ -318,6 +316,7 @@ func (s *RootScope) waitForClose(ctx context.Context, done <-chan struct{}) *Shu
 func (s *RootScope) shutdownAsWinner(ctx context.Context, ticket closeTicket, first *hookPanic) (report *ShutdownReport) {
 	defer func() { s.finishClose(report) }()
 
+	s.self.log(slog.LevelInfo, "container closing")
 	s.stopScheduling(ctx)
 
 	startErr := waitForStart(ctx, ticket)
@@ -865,8 +864,6 @@ func (s *RootScope) CloneWithOpts(opts *InjectorOpts) *RootScope {
 	// Read after copying: every copied wrapper got its index before it was
 	// stored, so later registrations in the clone come after all of them.
 	clone.nextRegIndex.Store(s.nextRegIndex.Load())
-
-	s.opts.Logf("doger: injector cloned")
 
 	return clone
 }

@@ -443,7 +443,7 @@ func TestContainerFailedHook_PanicDuringPipelinePanic(t *testing.T) {
 			panics := &callRecorder{}
 			opts := &InjectorOpts{
 				HookBeforeStart: []func(*Scope, string){func(*Scope, string) { panic("pipeline") }},
-				Logf:            func(format string, args ...any) { logs.record(fmt.Sprintf(format, args...)) },
+				Logger:          lineLogger(logs.record),
 			}
 			if tt.policy {
 				opts.HookContainerPanic = func(_ *RootScope, point string, recovered any) {
@@ -1305,7 +1305,7 @@ func TestContainerHooks_ObserverPanicOverride(t *testing.T) {
 			}
 			var calls []call
 			root := NewWithOpts(&InjectorOpts{
-				Logf: func(format string, args ...any) { logs.record(fmt.Sprintf(format, args...)) },
+				Logger: lineLogger(logs.record),
 				HookContainerPanic: func(_ *RootScope, hook string, recovered any) {
 					calls = append(calls, call{point: hook, value: recovered})
 				},

@@ -814,7 +814,7 @@ func TestHealthCheck_EndedContextStartsNoCheck(t *testing.T) {
 				is := assert.New(t)
 
 				log := &healthMonitorTestLog{}
-				i := NewWithOpts(&InjectorOpts{Logf: log.logf})
+				i := NewWithOpts(&InjectorOpts{Logger: log.logger()})
 				db := newHealthRunTestCtxAware()
 				ProvideNamedValue(i, "db", db)
 
@@ -830,7 +830,7 @@ func TestHealthCheck_EndedContextStartsNoCheck(t *testing.T) {
 				}
 
 				synctest.Wait() // a check started anyway has returned
-				is.Empty(log.containing("requested health check for service db"))
+				is.Empty(log.containing("health check requested", "service=db"))
 				close(db.release)
 			})
 		})

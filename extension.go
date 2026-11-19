@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"slices"
@@ -710,7 +711,7 @@ func attemptInstall(root *RootScope, req installRequest, x *ExtensionContext) (o
 // shutting the declined attempt down failed, an *ExtensionError wrapping it,
 // not the ErrExtensionDisabled cause, since a leak is not a clean decline.
 func recordDisabled(root *RootScope, req installRequest, rollbackErr error) error {
-	root.opts.Logf("doger: extension %s disabled", plainExtensionName(req.name, req.id.instance))
+	root.self.log(slog.LevelInfo, "extension disabled", slog.String("extension", plainExtensionName(req.name, req.id.instance)))
 	if rollbackErr != nil {
 		return &ExtensionError{Name: req.name, Instance: req.id.instance, Err: rollbackErr}
 	}

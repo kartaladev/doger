@@ -303,7 +303,7 @@ func TestPropertySource_DecisionRetried(t *testing.T) {
 func TestPropertySource_ProviderFails(t *testing.T) {
 	t.Setenv("DOGER_REDIS_ADDR", "from-env")
 	var logs logLines
-	root := NewWithOpts(&InjectorOpts{Logf: logs.logf})
+	root := NewWithOpts(&InjectorOpts{Logger: logs.logger()})
 	Provide(root, func(Injector) (PropertySource, error) { return nil, errors.New("vault sealed: token s3cret") })
 	var value string
 	found := true
@@ -369,7 +369,7 @@ func TestProperties_Secrecy(t *testing.T) {
 	t.Parallel()
 
 	var logs logLines
-	root := NewWithOpts(&InjectorOpts{Logf: logs.logf, PropertySource: mapSource{"redis.password": "s3cret"}})
+	root := NewWithOpts(&InjectorOpts{Logger: logs.logger(), PropertySource: mapSource{"redis.password": "s3cret"}})
 
 	err := Extend(root, &testExtension{name: "redis", extend: func(x *ExtensionContext) error {
 		if _, ok := x.Properties().Lookup("password"); !ok {

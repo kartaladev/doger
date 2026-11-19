@@ -53,7 +53,6 @@ func (s *Scope) shutdownWithExports(ctx context.Context, first *hookPanic, isChi
 	}
 
 	pass.shutdownServices(first)
-	s.logf("shut down services")
 
 	if isChild {
 		s.runScopeObserverHooks(ctx, "scope-closed", s.rootScope.hooks.scopeClosed.load(), first)

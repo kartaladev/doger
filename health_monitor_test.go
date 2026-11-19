@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,16 +90,18 @@ func (m *manualScheduler) stopCount(n int) int {
 // runRound runs the round of the first schedule with context.Background().
 func (m *manualScheduler) runRound() { m.round(0)(context.Background()) }
 
-// healthMonitorTestLog records the lines of a Logf.
+// healthMonitorTestLog records the records of a Logger, rendered as lines.
 type healthMonitorTestLog struct {
 	mu    sync.Mutex
 	lines []string
 }
 
-func (l *healthMonitorTestLog) logf(format string, args ...any) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+func (l *healthMonitorTestLog) logger() *slog.Logger {
+	return lineLogger(func(line string) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		l.lines = append(l.lines, line)
+	})
 }
 
 // containing returns the lines containing every one of parts.
@@ -248,7 +251,7 @@ func TestHealthScheduler_Failure(t *testing.T) {
 		logged    []string // parts of a Logf line
 	}{
 		{name: "error", scheduler: &manualScheduler{err: errors.New("bad cron")}, logged: []string{"health scheduler", "bad cron"}},
-		{name: "panic", scheduler: &manualScheduler{panicWith: "boom"}, logged: []string{"health scheduler", "boom"}},
+		{name: "panic", scheduler: &manualScheduler{panicWith: "boom"}, logged: []string{"panic value", "point=healthscheduler", "boom"}},
 		{name: "panic_hook", scheduler: &manualScheduler{panicWith: "boom"}, withHook: true},
 	}
 
@@ -260,7 +263,7 @@ func TestHealthScheduler_Failure(t *testing.T) {
 
 			log := &healthMonitorTestLog{}
 			recorder := &healthRunTestPanicRecorder{}
-			opts := &InjectorOpts{HealthScheduler: tt.scheduler, Logf: log.logf}
+			opts := &InjectorOpts{HealthScheduler: tt.scheduler, Logger: log.logger()}
 			if tt.withHook {
 				opts.HookContainerPanic = recorder.hook
 			}
@@ -286,7 +289,7 @@ func TestHealthScheduler_StopReturnedWithError(t *testing.T) {
 
 	log := &healthMonitorTestLog{}
 	scheduler := &manualScheduler{err: errors.New("partial"), stopWithErr: true}
-	i := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler, Logf: log.logf})
+	i := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler, Logger: log.logger()})
 
 	is.NoError(i.Start())
 	is.Equal(1, scheduler.stopCount(0), "calls of stop before Start returned")
@@ -592,7 +595,7 @@ func TestHealthScheduler_StopFailure(t *testing.T) {
 		logged    []string // parts of a Logf line
 	}{
 		{name: "error", scheduler: &manualScheduler{stopErr: errors.New("busy")}, logged: []string{"health scheduler", "busy"}},
-		{name: "panic", scheduler: &manualScheduler{stopPanic: "stop boom"}, logged: []string{"health scheduler", "stop boom"}},
+		{name: "panic", scheduler: &manualScheduler{stopPanic: "stop boom"}, logged: []string{"panic value", "point=healthscheduler", "stop boom"}},
 		{name: "panic_hook", scheduler: &manualScheduler{stopPanic: "stop boom"}, withHook: true},
 	}
 
@@ -604,7 +607,7 @@ func TestHealthScheduler_StopFailure(t *testing.T) {
 
 			log := &healthMonitorTestLog{}
 			recorder := &healthRunTestPanicRecorder{}
-			opts := &InjectorOpts{HealthScheduler: tt.scheduler, Logf: log.logf}
+			opts := &InjectorOpts{HealthScheduler: tt.scheduler, Logger: log.logger()}
 			if tt.withHook {
 				opts.HookContainerPanic = recorder.hook
 			}
@@ -1240,7 +1243,7 @@ func TestHealthHooks_NilSkipped(t *testing.T) {
 		recorder := &healthRunTestPanicRecorder{}
 		var calls atomic.Int32
 		i := NewWithOpts(&InjectorOpts{
-			Logf:               log.logf,
+			Logger:             log.logger(),
 			HookContainerPanic: recorder.hook,
 			HookServiceHealthChanged: []func(*Scope, string, ServiceHealth, ServiceHealth){
 				nil,
@@ -1257,7 +1260,7 @@ func TestHealthHooks_NilSkipped(t *testing.T) {
 
 		is.Equal(int32(1), calls.Load(), "calls of the hook that is not nil")
 		is.Empty(recorder.recorded(), "HookContainerPanic calls")
-		is.Empty(log.containing("health hook panicked"), "Logf lines")
+		is.Empty(log.containing("panic recovered"), "log records")
 		i.Shutdown()
 	})
 }
@@ -1329,7 +1332,7 @@ func TestHealthHooks_Panic(t *testing.T) {
 				scheduler := &manualScheduler{}
 				log := &healthMonitorTestLog{}
 				panics := &healthRunTestPanicRecorder{}
-				opts := &InjectorOpts{HealthScheduler: scheduler, Logf: log.logf}
+				opts := &InjectorOpts{HealthScheduler: scheduler, Logger: log.logger()}
 				if tt.withHook {
 					opts.HookContainerPanic = panics.hook
 				}

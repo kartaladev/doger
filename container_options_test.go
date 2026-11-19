@@ -3,6 +3,7 @@ package doger
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -92,8 +93,7 @@ func optsSnapshot(opts *InjectorOpts) map[string]any {
 func TestContainerOptions_CallerOptsUnchanged(t *testing.T) {
 	t.Parallel()
 
-	// The 10s HealthCheckTimeout default arrives in a later group; Logf is
-	// today's name of Logger.
+	// The 10s HealthCheckTimeout default arrives in a later group.
 	tests := []struct {
 		name      string
 		opts      func() *InjectorOpts
@@ -101,13 +101,13 @@ func TestContainerOptions_CallerOptsUnchanged(t *testing.T) {
 		effective func(t *testing.T, root *RootScope, opts *InjectorOpts)
 	}{
 		{
-			name:      "logf_nil",
-			opts:      func() *InjectorOpts { return &InjectorOpts{} },
+			name:      "logger_nil",
+			opts:      func() *InjectorOpts { return &InjectorOpts{Logger: nil} },
 			construct: func(opts *InjectorOpts) *RootScope { return NewWithOpts(opts) },
 			effective: func(t *testing.T, root *RootScope, _ *InjectorOpts) {
 				t.Helper()
-				require.NotNil(t, root.opts.Logf)
-				assert.NotPanics(t, func() { root.opts.Logf("discarded") })
+				require.NotNil(t, root.opts.Logger)
+				assert.False(t, root.opts.Logger.Enabled(t.Context(), slog.LevelError), "a discard logger")
 			},
 		},
 		{

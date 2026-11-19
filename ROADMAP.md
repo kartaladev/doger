@@ -75,7 +75,7 @@ These came out of the same comparison. Each needs an exploration before it is pl
   - Prior art: `fx.Decorate` ([source](https://github.com/uber-go/fx/blob/v1.24.0/decorate.go)) and `dig.Container.Decorate` ([source](https://github.com/uber-go/dig/blob/v1.19.0/decorate.go)).
 - **Structured lifecycle events.**
   - A typed event stream: built, started, health changed, shut down, each with its duration.
-  - It would complement `Logf` and the hook lists, and make slog or OpenTelemetry integration a single adapter.
+  - It would complement `Logger` and the hook lists, and make slog or OpenTelemetry integration a single adapter.
   - Prior art: fx's `fxevent` package with its slog logger ([source](https://github.com/uber-go/fx/tree/v1.24.0/fxevent)).
 - **Graph export.**
   - DOT or Mermaid output of the dependency graph, next to the existing explain output and HTTP UI.

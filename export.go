@@ -3,6 +3,7 @@ package doger
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"reflect"
 
 	"github.com/kartaladev/doger/stacktrace"
@@ -107,7 +108,7 @@ func ExportNamed[T any](from *Scope, name string, opts ...ExportOption) error {
 	}
 
 	root.hooks.onAfterRegistration(owner, published)
-	root.opts.Logf("doger: service %s exported from scope %s", published, from.name)
+	from.log(slog.LevelDebug, "service exported", slog.String("service", published))
 
 	return nil
 }

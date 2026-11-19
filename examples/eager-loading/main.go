@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/kartaladev/doger"
@@ -10,9 +12,7 @@ import (
 func main() {
 	// Create injector with detailed logging for demonstration
 	injector := doger.NewWithOpts(&doger.InjectorOpts{
-		Logf: func(format string, args ...any) {
-			fmt.Printf("[DI] "+format+"\n", args...)
-		},
+		Logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 
 	fmt.Println("=== Eager Loading Example ===")
