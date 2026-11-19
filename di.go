@@ -51,6 +51,10 @@ func NameOf[T any]() string {
 // and Override* functions panic with an error matching [ErrShutdown]: a
 // container cannot be reused after Shutdown.
 //
+// The provider runs on the goroutine that first invokes the service, once;
+// see [Invoke] for concurrent invocations and the cycle errors a provider
+// may get from them.
+//
 // Play: https://go.dev/play/p/4JutUJ5Rqau
 //
 // Example:
@@ -472,6 +476,17 @@ func override[T any, A any](i Injector, name string, valueOrProvider A, serviceC
 // Invoke* functions return an error matching [ErrShutdown]. A service is
 // never built again after its shutdown: an invocation that looked it up just
 // before gets ErrShutdown too.
+//
+// Concurrency: a lazy service is built once, however many goroutines invoke
+// it; the others wait for that build and share its outcome, its error
+// included. Resolution never deadlocks inside the container: a cycle met by
+// concurrent first invocations, or a provider resolving its own service
+// again through a captured injector, returns an error matching
+// [ErrCircularDependency] instead of blocking, and a later invocation builds
+// again. Two cases are not detected: a transient provider re-entering itself
+// through a captured injector recurses until Go reports a stack overflow,
+// and a provider that waits for a goroutine it spawned, which resolves the
+// provider's own service, blocks.
 //
 // Play: https://go.dev/play/p/4JutUJ5Rqau
 //

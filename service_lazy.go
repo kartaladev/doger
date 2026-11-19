@@ -30,6 +30,10 @@ type serviceLazy[T any] struct {
 	// terminal is set once the service was shut down: it is never built
 	// again, so a caller that looked it up before gets ErrShutdown
 	terminal bool
+	// state holds the build in flight (D1): the provider runs without s.mu,
+	// and other callers wait for the build instead of a lock, so a cycle is
+	// reported instead of deadlocking
+	state buildState
 	// published holds the instance once built, nil otherwise; health
 	// checks read it without s.mu, which a build holds for the whole
 	// provider call.
@@ -100,23 +104,78 @@ func (s *serviceLazy[T]) getInstance(i Injector) (T, error) {
 // instanceOrBuild returns the instance, building it first if needed, and
 // whether this call built it.
 func (s *serviceLazy[T]) instanceOrBuild(i Injector) (instance T, built bool, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.terminal {
-		return empty[T](), false, shutDownServiceError(s.name)
-	}
-	if !s.built {
-		if err := s.build(i); err != nil {
-			return empty[T](), false, err
+	for {
+		s.mu.Lock()
+		switch {
+		case s.terminal:
+			s.mu.Unlock()
+			return empty[T](), false, shutDownServiceError(s.name)
+		case s.built:
+			instance := s.instance
+			s.mu.Unlock()
+			return instance, false, nil
 		}
-		built = true
-	}
 
-	return s.instance, built, nil
+		run, inFlight := s.state.claimLocked()
+		s.mu.Unlock()
+		if inFlight {
+			// a waiter gets the builder's failure; on success it reads the
+			// built instance on the next turn
+			if err := waitForBuild(i, s.name, run); err != nil {
+				return empty[T](), false, err
+			}
+			continue
+		}
+
+		instance, err := s.runBuild(i, run)
+		return instance, err == nil, err
+	}
 }
 
-func (s *serviceLazy[T]) build(i Injector) (err error) {
+// runBuild builds the service as run, without s.mu, and publishes the
+// outcome to run's waiters, also when the provider exits its goroutine with
+// runtime.Goexit or a hook panics.
+func (s *serviceLazy[T]) runBuild(i Injector, run *buildRun) (instance T, err error) {
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		if r := recover(); r != nil {
+			s.finishBuild(run, empty[T](), 0, libErrorf("%w: %v", ErrProviderPanic, r))
+			panic(r)
+		}
+		// runtime.Goexit: the waiters are released, the caller never returns
+		s.finishBuild(run, empty[T](), 0, wrapBuildError(i, s.name, libErrorMatching(ErrProviderPanic, "provider called runtime.Goexit")))
+	}()
+
+	instance, elapsed, err := s.build(i)
+	finished = true
+	s.finishBuild(run, instance, elapsed, err)
+
+	return instance, err
+}
+
+// finishBuild records the outcome of run: a successful build publishes the
+// instance, a failed one leaves the service buildable again. Waiters are
+// then released with err.
+func (s *serviceLazy[T]) finishBuild(run *buildRun, instance T, elapsed time.Duration, err error) {
+	s.mu.Lock()
+	if err == nil {
+		s.instance = instance
+		s.built = true
+		s.buildTime.Store(int64(elapsed)) // written before the instance is published
+		s.published.Store(&instance)
+	}
+	s.state.endLocked(run, err)
+	s.mu.Unlock()
+
+	run.release()
+}
+
+// build calls the provider after the declared dependencies, and returns the
+// instance and the time the build took on the container clock.
+func (s *serviceLazy[T]) build(i Injector) (instance T, elapsed time.Duration, err error) {
 	// the clock of the injector's root scope, or the real clock when there
 	// is no injector
 	clock := RealClock()
@@ -126,20 +185,15 @@ func (s *serviceLazy[T]) build(i Injector) (err error) {
 	start := clock.Now()
 
 	if err := resolveDeclaredDependencies(i, s.opts); err != nil {
-		return wrapBuildError(i, s.name, err)
+		return empty[T](), 0, wrapBuildError(i, s.name, err)
 	}
 
-	instance, err := handleProviderPanic(s.provider, i)
+	instance, err = handleProviderPanic(s.provider, i)
 	if err != nil {
-		return wrapBuildError(i, s.name, err)
+		return empty[T](), 0, wrapBuildError(i, s.name, err)
 	}
 
-	s.instance = instance
-	s.built = true
-	s.buildTime.Store(int64(clock.Since(start)))
-	s.published.Store(&instance)
-
-	return nil
+	return instance, clock.Since(start), nil
 }
 
 // onAfterBuild runs the after-build hooks for an instance a wrapper built,
@@ -255,6 +309,12 @@ func (s *serviceLazy[T]) isShutdowner() bool {
 
 func (s *serviceLazy[T]) shutdown(ctx context.Context) error {
 	s.mu.Lock()
+	// a build in flight completes first, as when the build held s.mu
+	for run := s.state.inFlight(); run != nil; run = s.state.inFlight() {
+		s.mu.Unlock()
+		<-run.done
+		s.mu.Lock()
+	}
 
 	defer func() {
 		// whatever the outcome, reset `build` flag and instance, for good

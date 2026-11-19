@@ -26,9 +26,11 @@ type serviceEager[T any] struct {
 	providerFrame stacktrace.Frame
 	invocationFrames
 
-	// declared dependencies, resolved on the first successful invocation
+	// declared dependencies, resolved on the first successful invocation;
+	// depsMu is never held while they resolve (D1)
 	depsMu       sync.Mutex
 	depsResolved bool
+	depsState    buildState
 
 	built    atomic.Bool // the after-build hook ran
 	terminal atomic.Bool // shut down: invocations get ErrShutdown
@@ -100,17 +102,65 @@ func (s *serviceEager[T]) resolveDependsOn(i Injector) error {
 		return nil
 	}
 
-	s.depsMu.Lock()
-	defer s.depsMu.Unlock()
-
-	if !s.depsResolved {
-		if err := resolveDeclaredDependencies(i, s.opts); err != nil {
-			return wrapBuildError(i, s.name, err)
+	for {
+		s.depsMu.Lock()
+		if s.depsResolved {
+			s.depsMu.Unlock()
+			return nil
 		}
+		run, inFlight := s.depsState.claimLocked()
+		s.depsMu.Unlock()
+
+		if inFlight {
+			if err := waitForBuild(i, s.name, run); err != nil {
+				return err
+			}
+			continue
+		}
+
+		return s.runDependsOn(i, run)
+	}
+}
+
+// runDependsOn resolves the declared dependencies as run, then records the
+// outcome and releases run's waiters, also when a hook panics or a provider
+// exits its goroutine with runtime.Goexit.
+func (s *serviceEager[T]) runDependsOn(i Injector, run *buildRun) (err error) {
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		r := recover()
+		cause := libErrorMatching(ErrProviderPanic, "provider called runtime.Goexit")
+		if r != nil {
+			cause = libErrorf("%w: %v", ErrProviderPanic, r)
+		}
+		s.endDependsOn(run, wrapBuildError(i, s.name, cause))
+		if r != nil {
+			panic(r)
+		}
+	}()
+
+	if err = resolveDeclaredDependencies(i, s.opts); err != nil {
+		err = wrapBuildError(i, s.name, err)
+	}
+	finished = true
+	s.endDependsOn(run, err)
+
+	return err
+}
+
+// endDependsOn records the outcome of resolving the declared dependencies.
+func (s *serviceEager[T]) endDependsOn(run *buildRun, err error) {
+	s.depsMu.Lock()
+	if err == nil {
 		s.depsResolved = true
 	}
+	s.depsState.endLocked(run, err)
+	s.depsMu.Unlock()
 
-	return nil
+	run.release()
 }
 
 func (s *serviceEager[T]) isHealthchecker() bool {

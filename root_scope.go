@@ -119,6 +119,10 @@ type RootScope struct {
 	// container without extensions holds none.
 	ext atomic.Pointer[extensionRegistry]
 
+	// waits is the wait-for registry of the builds in flight (D1); nil
+	// until the first wait for a build.
+	waits atomic.Pointer[buildWaits]
+
 	kindsMu sync.Mutex
 	kinds   []kindEntry // kind handlers, in order of first Handle; copied before written, as it may be shared
 
@@ -316,6 +320,16 @@ func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 	s.dispatchShutdownPanics(first, panics)
 
 	return report
+}
+
+// buildWaits returns the wait-for registry of the container's builds.
+func (s *RootScope) buildWaits() *buildWaits {
+	if waits := s.waits.Load(); waits != nil {
+		return waits
+	}
+	s.waits.CompareAndSwap(nil, &buildWaits{})
+
+	return s.waits.Load()
 }
 
 // rootShutdownKey is the context key marking the context a root shutdown

@@ -128,7 +128,7 @@ func lazyTestServiceOf[T any](s *serviceLazy[T]) lazyTestService {
 	return lazyTestService{
 		serviceWrapperAny: s,
 		getInstance:       func(i Injector) (any, error) { return s.getInstance(i) },
-		build:             s.build,
+		build:             func(i Injector) error { _, _, err := s.instanceOrBuild(i); return err },
 		built:             func() bool { return s.built },
 		buildTime:         func() time.Duration { return time.Duration(s.buildTime.Load()) },
 		instance:          func() any { return s.instance },
@@ -529,7 +529,7 @@ func TestServiceLazy_build(t *testing.T) {
 		service3 := newServiceLazy("baz", provider3)
 		is.False(service3.built)
 		is.Empty(service3.buildTime.Load())
-		_ = service3.build(i)
+		_, _, _ = service3.instanceOrBuild(i)
 		is.False(service3.built)
 		is.Empty(service3.buildTime.Load())
 	})
