@@ -36,6 +36,9 @@ Each entry gives the change and its migration.
 | `dogerchi.Use(*chi.Mux, …)` | `dogerchi.Use(chi.Router, …)` | Source-compatible; the parameter is wider. |
 | `RootScope.HealthCheck()` unbounded | Bounded by 10s by default | `HealthCheckTimeout: -1` for unbounded. |
 | Starting, resolving, registering or creating a scope on a container after shutdown | `ErrShutdown`: `Invoke*`, `InvokeAll*`, collection reads, `Alias*` and `Export*` return it; `Provide*`, `Override*` and `Scope()` panic with it, also from Closing hooks. A container cannot be reused after Shutdown | Build a new container. |
+| `ShutdownWithContext` waited for every service, whatever its context | Returns once its context ends: services still shutting down are reported with the context's error and keep running in the background, and a service reached after the context ended is not shut down | Give the context the time services need, or `context.Background()` to wait for them all. |
+| A panicking service `Shutdown` method or shutdown hook crashed the process | Recovered and reported with an error matching `ErrShutdownPanic`; the other services still shut down, and the first panic reaches `HookContainerPanic` | None; read the report. |
+| `ShutdownReport` marshalled to JSON field by field, with a map of errors | `MarshalJSON` gives `succeed`, `shutdownTime`, `services` and `errors` arrays ordered by scope, then service | Update JSON consumers of the report. |
 | An error panic value from a provider returned as is | Wrapped: matches `ErrProviderPanic` and the original | Keep using `errors.Is`/`errors.As`; don't compare with `==`. |
 | Web UI page functions and adapter `Use` | Gain a variadic `...dogerhttp.Option` | Source-compatible; no change needed. |
 | `ServiceDescription` JSON keys `ScopeID`, `ScopeName`, `Service` | `scopeId`, `scopeName`, `service`, wherever a `ServiceDescription` is marshalled (`ListProvidedServices`/`ListInvokedServices` results, `HealthReport` entries); the Explain output types have their own keys and are unchanged | Update JSON consumers of those values. |
@@ -44,6 +47,22 @@ Each entry gives the change and its migration.
 | Typed-nil injector, root or scope | Treated as nil: `ErrNilInjector` | Pass a real container. |
 | std web UI answered any method | GET and HEAD only; other methods get a 4xx | None for browsers. |
 | chi/std wrote `err.Error()` on a render failure | Generic 500 body on every adapter | None. |
+
+### Added
+
+- `ShutdownReport.Err()` returns nil on success and otherwise an error
+  matching every service error with `errors.Is`/`errors.As`;
+  `ShutdownReport.Unwrap()` returns one `*ServiceError` per failed service.
+  `Error()` still returns `""` on success: check `Err()`.
+- New `InjectorOpts` fields: `Logger`, `MaxInvocationFrames`, `Clock`,
+  `HookAfterBuild`, `HookBeforeStart`/`HookAfterStart`, the container and
+  scope lifecycle hooks, `HookContainerPanic`, the health-change hooks,
+  `HealthCheckSingleTimeout`, `HealthReportCacheTTL`, `HealthScheduler`,
+  `EnableStarterAutoDetection`, `StartParallelism`,
+  `EnableRunnerAutoDetection` and `PropertySource`; each works unset. See
+  the migration guide for their defaults.
+- `docs/docs/migrating/migrating-from-samber-do.md` covers every change
+  from `samber/do` v2, with code that compiles (`docs_snippets_test.go`).
 
 ### Changed
 
