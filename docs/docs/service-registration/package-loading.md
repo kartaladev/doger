@@ -68,8 +68,6 @@ The services can be assembled into a package, and then, exported all at once.
   </TabItem>
 </Tabs>
 
-**Play: https://go.dev/play/p/kmf8aOVyj96**
-
 The traditional vocab can be translated for package registration:
 
 - `Provide[T](Injector, Provider[T])` -> `Lazy(Provider[T])`
@@ -190,8 +188,6 @@ This requires each service to be exposed through an interface (see [Interface bi
 
   </TabItem>
 </Tabs>
-
-**Play: https://go.dev/play/p/s-ZWLUGiMaT**
 
 :::tip
 

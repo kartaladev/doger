@@ -32,8 +32,6 @@ func NewMyService(i doger.Injector) (*MyService, error) {
 }
 ```
 
-**Play: https://go.dev/play/p/4JutUJ5Rqau**
-
 ## Inject service into DI container {#inject-service-into-di-container}
 
 A service can be injected in many ways. Here is the full list of lazy loading service injections.
@@ -50,8 +48,6 @@ func OverrideNamed[T any](i doger.Injector, name string, provider doger.Provider
 It is highly recommended to use anonymous service invocation to let the framework handle naming.
 
 :::
-
-**Play: https://go.dev/play/p/9JuTQhLGIlh**
 
 ```go
 i := doger.New()

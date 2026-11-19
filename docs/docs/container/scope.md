@@ -107,8 +107,6 @@ svc := doger.MustInvokeNamed[*Passenger](passengersModule, "passenger-2")
 svc := doger.MustInvokeNamed[*Passenger](passengersModule, "passenger-3")
 ```
 
-**Play: https://go.dev/play/p/vwLEbyo0APp**
-
 ## Scope export {#scope-export}
 
 A child scope hides its services from its parent: lookup only walks up the tree. `doger.Export` publishes selected services of a child scope to its parent, and keeps every other service private.

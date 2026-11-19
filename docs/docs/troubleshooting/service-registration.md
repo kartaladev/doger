@@ -35,8 +35,6 @@ When using implicit naming, the `doger` framework infers the service name from t
 
 For debugging purposes, you might want to print the service name.
 
-**Play: https://go.dev/play/p/g549GqBbj-n**
-
 ```go
 i := doger.New()
 
@@ -56,8 +54,6 @@ Output:
 ## Provided services {#provided-services}
 
 For debugging purposes, the list of services provided to the container can be printed:
-
-**Play: https://go.dev/play/p/e_oxd7b-q9h**
 
 ```go
 i := doger.New()
@@ -83,8 +79,6 @@ Output:
 ## Invoked services {#invoked-services}
 
 For debugging purposes, the list of invoked services can be printed:
-
-**Play: https://go.dev/play/p/pJcJGOF5zeK**
 
 ```go
 i := doger.New()

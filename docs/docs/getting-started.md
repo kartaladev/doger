@@ -168,8 +168,6 @@ graph LR
   </TabItem>
 </Tabs>
 
-**Play: https://go.dev/play/p/cp5wNpo-5wn**
-
 ### Register services using package declaration {#register-services-using-package-declaration}
 
 The services can be assembled into a package, and then, imported all at once into a new container.
@@ -221,5 +219,3 @@ The services can be assembled into a package, and then, imported all at once int
 
   </TabItem>
 </Tabs>
-
-**Play: https://go.dev/play/p/kmf8aOVyj96**

@@ -81,8 +81,6 @@ ctx := context.WithTimeout(10 * time.Second)
 i.HealthCheckWithContext(ctx)
 ```
 
-**Play: https://go.dev/play/p/ILV7UpAJDtc**
-
 ## Health check options {#health-check-options}
 
 The root scope can be created with health check parameters, for controlling parallelism or timeouts.

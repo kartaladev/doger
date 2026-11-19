@@ -19,8 +19,6 @@ doger.ExplainNamedService(doger.Injector, string) (doger.ExplainServiceOutput, b
 
 ### Print tree {#print-tree}
 
-**Play: https://go.dev/play/p/GTcGyPFC8IB**
-
 ```go
 debug, found := doger.ExplainNamedService(scope, "SERVICE-E")
 if found {
@@ -84,8 +82,6 @@ graph TD
 ```
 
 ### Print dependencies or dependents {#print-dependencies-or-dependents}
-
-**Play: https://go.dev/play/p/GTcGyPFC8IB**
 
 ```go
 description, found := doger.ExplainNamedService(scope, "SERVICE-E")

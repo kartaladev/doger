@@ -157,5 +157,3 @@ if !report.Succeed {
 	log.Println("shutdown error:", report.Error())
 }
 ```
-
-**Play: https://go.dev/play/p/nkiBBYow2d5**

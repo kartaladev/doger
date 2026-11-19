@@ -51,8 +51,6 @@ func main() {
 }
 ```
 
-**Play: https://go.dev/play/p/9JuTQhLGIlh**
-
 ## Auto-magically load a service {#auto-magically-load-a-service}
 
 You can also use the `doger.InvokeStruct` function to auto-magically provide a service with its dependencies. The fields can be either exported or not.
@@ -81,8 +79,6 @@ doger.Provide[*MyService](injector, func (i doger.Injector) (*MyService, error) 
 // or
 doger.Provide[*MyService](i, doger.InvokeStruct[MyService])
 ```
-
-**Play: https://go.dev/play/p/Rqa4RCjThoI**
 
 ### Collection fields {#collection-fields}
 

@@ -53,8 +53,6 @@ doger.ProvideTransient(i, NewMyService)
 doger.ProvideNamedTransient(i, "my.really.cool.service", NewMyService)
 ```
 
-**Play: https://go.dev/play/p/j69I52whJr2**
-
 ## Error handling {#error-handling}
 
 On invocation, panics are caught by the framework and returned as an error.
