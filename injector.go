@@ -417,45 +417,39 @@ type InjectorOpts struct {
 	PropertySource PropertySource
 }
 
-func (o *InjectorOpts) copy() *InjectorOpts {
-	return &InjectorOpts{
-		HookBeforeRegistration:     append([]func(*Scope, string){}, o.HookBeforeRegistration...),
-		HookAfterRegistration:      append([]func(*Scope, string){}, o.HookAfterRegistration...),
-		HookBeforeInvocation:       append([]func(*Scope, string){}, o.HookBeforeInvocation...),
-		HookAfterInvocation:        append([]func(*Scope, string, error){}, o.HookAfterInvocation...),
-		HookAfterBuild:             append([]func(*Scope, string, any){}, o.HookAfterBuild...),
-		HookBeforeShutdown:         append([]func(*Scope, string){}, o.HookBeforeShutdown...),
-		HookAfterShutdown:          append([]func(*Scope, string, error){}, o.HookAfterShutdown...),
-		HookBeforeStart:            append([]func(*Scope, string){}, o.HookBeforeStart...),
-		HookAfterStart:             append([]func(*Scope, string, error){}, o.HookAfterStart...),
-		HookContainerStarting:      append([]func(context.Context, *RootScope) error{}, o.HookContainerStarting...),
-		HookContainerStarted:       append([]func(context.Context, *RootScope){}, o.HookContainerStarted...),
-		HookContainerReady:         append([]func(context.Context, *RootScope){}, o.HookContainerReady...),
-		HookContainerFailed:        append([]func(context.Context, *RootScope, error){}, o.HookContainerFailed...),
-		HookContainerClosing:       append([]func(context.Context, *RootScope){}, o.HookContainerClosing...),
-		HookContainerClosed:        append([]func(context.Context, *RootScope, *ShutdownReport){}, o.HookContainerClosed...),
-		HookContainerPanic:         o.HookContainerPanic,
-		HookScopeStarting:          append([]func(context.Context, *Scope) error{}, o.HookScopeStarting...),
-		HookScopeStarted:           append([]func(context.Context, *Scope){}, o.HookScopeStarted...),
-		HookScopeClosing:           append([]func(context.Context, *Scope){}, o.HookScopeClosing...),
-		HookScopeClosed:            append([]func(context.Context, *Scope){}, o.HookScopeClosed...),
-		Logf:                       o.Logf,
-		HealthCheckParallelism:     o.HealthCheckParallelism,
-		HealthCheckGlobalTimeout:   o.HealthCheckGlobalTimeout,
-		HealthCheckTimeout:         o.HealthCheckTimeout,
-		HealthCheckSingleTimeout:   o.HealthCheckSingleTimeout,
-		HealthReportCacheTTL:       o.HealthReportCacheTTL,
-		HealthScheduler:            o.HealthScheduler,
-		HookServiceHealthChanged:   append([]func(*Scope, string, ServiceHealth, ServiceHealth){}, o.HookServiceHealthChanged...),
-		HookContainerHealthChanged: append([]func(*RootScope, HealthState, HealthState){}, o.HookContainerHealthChanged...),
-		StructTagKey:               o.StructTagKey,
-		Clock:                      o.Clock,
+// clone returns a copy of o that shares no hook slice with it, so neither
+// side's appends reach the other.
+func (o *InjectorOpts) clone() *InjectorOpts {
+	c := *o
+	c.HookBeforeRegistration = cloneHooks(o.HookBeforeRegistration)
+	c.HookAfterRegistration = cloneHooks(o.HookAfterRegistration)
+	c.HookBeforeInvocation = cloneHooks(o.HookBeforeInvocation)
+	c.HookAfterInvocation = cloneHooks(o.HookAfterInvocation)
+	c.HookAfterBuild = cloneHooks(o.HookAfterBuild)
+	c.HookBeforeShutdown = cloneHooks(o.HookBeforeShutdown)
+	c.HookAfterShutdown = cloneHooks(o.HookAfterShutdown)
+	c.HookBeforeStart = cloneHooks(o.HookBeforeStart)
+	c.HookAfterStart = cloneHooks(o.HookAfterStart)
+	c.HookContainerStarting = cloneHooks(o.HookContainerStarting)
+	c.HookContainerStarted = cloneHooks(o.HookContainerStarted)
+	c.HookContainerReady = cloneHooks(o.HookContainerReady)
+	c.HookContainerFailed = cloneHooks(o.HookContainerFailed)
+	c.HookContainerClosing = cloneHooks(o.HookContainerClosing)
+	c.HookContainerClosed = cloneHooks(o.HookContainerClosed)
+	c.HookScopeStarting = cloneHooks(o.HookScopeStarting)
+	c.HookScopeStarted = cloneHooks(o.HookScopeStarted)
+	c.HookScopeClosing = cloneHooks(o.HookScopeClosing)
+	c.HookScopeClosed = cloneHooks(o.HookScopeClosed)
+	c.HookServiceHealthChanged = cloneHooks(o.HookServiceHealthChanged)
+	c.HookContainerHealthChanged = cloneHooks(o.HookContainerHealthChanged)
 
-		DisableStarterAutoDetection: o.DisableStarterAutoDetection,
-		StartParallelism:            o.StartParallelism,
-		EnableRunnerAutoDetection:   o.EnableRunnerAutoDetection,
-		PropertySource:              o.PropertySource,
-	}
+	return &c
+}
+
+// cloneHooks returns a new slice holding the hooks of s, empty but not nil
+// when s is.
+func cloneHooks[T any](s []T) []T {
+	return append([]T{}, s...)
 }
 
 // initDefaults replaces unset options with their defaults: a no-op Logf,

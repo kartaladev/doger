@@ -47,6 +47,11 @@ func New(packages ...func(Injector)) *RootScope {
 //
 // Returns a new RootScope instance with the specified configuration.
 //
+// The container keeps its own copy of opts, hook slices included: the
+// caller's value is never written, so one value can configure several
+// independent containers, and hooks added to one container reach no other.
+// A nil opts behaves like &InjectorOpts{}.
+//
 // Play: https://go.dev/play/p/SmhFpWZGKUw
 //
 // Example:
@@ -63,6 +68,7 @@ func NewWithOpts(opts *InjectorOpts, packages ...func(Injector)) *RootScope {
 		opts = &InjectorOpts{}
 	}
 
+	opts = opts.clone() // never write the caller's value
 	opts.initDefaults()
 
 	root := &RootScope{
@@ -715,11 +721,12 @@ func (s *RootScope) AddScopeClosedHook(hook func(context.Context, *Scope)) {
 //
 // Play: https://go.dev/play/p/DqIlXhZ8c4t
 func (s *RootScope) Clone() *RootScope {
-	return s.CloneWithOpts(s.opts.copy())
+	return s.CloneWithOpts(s.opts.clone())
 }
 
 // CloneWithOpts clones injector with provided services but not with invoked instances, with options.
-// The clone uses only opts (hooks included), and keeps the source's kind
+// The clone uses only a copy of opts (hooks included; the caller's value is
+// never written), and keeps the source's kind
 // handlers, in order. Handling a kind on the clone replaces its handler on
 // the clone only. Installed extensions are copied with their private
 // scopes, and disabled ones as disabled: Extend of such an identity on the

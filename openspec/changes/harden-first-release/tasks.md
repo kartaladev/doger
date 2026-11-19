@@ -32,9 +32,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 5. Constructors never write the caller's options
 
-- [ ] 5.1 RED: add `TestContainerOptions_CallerOptsUnchanged`, `TestContainerOptions_NilOpts` and `TestContainerOptions_SharedOptsIndependent` (scenarios "The caller's options are unchanged after construction", "A nil options pointer", "Containers built from one options value are independent"); verify `go test -race -run 'TestContainerOptions_(CallerOptsUnchanged|NilOpts|SharedOptsIndependent)' .` fails with hook `only-a` running for `b`
-- [ ] 5.2 GREEN: in `NewWithOpts`/`CloneWithOpts` shallow-copy `*opts`, clone every hook slice and apply defaults to the copy; verify the 5.1 tests pass and `make test` is green
-- [ ] 5.3 REFACTOR: Extract Function `(*InjectorOpts).clone()` replacing the existing `copy()`; verify `make test` and `make lint` pass
+- [x] 5.1 RED: add `TestContainerOptions_CallerOptsUnchanged`, `TestContainerOptions_NilOpts` and `TestContainerOptions_SharedOptsIndependent` (scenarios "The caller's options are unchanged after construction", "A nil options pointer", "Containers built from one options value are independent"); verify `go test -race -run 'TestContainerOptions_(CallerOptsUnchanged|NilOpts|SharedOptsIndependent)' .` fails with hook `only-a` running for `b`
+- [x] 5.2 GREEN: in `NewWithOpts`/`CloneWithOpts` shallow-copy `*opts`, clone every hook slice and apply defaults to the copy; verify the 5.1 tests pass and `make test` is green
+- [x] 5.3 REFACTOR: Extract Function `(*InjectorOpts).clone()` replacing the existing `copy()`; verify `make test` and `make lint` pass
 
 ## 6. Hook registration is safe at any time
 
