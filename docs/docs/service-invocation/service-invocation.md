@@ -99,7 +99,7 @@ bus, err := doger.InvokeStruct[Bus](injector)
 
 - An empty collection is an empty, non-nil slice or map.
 - Inside a provider, the service that provider builds is not a member.
-- `*` on any other field kind fails with `` DI: tag `*` requires a slice or map[string] field, got `S.F` ``.
+- `*` on any other field kind fails with `` doger: tag `*` requires a slice or map[string] field, got `S.F` ``.
 - A member failure fails `InvokeStruct` with the collection error.
 - It works with a custom tag key too (`inject:"*"`).
 

@@ -74,6 +74,8 @@ go get github.com/kartaladev/doger@latest
 
 This library is v0 and follows SemVer: until v1.0.0, a minor release may contain breaking changes.
 
+Go 1.27 is the minimum: every module declares `go 1.27`, because the code sets the promoted fields of embedded structs directly in struct literals (`collectionCandidate{name: ...}` with `name` from an embedded `placement`), which the compiler accepts only from Go 1.27. It also relies on `sync.WaitGroup.Go` and, in its tests, `testing/synctest` (both Go 1.25). An older toolchain fails with "requires go1.27 or later"; with `GOTOOLCHAIN=auto` (the default), Go downloads 1.27 for you.
+
 Besides the Go std lib, this library depends only on [`samber/go-type-to-string`](https://github.com/samber/go-type-to-string). The opt-in `clock/clockwork` and `scheduler/gocron` modules add [`jonboulle/clockwork`](https://github.com/jonboulle/clockwork).
 
 ### 🩺 Scheduled health checks

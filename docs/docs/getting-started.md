@@ -15,6 +15,8 @@ Discover **doger in less than 5 minutes**.
 
 Compatible with [Go](https://go.dev/doc/install/) 1.27 or later.
 
+Go 1.27 is the minimum: every module declares `go 1.27`, because the code sets the promoted fields of embedded structs directly in struct literals (`collectionCandidate{name: ...}` with `name` from an embedded `placement`), which the compiler accepts only from Go 1.27. It also relies on `sync.WaitGroup.Go` and, in its tests, `testing/synctest` (both Go 1.25). An older toolchain fails with "requires go1.27 or later"; with `GOTOOLCHAIN=auto` (the default), Go downloads 1.27 for you.
+
 Besides the Go std lib, this library depends only on [`samber/go-type-to-string`](https://github.com/samber/go-type-to-string). The opt-in `clock/clockwork` and `scheduler/gocron` modules add [`jonboulle/clockwork`](https://github.com/jonboulle/clockwork).
 
 Import package:
@@ -26,8 +28,6 @@ go get -u github.com/kartaladev/doger
 ## Create a DI container {#create-a-di-container}
 
 The simplest way to start is to use the default options:
-
-**Play: https://go.dev/play/p/g549GqBbj-n**
 
 ```go
 import "github.com/kartaladev/doger"

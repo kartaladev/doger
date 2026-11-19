@@ -393,7 +393,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 - [ ] 55.3 Rewrite `docs/docs/migrating/migrating-from-samber-do.md` from the D9/D10 tables (every break with before/after code, the variadic `...ProvideOption` changes, all new `InjectorOpts` fields, the Go 1.27 floor and its reason); verify the before/after snippets compile in a `docs_snippets_test.go`
 - [ ] 55.4 README: add a 20-line quickstart, fix the gocron snippet's unused `err`, remove upstream templates and "See also" links, and update the feature list (start lifecycle, extensions, properties, kinds, collections, health reports); verify the snippets compile in `readme_snippets_test.go`
 - [ ] 55.5 Add the missing `Example*` tests with `// Output:` (`Eager`, `Lazy`, `Transient`, `Package`, `Bind`, `ExportNamed`, `MustExport`, `ExtendIntoRoot`, `ExtendScopeName`, `WithHealthTags`, `AsOptionalHealth`, `IgnoreContainerPhase`, `ExtensionProperties`, `HealthScheduler`, `EnableRunnerAutoDetection`, `PropertySource`, `StructTagKey`); verify `go test -run '^Example' .` passes
-- [ ] 55.6 Document the Go 1.27 floor and why it exists in README and `docs/docs/getting-started`; verify `grep -n '1.27' README.md` shows it
+- [x] 55.6 Document the Go 1.27 floor and why it exists in README and `docs/docs/getting-started`; verify `grep -n '1.27' README.md` shows it
 
 ## 56. Integration checks
 
