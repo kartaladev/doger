@@ -800,7 +800,7 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 			// When a field is not exported, we override it.
 			// See https://stackoverflow.com/questions/42664837/how-to-access-unexported-struct-fields/43918797#43918797
 			// bearer:disable go_gosec_unsafe_unsafe
-			//nolint:gosec // G103: struct injection sets unexported tagged fields; reflect only allows it through an address that fieldValue owns (CanAddr was checked above)
+			//nolint:gosec // G103: struct injection sets unexported tagged fields: it bypasses reflect's export check via the field's own address (CanAddr was checked above)
 			fieldValue = reflect.NewAt(fieldValue.Type(), unsafe.Pointer(fieldValue.UnsafeAddr())).Elem()
 		}
 

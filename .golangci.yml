@@ -78,11 +78,6 @@ linters:
 
   exclusions:
     generated: lax
-    # make lint-all lints each example module from its own directory, where
-    # this path never matches: it only spares the examples when the root
-    # module is linted from the repository root
-    paths:
-      - examples$
     rules:
       # providers and hooks take parameters fixed by their function types,
       # which many implementations do not use
@@ -125,4 +120,3 @@ formatters:
     paths:
       - third_party$
       - builtin$
-      - examples$

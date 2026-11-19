@@ -396,7 +396,7 @@ func (b *healthRunTestBlocking) HealthCheck() error {
 }
 
 // Not parallel: goleak checks the goroutines this test leaves.
-func TestHealthCheck_NoPileUp(t *testing.T) { //nolint:paralleltest // goleak checks the goroutines this test leaves
+func TestHealthCheck_NoPileUp(t *testing.T) {
 	tests := []struct {
 		name  string
 		skip  string
@@ -1640,7 +1640,7 @@ func TestHealthCheck_QueuedBehindAbandonedKeepsBound(t *testing.T) {
 }
 
 // Not parallel: goleak checks the goroutines a new container leaves.
-func TestNew_NoHealthGoroutine(t *testing.T) { //nolint:paralleltest // goleak checks the goroutines a new container leaves
+func TestNew_NoHealthGoroutine(t *testing.T) {
 	tests := []struct {
 		name      string
 		n         uint
