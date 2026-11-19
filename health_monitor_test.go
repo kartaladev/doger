@@ -665,9 +665,7 @@ func TestHealthScheduler_StopFailure(t *testing.T) {
 		errText   string     // its error attribute
 		value     string     // the panic value, only in a Debug record
 	}{
-		// WARN as pinned by container-logging ("health scheduler stop
-		// failed"); health-check-scheduling says Error: flagged conflict
-		{name: "error", scheduler: &manualScheduler{stopErr: errors.New("busy")}, level: slog.LevelWarn, errText: "busy"},
+		{name: "error", scheduler: &manualScheduler{stopErr: errors.New("busy")}, level: slog.LevelError, errText: "busy"},
 		{name: "panic", scheduler: &manualScheduler{stopPanic: "stop boom"}, level: slog.LevelError, value: "stop boom"},
 		{name: "panic_hook", scheduler: &manualScheduler{stopPanic: "stop boom"}, withHook: true},
 	}
@@ -696,6 +694,26 @@ func TestHealthScheduler_StopFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHealthScheduler_StopLogPanicPropagates checks that a panic raised by
+// the consumer's slog handler while logging a stop error is not taken for a
+// panic of the scheduler: it propagates from Shutdown, as any Logger panic.
+func TestHealthScheduler_StopLogPanicPropagates(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	recorder := &healthRunTestPanicRecorder{}
+	i := NewWithOpts(&InjectorOpts{
+		HealthScheduler:    &manualScheduler{stopErr: errors.New("busy")},
+		HookContainerPanic: recorder.hook,
+		Logger:             panickingLogger(func(rec logRecord) bool { return rec.message == "health scheduler stop failed" }, "log-boom"),
+	})
+	require.NoError(t, i.Start())
+
+	is.PanicsWithValue("log-boom", func() { i.Shutdown() })
+	is.Empty(recorder.recorded(), "HookContainerPanic calls")
 }
 
 // healthMonitorTestCtxCheck is a HealthcheckerWithContext that blocks until
@@ -1303,6 +1321,40 @@ func TestHealthHooks_ContainerAfterService(t *testing.T) {
 		assert.Equal(t, []string{"service:db", "container:healthy"}, got)
 		i.Shutdown()
 	})
+}
+
+// TestHealthHooks_AddRacesClone is a race guard: adding health hooks while
+// the root is cloned must not race, and every clone keeps a consistent list.
+func TestHealthHooks_AddRacesClone(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 10*time.Second)
+
+	root := New()
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for range 200 {
+			root.AddServiceHealthChangedHook(func(*Scope, string, ServiceHealth, ServiceHealth) {})
+			root.AddContainerHealthChangedHook(func(*RootScope, HealthState, HealthState) {})
+		}
+	})
+	wg.Go(func() {
+		for range 200 {
+			root.Clone()
+		}
+	})
+	wg.Wait()
+}
+
+func TestHealthHooks_AddNilIgnored(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	root := New()
+	root.AddServiceHealthChangedHook(nil)
+	root.AddContainerHealthChangedHook(nil)
+
+	is.Empty(root.hooks.serviceHealthChanged.load())
+	is.Empty(root.hooks.containerHealthChanged.load())
 }
 
 func TestHealthHooks_NilSkipped(t *testing.T) {

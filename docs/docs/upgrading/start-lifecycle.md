@@ -106,7 +106,7 @@ Migration: none, unless a Failed hook assumed that `Start` had returned. Recover
 
 ## A start that Shutdown interrupts always reports it {#abort-cause}
 
-When root `Shutdown` begins during `Start`, `Refresh` or `Scope.Start`, the error they return matches `ErrStartAfterShutdown`. When the caller had already cancelled the context passed to `StartWithContext`, `RefreshWithContext` or `Scope.StartWithContext`, the error used to match only `context.Canceled`; it now matches both, and its message adds the Shutdown cause once, for example `DI: start aborted: context canceled (start aborted: DI: container is shut down)`.
+When root `Shutdown` begins during `Start`, `Refresh` or `Scope.Start`, the error they return matches `ErrStartAfterShutdown`. When the caller had already cancelled the context passed to `StartWithContext`, `RefreshWithContext` or `Scope.StartWithContext`, the error used to match only `context.Canceled`; it now matches both, and its message adds the Shutdown cause once, for example `doger: start aborted: context canceled (start aborted: doger: container is shut down)`.
 
 The `HookContainerFailed` hooks receive an error that matches `ErrStartAfterShutdown` in these cases too, including when a per-service hook panicked after `Shutdown` began; that error used to wrap only the panic value.
 

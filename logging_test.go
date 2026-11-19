@@ -179,6 +179,44 @@ func (s *loggingScheduler) ScheduleHealthRounds(_ Clock, _ func(context.Context)
 	return func(context.Context) error { return s.stopErr }, nil
 }
 
+// captureDefaultLogs replaces the default slog logger and the output of the
+// log package until the end of t, and returns what they receive.
+func captureDefaultLogs(t *testing.T) (*logRecorder, *bytes.Buffer) {
+	t.Helper()
+
+	// slog.SetDefault redirects the log package and clears its flags, and
+	// restoring the default slog logger does not undo that: restore both
+	writer, flags, prefix, previous := log.Writer(), log.Flags(), log.Prefix(), slog.Default()
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		log.SetOutput(writer)
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+	})
+
+	defaults := newLogRecorder(slog.LevelDebug)
+	slog.SetDefault(defaults.logger())
+	var output bytes.Buffer
+	log.SetOutput(&output)
+
+	return defaults, &output
+}
+
+// TestLogging_CaptureDefaultLogsRestores checks that captureDefaultLogs
+// leaves the log and slog defaults as it found them, so later tests in the
+// binary can log.
+func TestLogging_CaptureDefaultLogsRestores(t *testing.T) { //nolint:paralleltest // replaces the default slog logger and log output
+	is := assert.New(t)
+	writer, flags, prefix, logger := log.Writer(), log.Flags(), log.Prefix(), slog.Default()
+
+	t.Run("capture", func(t *testing.T) { captureDefaultLogs(t) })
+
+	is.Equal(writer, log.Writer(), "log output")
+	is.Equal(flags, log.Flags(), "log flags")
+	is.Equal(prefix, log.Prefix(), "log prefix")
+	is.Same(logger, slog.Default(), "default slog logger")
+}
+
 func TestLogging_OffByDefault(t *testing.T) { //nolint:paralleltest // replaces the default slog logger and log output
 	tests := []struct {
 		name string
@@ -191,13 +229,7 @@ func TestLogging_OffByDefault(t *testing.T) { //nolint:paralleltest // replaces 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			defaults := newLogRecorder(slog.LevelDebug)
-			previous := slog.Default()
-			slog.SetDefault(defaults.logger())
-			t.Cleanup(func() { slog.SetDefault(previous) })
-			var output bytes.Buffer
-			log.SetOutput(&output)
-			t.Cleanup(func() { log.SetOutput(nil) })
+			defaults, output := captureDefaultLogs(t)
 
 			root := tt.root()
 			provideLoggingSvc(root, &loggingSvc{healthErr: errors.New("down"), shutdownErr: errors.New("stuck")})
@@ -342,7 +374,7 @@ func TestLogging_Events(t *testing.T) {
 				require.NoError(t, root.Start())
 				_ = root.Shutdown()
 			},
-			message: "health scheduler stop failed", level: slog.LevelWarn,
+			message: "health scheduler stop failed", level: slog.LevelError,
 			attrs: map[string]string{"error": "busy"},
 		},
 		{

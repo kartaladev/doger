@@ -55,7 +55,7 @@ If no signal is passed to `injector.ShutdownOnSignals(...)`, both `syscall.SIGTE
 - The first caller does the work. Concurrent and later callers wait for it and return a **copy** of its report, so they see the same errors. Changing a copy affects no other caller.
 - A caller that arrives after the shutdown has completed always gets the first report, even when its own context has already ended.
 - A caller still waiting when its own context ends returns a failed report with a single error, keyed by the root scope with an empty service name, wrapping `ctx.Err()`. The first caller's shutdown keeps running.
-- If the first caller panics before producing a report (for example in a custom `Logger` handler), the panic reaches that caller and every other caller gets a failed report containing `DI: root shutdown did not complete`.
+- If the first caller panics before producing a report (for example in a custom `Logger` handler), the panic reaches that caller and every other caller gets a failed report containing `doger: root shutdown did not complete`.
 - A `nil` context is treated as `context.Background()`.
 - Services registered on the root after the first shutdown are not shut down by a later root `Shutdown()`.
 

@@ -60,7 +60,7 @@ Examples:
   | root.Shutdown() completing                                    | container closed              | INFO  | scope=[root]                                |
   | root.Shutdown() where "svc" Shutdown returns errors.New("x")  | service shutdown failed       | ERROR | scope=[root] service=svc error=x            |
   | a HealthScheduler whose ScheduleHealthRounds returns errors.New("no cron") | health scheduler failed | ERROR | error=no cron                     |
-  | a health scheduler stop function returning errors.New("busy") | health scheduler stop failed  | WARN  | error=busy                                  |
+  | a health scheduler stop function returning errors.New("busy") | health scheduler stop failed  | ERROR | error=busy                                  |
   | a PropertySource whose read fails with a *fs.PathError        | property source unavailable   | WARN  | source_type=*fs.PathError                   |
   | an extension declining with ErrExtensionDisabled              | extension disabled            | INFO  | extension=<its name>                        |
   | the container health changing from healthy to degraded        | container health changed      | WARN  | previous=healthy current=degraded           |
@@ -146,7 +146,7 @@ Examples:
 <!-- cases: N/A 3 zero values: a nil panic value is recovered as *runtime.PanicNilError and logged by type like any value -->
 <!-- cases: N/A 4 boundaries: no numeric input -->
 <!-- cases: 5 errors: health check error text -->
-<!-- cases: N/A 6 duplicate: panics after the first of one operation follow the same rule (WARN for later panics per design D8, value at Debug only) -->
+<!-- cases: N/A 6 duplicate: panics after the first of one operation follow the same rule (ERROR for later panics too, per design D8, value at Debug only) -->
 <!-- cases: 7 lifecycle: shutdown panic; start and hook panics follow the same rule -->
 <!-- cases: N/A 8 concurrency: covered by "Concurrent logging" -->
 <!-- cases: 9 panics: the subject -->

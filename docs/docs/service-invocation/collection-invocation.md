@@ -132,7 +132,7 @@ doger.ProvideValue(injector, vendor.NewRateLimiter(), doger.WithOrder(-1))
 
 ### Order() panics {#order-panics}
 
-If `Order()` panics, `InvokeAll` returns no collection and an error naming the member, such as ``DI: Order() of collection member `audit` panicked: boom``, wrapping the panic value when it is an error. `MustInvokeAll` panics with that error.
+If `Order()` panics, `InvokeAll` returns no collection and an error naming the member, such as ``doger: Order() of collection member `audit` panicked: boom``, wrapping the panic value when it is an error. `MustInvokeAll` panics with that error.
 
 ### Maps are unordered {#maps-are-unordered}
 
