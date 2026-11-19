@@ -324,11 +324,11 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 47. Web UI mounts behind middleware and under concurrency
 
-- [ ] 47.1 RED: add `TestWebUI_BehindAuthMiddleware` per adapter, `TestWebUI_ChiMuxStillAccepted` and `TestWebUI_ConcurrentViewing` (std, chi) (scenarios "Authentication middleware guards the UI", "Existing chi mounts keep compiling", "Viewers race with container churn"); verify the chi `r.With(auth)` rows fail to compile on `*chi.Mux`
-- [ ] 47.2 GREEN: change `dogerchi.Use` to take `chi.Router`; verify the 47.1 tests pass under `-race` with goleak
-- [ ] 47.3 REFACTOR: none needed — only the parameter type changes; verify the per-module tests and lint pass
-- [ ] 47.4 Docs: fix `docs/docs/troubleshooting/web-ui.md` (drop the "health-check status" claim; add headers, bounded trees, `WithFullSourcePaths` and per-adapter middleware examples) and remove `doger.Options{EnableWebUI, WebUIPort}` from `docs/static/llms.txt`; verify `grep -c EnableWebUI docs/static/llms.txt` prints 0 and `cd docs && npm run build` passes
-- [ ] 47.5 Docs: `examples/web-application` mounts the UI with `r.With(basicAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD")))` on a `127.0.0.1` listener, and each adapter gets an `Example` with a middleware mount; verify `go build ./...` in `examples/web-application` and `go test -run Example ./...` in each adapter module pass
+- [x] 47.1 RED: add `TestWebUI_BehindAuthMiddleware` per adapter, `TestWebUI_ChiMuxStillAccepted` and `TestWebUI_ConcurrentViewing` (std, chi) (scenarios "Authentication middleware guards the UI", "Existing chi mounts keep compiling", "Viewers race with container churn"); verify the chi `r.With(auth)` rows fail to compile on `*chi.Mux`
+- [x] 47.2 GREEN: change `dogerchi.Use` to take `chi.Router`; verify the 47.1 tests pass under `-race` with goleak
+- [x] 47.3 REFACTOR: none needed — only the parameter type changes; verify the per-module tests and lint pass
+- [x] 47.4 Docs: fix `docs/docs/troubleshooting/web-ui.md` (drop the "health-check status" claim; add headers, bounded trees, `WithFullSourcePaths` and per-adapter middleware examples) and remove `doger.Options{EnableWebUI, WebUIPort}` from `docs/static/llms.txt`; verify `grep -c EnableWebUI docs/static/llms.txt` prints 0 and `cd docs && npm run build` passes
+- [x] 47.5 Docs: `examples/web-application` mounts the UI with `r.With(basicAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD")))` on a `127.0.0.1` listener, and each adapter gets an `Example` with a middleware mount; verify `go build ./...` in `examples/web-application` and `go test -run Example ./...` in each adapter module pass
 
 ## 48. Make targets for every workspace module
 

@@ -14,6 +14,7 @@ import (
 	"github.com/kartaladev/doger/http/internal/webuitest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 // mount serves the UI for root at webuitest.BasePath.
@@ -193,4 +194,22 @@ func TestWebUI_RedirectsStayUnderBasePath(t *testing.T) {
 			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 		})
 	}
+}
+
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
+
+func TestWebUI_BehindAuthMiddleware(t *testing.T) {
+	t.Parallel()
+	webuitest.BehindAuthMiddleware(t, func(t *testing.T, root doger.Injector) webuitest.Doer {
+		t.Helper()
+
+		return webuitest.HandlerDoer(webuitest.BasicAuth(Use(webuitest.BasePath, root)))
+	})
+}
+
+func TestWebUI_ConcurrentViewing(t *testing.T) {
+	t.Parallel()
+	webuitest.ConcurrentViewing(t, mount)
 }

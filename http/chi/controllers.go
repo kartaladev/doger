@@ -14,7 +14,9 @@ import (
 // your DI container through a web browser using the Chi framework.
 //
 // Parameters:
-//   - router: The Chi router to add the debugging routes to
+//   - router: Any chi.Router to add the debugging routes to: a *chi.Mux, the
+//     router r.With(auth) returns, or the one r.Group passes, so the UI can
+//     sit behind your middleware
 //   - basePath: The base URL path for the debugging interface
 //   - injector: The injector instance to debug
 //
@@ -50,11 +52,11 @@ import (
 //
 // opts configure the pages, such as [dogerhttp.WithFullSourcePaths] and
 // [dogerhttp.WithErrorHandler].
-func Use(router *chi.Mux, basePath string, injector doger.Injector, opts ...dogerhttp.Option) {
+func Use(router chi.Router, basePath string, injector doger.Injector, opts ...dogerhttp.Option) {
 	use(router, basePath, injector, defaultRenderer, opts)
 }
 
-func use(router *chi.Mux, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
+func use(router chi.Router, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
 	base := webui.Base(basePath)
 
 	router.Get(webui.HomeRoute(base), func(w http.ResponseWriter, r *http.Request) {

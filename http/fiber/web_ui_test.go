@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/basicauth"
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
 	"github.com/kartaladev/doger/http/internal/webuitest"
@@ -178,6 +179,19 @@ func TestWebUI_RootBasePath(t *testing.T) {
 
 		app := fiber.New()
 		Use(app, "/", root)
+
+		return appDoer(t, app)
+	})
+}
+
+func TestWebUI_BehindAuthMiddleware(t *testing.T) {
+	t.Parallel()
+	webuitest.BehindAuthMiddleware(t, func(t *testing.T, root doger.Injector) webuitest.Doer {
+		t.Helper()
+
+		app := fiber.New()
+		auth := basicauth.New(basicauth.Config{Users: map[string]string{webuitest.AuthUser: webuitest.AuthPassword}})
+		Use(app.Group(webuitest.BasePath, auth), webuitest.BasePath, root)
 
 		return appDoer(t, app)
 	})
