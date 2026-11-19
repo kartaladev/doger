@@ -17,13 +17,6 @@ This library implements the Dependency Injection design pattern. It may replace 
 
 ![image](https://github.com/user-attachments/assets/81b91fa7-cdb4-4094-94ba-a0179abc6bf7)
 
-**See also:**
-
-- [samber/ro](https://github.com/samber/ro): Reactive Programming for Go: declarative and composable API for event-driven applications
-- [samber/lo](https://github.com/samber/lo): A Lodash-style Go library based on Go 1.18+ Generics
-- [samber/mo](https://github.com/samber/mo): Monads based on Go 1.18+ Generics (Option, Result, Either...)
-- [samber/cc-skills-golang](https://github.com/samber/cc-skills-golang): AI Agent Skills for Golang
-
 ----
 
 **Why this name?**
@@ -36,27 +29,33 @@ Upstream's short name `do` is the sum of `DI` and `Go`. `doger` keeps it as its 
   - Register by type
   - Register by name
   - Register multiple services from a package at once
+  - Replaceable defaults (`AsDefault()`) and declared dependencies (`DependsOn`)
 - **🪃 Service invocation**
   - Eager loading
   - Lazy loading
   - Transient loading
-  - Tag-based invocation
+  - Tag-based invocation (struct injection)
+  - Collections: every service of a type (`InvokeAll`, `InvokeAllMap`, `do:"*"`)
   - Circular dependency detection
 - **🧙‍♂️ Service aliasing**
   - Implicit (provide struct, invoke interface)
   - Explicit (provide struct, bind interface, invoke interface)
 - **🔁 Service lifecycle**
-  - Health check, cached health reports, readiness and liveness gated by the container phase
+  - Start lifecycle: `Start()` builds and starts the services opted in with `AsStarter()` in dependency order, then `Refresh()` and `Scope.Start()` start the ones added later
+  - Component kinds (`NewKind`, the built-in `Runnable()`): typed handlers for opted-in services at Start
+  - Health reports: cached, tagged (readiness, liveness), optional checks, gated by the container phase
   - Optional scheduled health rounds (see [Scheduled health checks](#-scheduled-health-checks))
   - Graceful unload (shutdown)
   - Dependency-aware parallel shutdown
   - Lifecycle hooks
+- **🧩 Extensions**
+  - Reusable modules installed with `Extend`, in a private scope with exported services
+  - Properties: extensions read their configuration from a `PropertySource` (environment variables by default)
 - **📦 Scope (a.k.a module) tree**
   - Visibility control
   - Dependency grouping
 - **📤 Container**
   - Dependency graph resolution and visualization
-  - Default container
   - Container cloning
   - Service override
 - **🧪 Debugging & introspection**
@@ -70,6 +69,33 @@ Upstream's short name `do` is the sum of `DI` and `Go`. `doger` keeps it as its 
 
 ```sh
 go get github.com/kartaladev/doger@latest
+```
+
+### ⚡ Quickstart
+
+```go
+type DB struct{ dsn string }
+
+type Server struct{ db *DB }
+
+func (s *Server) Start(ctx context.Context) error {
+	fmt.Println("serving with", s.db.dsn)
+	return nil
+}
+
+func main() {
+	root := doger.New()
+	doger.ProvideValue(root, &DB{dsn: "postgres://localhost/app"})
+	doger.Provide(root, func(i doger.Injector) (*Server, error) {
+		db, err := doger.Invoke[*DB](i)
+		return &Server{db: db}, err
+	}, doger.AsStarter()) // started by root.Start, after what it invokes
+
+	if err := root.StartWithContext(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	_ = root.Shutdown() // shuts services down in reverse dependency order
+}
 ```
 
 This library is v0 and follows SemVer: until v1.0.0, a minor release may contain breaking changes.
@@ -86,6 +112,9 @@ go get github.com/kartaladev/doger/scheduler/gocron@latest
 
 ```go
 scheduler, err := dogergocron.New() // a round at once, then every 30s
+if err != nil {
+	return err
+}
 injector := doger.NewWithOpts(&doger.InjectorOpts{HealthScheduler: scheduler})
 ```
 
@@ -100,15 +129,6 @@ See its [README](./scheduler/gocron/README.md) for the overrides and caveats.
 - [GoDoc: https://pkg.go.dev/github.com/kartaladev/doger](https://pkg.go.dev/github.com/kartaladev/doger)
 - [Documentation](https://kartaladev.github.io/doger/docs/getting-started)
 - [Examples](https://github.com/kartaladev/doger/tree/main/examples)
-- [Project templates](https://kartaladev.github.io/doger/examples)
-
-## 🎬 Project boilerplate
-
-Upstream `samber/do` templates:
-
-- [do-template-api](https://github.com/samber/do-template-api)
-- [do-template-worker](https://github.com/samber/do-template-worker)
-- [do-template-cli](https://github.com/samber/do-template-cli)
 
 ## 🤝 Contributing
 
