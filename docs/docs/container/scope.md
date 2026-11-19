@@ -107,8 +107,6 @@ svc := doger.MustInvokeNamed[*Passenger](passengersModule, "passenger-2")
 svc := doger.MustInvokeNamed[*Passenger](passengersModule, "passenger-3")
 ```
 
-**Play: https://go.dev/play/p/vwLEbyo0APp**
-
 ## Per-request scopes {#per-request-scopes}
 
 A child scope can hold the services of one request, job or tenant session. Create it, use it, and shut it down when the work ends:

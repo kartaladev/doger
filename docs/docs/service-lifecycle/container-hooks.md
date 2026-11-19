@@ -209,7 +209,7 @@ Scope hooks run logic when a **child** scope starts or shuts down, for example p
 - Sibling scopes shut down in parallel, so their hooks may run concurrently.
 - The root's own scope never fires scope hooks: use container hooks for the root container. `Refresh` fires no scope hook for new child scopes; only an explicit `scope.Start()` does.
 - Starting and Started do not fire when the scope, or one of its ancestors, is shutting down when `scope.Start()` is called: it then starts nothing and returns nil. Started is also skipped when the shutdown begins after the Starting hooks ran and before the scope's services are collected. A shutdown that begins after they were collected waits for them to start, then runs Closing, which may then run during or before Started.
-- A veto returns an error wrapping the hook's error and naming the scope: ``doger: scope `tenant` start aborted: ...``. A panic reads ``doger: scope `tenant` start aborted: doger: scope starting hook panicked: <value>``, wrapping the value when it is an error.
+- A veto returns an error wrapping the hook's error and naming the scope: ``doger: scope `tenant` start aborted: ...``. A panic reads ``doger: scope `tenant` start aborted: scope starting hook panicked: <value>``, wrapping the value when it is an error.
 - A panic in a Started, Closing or Closed scope hook follows the [container panic policy](#panics): the operation completes, then the first panic goes to `HookContainerPanic` with the point `scope-started`, `scope-closing` or `scope-closed`, or is re-raised on the calling goroutine when `HookContainerPanic` is nil.
 
 ```go

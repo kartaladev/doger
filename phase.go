@@ -28,24 +28,39 @@ const (
 // String returns the lower-case phase name, or "ContainerPhase(n)" for an
 // unknown value.
 func (p ContainerPhase) String() string {
-	switch p {
-	case PhaseIdle:
-		return "idle"
-	case PhaseStarting:
-		return "starting"
-	case PhaseStarted:
-		return "started"
-	case PhaseReady:
-		return "ready"
-	case PhaseFailed:
-		return "failed"
-	case PhaseClosing:
-		return "closing"
-	case PhaseClosed:
-		return "closed"
-	default:
-		return fmt.Sprintf("ContainerPhase(%d)", int(p))
+	if name, ok := enumText(p, containerPhaseNames); ok {
+		return name
 	}
+
+	return fmt.Sprintf("ContainerPhase(%d)", int(p))
+}
+
+// containerPhaseNames are the names of the ContainerPhase constants, by
+// value.
+var containerPhaseNames = []string{"idle", "starting", "started", "ready", "failed", "closing", "closed"}
+
+// MarshalText encodes the phase as its String form, so JSON shows it by
+// name. A value outside the declared constants fails to marshal, and so
+// does a JSON encoding holding it: the library never reports one.
+func (p ContainerPhase) MarshalText() ([]byte, error) {
+	name, ok := enumText(p, containerPhaseNames)
+	if !ok {
+		return nil, libErrorf("invalid container phase %d", int(p))
+	}
+
+	return []byte(name), nil
+}
+
+// UnmarshalText decodes the String form of a phase. Any other text fails
+// and leaves p unchanged.
+func (p *ContainerPhase) UnmarshalText(text []byte) error {
+	value, ok := enumValue[ContainerPhase](text, containerPhaseNames)
+	if !ok {
+		return libErrorf("unknown container phase %q", text)
+	}
+	*p = value
+
+	return nil
 }
 
 // Phase returns the container's current phase. Once root Shutdown began,

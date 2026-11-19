@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -585,7 +586,7 @@ func TestHealthReport_MonitoredFirstCheck(t *testing.T) {
 		is.Equal(HealthHealthy, healthReportTestEntry(t, report, "db").State)
 	})
 
-	t.Run("in_flight_from_another_reader", func(t *testing.T) {
+	t.Run("in_flight_from_another_reader_released_5ms_later", func(t *testing.T) {
 		t.Parallel()
 		testWithTimeout(t, 5*time.Second)
 
@@ -601,19 +602,181 @@ func TestHealthReport_MonitoredFirstCheck(t *testing.T) {
 
 			first := make(chan HealthReport, 1)
 			go func() { first <- i.HealthReport() }()
-			require.Eventually(t, func() bool { return db.calls.Load() == 1 }, time.Second, time.Millisecond)
+			synctest.Wait()
+			require.Equal(t, int32(1), db.calls.Load(), "the other reader's check is in flight")
+
+			go func() {
+				time.Sleep(5 * time.Millisecond)
+				close(db.release)
+			}()
+			report := i.HealthReport()
+			is.True(report.Monitored)
+			is.Equal(HealthHealthy, healthReportTestEntry(t, report, "db").State)
+			is.Equal(int32(1), db.calls.Load(), "calls of the check")
+			<-first
+		})
+	})
+
+	t.Run("in_flight_from_another_reader_ctx_at_20ms", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			scheduler := &manualScheduler{}
+			i := NewWithOpts(&InjectorOpts{Clock: newFakeClockAt(healthReportTestEpoch), HealthScheduler: scheduler})
+			db := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "db", db)
+			require.NoError(t, i.Start())
+			defer i.Shutdown()
+
+			first := make(chan HealthReport, 1)
+			go func() { first <- i.HealthReport() }()
+			synctest.Wait()
+			require.Equal(t, int32(1), db.calls.Load(), "the other reader's check is in flight")
 
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
 			report := i.HealthReportWithContext(ctx)
 			is.True(report.Monitored)
 			entry := healthReportTestEntry(t, report, "db")
-			is.Equal(HealthUnknown, entry.State)
-			is.Equal(healthReportTestEpoch, entry.PendingSince)
+			is.Equal(HealthUnhealthy, entry.State)
+			is.ErrorIs(entry.Err, ErrHealthCheckTimeout)
+			is.ErrorIs(entry.Err, context.DeadlineExceeded)
+			is.Equal(int32(1), db.calls.Load(), "calls of the check")
 
 			close(db.release)
 			<-first
 		})
+	})
+}
+
+// healthReportTestEagerScheduler is a HealthScheduler whose
+// ScheduleHealthRounds starts one round on its own goroutine at once.
+type healthReportTestEagerScheduler struct {
+	done chan struct{} // closed once the round returned
+}
+
+func (e *healthReportTestEagerScheduler) ScheduleHealthRounds(_ Clock, round func(ctx context.Context)) (func(ctx context.Context) error, error) {
+	e.done = make(chan struct{})
+	go func() {
+		defer close(e.done)
+		round(context.Background())
+	}()
+
+	return func(context.Context) error { return nil }, nil
+}
+
+func TestHealthReport_ReadAfterReadyJoinsFirstRound(t *testing.T) {
+	t.Parallel()
+
+	errDown := errors.New("down")
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		result  error
+		release bool          // the check is released; otherwise the clock advances
+		advance time.Duration // fake clock advance when not released
+		timeOut bool          // the entry is the read's timeout
+	}{
+		{name: "default_released_nil", release: true},
+		{name: "default_released_down", result: errDown, release: true},
+		{name: "default_advance_10s", advance: 10 * time.Second, timeOut: true},
+		{name: "50ms_advance_50ms", timeout: 50 * time.Millisecond, advance: 50 * time.Millisecond, timeOut: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				fc := newFakeClock()
+				scheduler := &healthReportTestEagerScheduler{}
+				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckTimeout: tt.timeout, HealthScheduler: scheduler})
+				db := newHealthRunTestBlocking(tt.result)
+				ProvideNamedValue(i, "db", db)
+				require.NoError(t, i.Start())
+				synctest.Wait()
+				require.Equal(t, int32(1), db.calls.Load(), "the round's check is in flight")
+
+				reports := make(chan HealthReport, 1)
+				go func() { reports <- i.HealthReport() }()
+				synctest.Wait()
+				if tt.release {
+					close(db.release)
+				} else {
+					fc.Advance(tt.advance)
+				}
+				report := <-reports
+
+				is.True(report.Monitored)
+				entry := healthReportTestEntry(t, report, "db")
+				switch {
+				case tt.timeOut:
+					is.Equal(HealthUnhealthy, entry.State)
+					is.ErrorIs(entry.Err, ErrHealthCheckTimeout)
+					is.ErrorIs(entry.Err, context.DeadlineExceeded)
+				case tt.result != nil:
+					is.Equal(HealthUnhealthy, entry.State)
+					is.Same(tt.result, entry.Err)
+				default:
+					is.Equal(HealthHealthy, entry.State)
+				}
+				is.Equal(int32(1), db.calls.Load(), "calls of the check")
+
+				if !tt.release {
+					close(db.release)
+				}
+				<-scheduler.done
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthReport_ConcurrentFirstReadsShareRound(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	const readers = 50
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		scheduler := &manualScheduler{}
+		i := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler})
+		db := newHealthRunTestBlocking(nil)
+		ProvideNamedValue(i, "db", db)
+		require.NoError(t, i.Start())
+		defer i.Shutdown()
+
+		round := make(chan struct{})
+		go func() {
+			defer close(round)
+			scheduler.runRound()
+		}()
+		synctest.Wait()
+		require.Equal(t, int32(1), db.calls.Load(), "the round's check is in flight")
+
+		reports := make(chan HealthReport, readers)
+		for range readers {
+			go func() { reports <- i.HealthReport() }()
+		}
+		synctest.Wait()
+		close(db.release)
+
+		for range readers {
+			report := <-reports
+			is.True(report.Monitored)
+			is.Equal(HealthHealthy, healthReportTestEntry(t, report, "db").State)
+		}
+		is.Equal(int32(1), db.calls.Load(), "calls of the check")
+		<-round
 	})
 }
 
@@ -1638,7 +1801,7 @@ func TestHealthReport_MatchTags(t *testing.T) {
 		{name: "repeated", opts: []HealthReportOption{MatchHealthTags("cache"), MatchHealthTags(HealthTagLiveness)}, listed: []string{"cache", "proc"}, state: HealthHealthy},
 		{name: "no_tag", opts: []HealthReportOption{MatchHealthTags()}, listed: []string{"cache", "db", "proc"}, state: HealthUnhealthy},
 		{name: "unknown_tag", opts: []HealthReportOption{MatchHealthTags("unknown-tag")}, listed: []string{}, state: HealthHealthy},
-		{name: "zero_value", opts: []HealthReportOption{{}}, listed: []string{"cache", "db", "proc"}, state: HealthUnhealthy},
+		{name: "nil_option", opts: []HealthReportOption{nil}, listed: []string{"cache", "db", "proc"}, state: HealthUnhealthy},
 	}
 
 	for _, tt := range tests {
@@ -1662,6 +1825,43 @@ func TestHealthReport_MatchTags(t *testing.T) {
 			}
 			is.Equal(tt.listed, listed)
 			is.Equal(tt.state, report.State)
+		})
+	}
+}
+
+// healthReportTestLiveness is a consumer helper composing a report option.
+func healthReportTestLiveness() HealthReportOption { return MatchHealthTags(HealthTagLiveness) }
+
+func TestHealthReportOption_Compose(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		opts   []HealthReportOption
+		listed []string
+	}{
+		{name: "liveness", opts: []HealthReportOption{healthReportTestLiveness()}, listed: []string{"proc"}},
+		{name: "liveness_ignore_phase", opts: []HealthReportOption{healthReportTestLiveness(), IgnoreContainerPhase()}, listed: []string{"proc"}},
+		{name: "nil_then_liveness", opts: []HealthReportOption{nil, healthReportTestLiveness()}, listed: []string{"proc"}},
+		{name: "empty_slice", opts: []HealthReportOption{}, listed: []string{"db", "proc"}},
+		{name: "typed_nil", opts: []HealthReportOption{HealthReportOption(nil)}, listed: []string{"db", "proc"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			i := New()
+			ProvideNamedValue(i, "db", &healthReportTestSwitch{})
+			ProvideNamedValue(i, "proc", &healthReportTestSwitch{}, WithHealthTags(HealthTagLiveness))
+
+			report := i.HealthReport(tt.opts...)
+
+			listed := make([]string, 0, len(report.Services))
+			for _, entry := range report.Services {
+				listed = append(listed, entry.Service.Service)
+			}
+			assert.Equal(t, tt.listed, listed)
 		})
 	}
 }
@@ -2178,4 +2378,276 @@ func BenchmarkHealthReport_Monitored(b *testing.B) {
 			b.Fatalf("got %d entries", len(report.Services))
 		}
 	}
+}
+
+func TestHealthEnums_TextRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	type textEnum interface {
+		MarshalText() ([]byte, error)
+	}
+
+	tests := []struct {
+		name  string
+		value textEnum
+		text  string // "" when MarshalText fails
+	}{
+		{name: "HealthUnknown", value: HealthUnknown, text: "unknown"},
+		{name: "HealthHealthy", value: HealthHealthy, text: "healthy"},
+		{name: "HealthDegraded", value: HealthDegraded, text: "degraded"},
+		{name: "HealthUnhealthy", value: HealthUnhealthy, text: "unhealthy"},
+		{name: "HealthState_42", value: HealthState(42)},
+		{name: "PhaseIdle", value: PhaseIdle, text: "idle"},
+		{name: "PhaseStarting", value: PhaseStarting, text: "starting"},
+		{name: "PhaseStarted", value: PhaseStarted, text: "started"},
+		{name: "PhaseReady", value: PhaseReady, text: "ready"},
+		{name: "PhaseFailed", value: PhaseFailed, text: "failed"},
+		{name: "PhaseClosing", value: PhaseClosing, text: "closing"},
+		{name: "PhaseClosed", value: PhaseClosed, text: "closed"},
+		{name: "ContainerPhase_minus_1", value: ContainerPhase(-1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			text, err := tt.value.MarshalText()
+			if tt.text == "" {
+				is.Error(err)
+				is.Nil(text)
+				return
+			}
+			is.NoError(err)
+			is.Equal(tt.text, string(text))
+
+			switch value := tt.value.(type) {
+			case HealthState:
+				var decoded HealthState
+				is.NoError(decoded.UnmarshalText(text))
+				is.Equal(value, decoded)
+			case ContainerPhase:
+				var decoded ContainerPhase
+				is.NoError(decoded.UnmarshalText(text))
+				is.Equal(value, decoded)
+			}
+		})
+	}
+}
+
+func TestHealthEnums_UnmarshalTextRejectsUnknown(t *testing.T) {
+	t.Parallel()
+
+	for _, text := range []string{"", "Healthy", "bogus"} {
+		t.Run(fmt.Sprintf("%q", text), func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			state, phase := HealthHealthy, PhaseReady
+			is.Error(state.UnmarshalText([]byte(text)))
+			is.Error(phase.UnmarshalText([]byte(text)))
+			is.Equal(HealthHealthy, state)
+			is.Equal(PhaseReady, phase)
+		})
+	}
+}
+
+// healthReportTestAdvancing is a check that advances clock by 2s and
+// returns err.
+type healthReportTestAdvancing struct {
+	clock *fakeClock
+	err   error
+}
+
+func (c *healthReportTestAdvancing) HealthCheck() error {
+	c.clock.Advance(2 * time.Second)
+	return c.err
+}
+
+func TestHealthReport_MarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		result error
+		json   string // %s is the root scope ID
+	}{
+		{
+			name: "healthy",
+			json: `{"state":"healthy","phase":"idle","monitored":false,"checkedAt":"2026-01-01T00:00:02Z","services":[{"service":{"scopeId":"%s","scopeName":"[root]","service":"db"},"tags":["readiness"],"optional":false,"state":"healthy","checkedAt":"2026-01-01T00:00:02Z","duration":"2s"}]}`,
+		},
+		{
+			name:   "down",
+			result: errors.New("down"),
+			json:   `{"state":"unhealthy","phase":"idle","monitored":false,"checkedAt":"2026-01-01T00:00:02Z","services":[{"service":{"scopeId":"%s","scopeName":"[root]","service":"db"},"tags":["readiness"],"optional":false,"state":"unhealthy","error":"down","checkedAt":"2026-01-01T00:00:02Z","duration":"2s"}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fc := newFakeClockAt(healthReportTestEpoch)
+			i := NewWithOpts(&InjectorOpts{Clock: fc})
+			ProvideNamedValue(i, "db", &healthReportTestAdvancing{clock: fc, err: tt.result}, WithHealthTags(HealthTagReadiness))
+			r := i.HealthReport()
+
+			data, err := json.Marshal(r)
+			require.NoError(t, err)
+			assert.JSONEq(t, fmt.Sprintf(tt.json, i.ID()), string(data))
+		})
+	}
+}
+
+// healthReportTestFirstEntry returns the first service object of a decoded
+// report, failing the test when there is none.
+func healthReportTestFirstEntry(t *testing.T, decoded map[string]any) map[string]any {
+	t.Helper()
+
+	services, ok := decoded["services"].([]any)
+	require.True(t, ok, "services: %v", decoded["services"])
+	require.NotEmpty(t, services)
+	entry, ok := services[0].(map[string]any)
+	require.True(t, ok, "services[0]: %v", services[0])
+
+	return entry
+}
+
+func TestHealthReport_MarshalJSONOutOfRange(t *testing.T) {
+	t.Parallel()
+
+	db := ServiceDescription{ScopeID: "root-id", ScopeName: "[root]", Service: "db"}
+
+	tests := []struct {
+		name   string
+		report HealthReport
+	}{
+		{name: "state_42", report: HealthReport{State: HealthState(42)}},
+		{name: "phase_minus_1", report: HealthReport{Phase: ContainerPhase(-1)}},
+		{name: "entry_state_9", report: HealthReport{Services: []ServiceHealth{{Service: db, State: HealthState(9)}}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := json.Marshal(tt.report)
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestHealthReport_MarshalJSONEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	db := ServiceDescription{ScopeID: "root-id", ScopeName: "[root]", Service: "db"}
+
+	tests := []struct {
+		name   string
+		report HealthReport
+		check  func(t *testing.T, decoded map[string]any)
+	}{
+		{
+			name:   "zero_report",
+			report: HealthReport{},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				assert.Equal(t, map[string]any{"state": "unknown", "phase": "idle", "monitored": false, "services": []any{}}, decoded)
+			},
+		},
+		{
+			name:   "in_flight_entry",
+			report: HealthReport{Services: []ServiceHealth{{Service: db, PendingSince: healthReportTestEpoch}}},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				entry := healthReportTestFirstEntry(t, decoded)
+				assert.Equal(t, "unknown", entry["state"])
+				assert.Equal(t, "2026-01-01T00:00:00Z", entry["pendingSince"])
+				assert.Equal(t, "0s", entry["duration"])
+				assert.NotContains(t, entry, "error")
+				assert.NotContains(t, entry, "checkedAt")
+			},
+		},
+		{
+			name:   "wrapped_error",
+			report: HealthReport{Services: []ServiceHealth{{Service: db, State: HealthUnhealthy, Err: fmt.Errorf("ping: %w", context.DeadlineExceeded)}}},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				entry := healthReportTestFirstEntry(t, decoded)
+				assert.Equal(t, "ping: context deadline exceeded", entry["error"])
+			},
+		},
+		{
+			name:   "empty_error_message",
+			report: HealthReport{Services: []ServiceHealth{{Service: db, State: HealthUnhealthy, Err: errors.New("")}}},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				entry := healthReportTestFirstEntry(t, decoded)
+				assert.Contains(t, entry, "error", "a non-nil error keeps its key")
+				assert.Equal(t, any(""), entry["error"], "the empty message, as a string")
+			},
+		},
+		{
+			name:   "nil_tags",
+			report: HealthReport{Services: []ServiceHealth{{Service: db, State: HealthHealthy}}},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				entry := healthReportTestFirstEntry(t, decoded)
+				assert.Equal(t, []any{}, entry["tags"])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			data, err := json.Marshal(tt.report)
+			require.NoError(t, err)
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(data, &decoded), string(data))
+			tt.check(t, decoded)
+		})
+	}
+}
+
+func TestHealthReport_TimeoutNotOverwrittenByLateResult(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+		must := require.New(t)
+
+		fc := newFakeClock()
+		i := NewWithOpts(&InjectorOpts{
+			Clock:                    fc,
+			HealthCheckTimeout:       50 * time.Millisecond,
+			HealthCheckSingleTimeout: -1, // the single-service call holds the check
+			HealthReportCacheTTL:     time.Hour,
+		})
+		db := newHealthRunTestBlocking(nil)
+		ProvideNamedValue(i, "db", db)
+
+		named := make(chan error, 1)
+		go func() { named <- HealthCheckNamed(i, "db") }()
+		synctest.Wait()
+
+		reports := make(chan HealthReport, 1)
+		go func() { reports <- i.HealthReport() }()
+		synctest.Wait()
+		fc.Advance(50 * time.Millisecond)
+		timedOut := healthReportTestEntry(t, <-reports, "db")
+		must.ErrorIs(timedOut.Err, ErrHealthCheckTimeout, "the read timed out")
+
+		// the check returns nil after the read recorded its timeout
+		close(db.release)
+		must.NoError(<-named, "the unbounded caller gets what the check returned")
+		synctest.Wait()
+
+		entry := healthReportTestEntry(t, i.HealthReport(), "db")
+		is.Equal(HealthUnhealthy, entry.State, "the late result does not overwrite the recorded timeout")
+		is.ErrorIs(entry.Err, ErrHealthCheckTimeout)
+		is.Equal(int32(1), db.calls.Load(), "calls of the check")
+	})
 }

@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -160,3 +161,45 @@ func ExampleRootScope_AddServiceHealthChangedHook() {
 	// db: healthy -> unhealthy (connection refused)
 	// no change
 }
+
+// liveness is a consumer's own report option, composed from the library's.
+func liveness() HealthReportOption { return MatchHealthTags(HealthTagLiveness) }
+
+func ExampleHealthReportOption() {
+	injector := New()
+	ProvideNamedValue(injector, "db", &healthReportExampleDatabase{})
+	ProvideNamedValue(injector, "proc", &healthReportExampleDatabase{}, WithHealthTags(HealthTagLiveness))
+
+	for _, opts := range [][]HealthReportOption{nil, {liveness()}, {nil, liveness(), IgnoreContainerPhase()}} {
+		report := injector.HealthReport(opts...)
+		for _, entry := range report.Services {
+			fmt.Print(entry.Service.Service, " ")
+		}
+		fmt.Println(report.State)
+	}
+	// Output:
+	// db proc healthy
+	// proc healthy
+	// proc healthy
+}
+
+func ExampleHealthReport_json() {
+	clock := newExampleClock() // 2026-01-01T00:00:00Z
+	injector := NewWithOpts(&InjectorOpts{Clock: clock})
+	ProvideNamedValue(injector, "db", healthReportExampleDown{}, WithHealthTags(HealthTagReadiness))
+
+	report := injector.HealthReport()
+	report.Services[0].Service.ScopeID = "root-id" // a random ID otherwise
+
+	data, err := json.Marshal(report)
+	fmt.Println(err)
+	fmt.Println(string(data))
+	// Output:
+	// <nil>
+	// {"state":"unhealthy","phase":"idle","monitored":false,"checkedAt":"2026-01-01T00:00:00Z","services":[{"service":{"scopeId":"root-id","scopeName":"[root]","service":"db"},"tags":["readiness"],"optional":false,"state":"unhealthy","error":"down","checkedAt":"2026-01-01T00:00:00Z","duration":"0s"}]}
+}
+
+// healthReportExampleDown is a health check that fails.
+type healthReportExampleDown struct{}
+
+func (healthReportExampleDown) HealthCheck() error { return errors.New("down") }

@@ -424,16 +424,19 @@ type InjectorOpts struct {
 	HealthCheckParallelism uint
 
 	// HealthCheckGlobalTimeout sets a global timeout for all health check operations.
-	// This timeout applies to the entire health check process across all services.
-	// Default: no timeout (health checks can run indefinitely).
+	// This timeout applies to the entire health check process across all
+	// services of HealthCheck(); the single-service functions ignore it.
+	// Default: 0, and any value of 0 or less means no global timeout.
 	HealthCheckGlobalTimeout time.Duration
 
-	// HealthCheckTimeout sets a timeout for individual service health checks.
-	// This timeout applies to each service's health check method, both in
-	// HealthCheck() and, unless HealthCheckSingleTimeout is set, in the
-	// single-service HealthCheck[T], HealthCheckWithContext[T],
-	// HealthCheckNamed and HealthCheckNamedWithContext functions.
-	// Default: no timeout (individual health checks can run indefinitely).
+	// HealthCheckTimeout sets a timeout for individual service health checks,
+	// measured on Clock. It applies to each service's health check method in
+	// HealthCheck(), HealthReport reads and scheduled rounds and, unless
+	// HealthCheckSingleTimeout is set, in the single-service HealthCheck[T],
+	// HealthCheckWithContext[T], HealthCheckNamed and
+	// HealthCheckNamedWithContext functions.
+	// Default: 0, which means DefaultHealthReportCheckTimeout (10s). Set a
+	// negative value for unbounded checks.
 	HealthCheckTimeout time.Duration
 
 	// HealthCheckSingleTimeout bounds the single-service HealthCheck[T],
@@ -441,7 +444,8 @@ type InjectorOpts struct {
 	// HealthCheckNamedWithContext functions in place of HealthCheckTimeout:
 	// a positive value is their bound and a negative value means no bound.
 	// Checks run by HealthCheck() keep HealthCheckTimeout.
-	// Default: 0, which keeps HealthCheckTimeout for them too.
+	// Default: 0, which keeps HealthCheckTimeout for them too, so they are
+	// bounded at 10s unless HealthCheckTimeout says otherwise.
 	HealthCheckSingleTimeout time.Duration
 
 	// HealthReportCacheTTL is how long a recorded health check result is

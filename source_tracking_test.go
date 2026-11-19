@@ -162,6 +162,16 @@ func TestSourceTracking_RegistrationForms(t *testing.T) {
 			explain: doger.ExplainService[doger.Healthchecker],
 		},
 		{
+			name: "export",
+			register: func(t *testing.T, root *doger.RootScope) (string, int) {
+				child := root.Scope("child")
+				doger.ProvideValue(child, &explainFrameDB{})
+				file, line := nextLine(t)
+				require.NoError(t, doger.Export[*explainFrameDB](child))
+				return file, line
+			},
+		},
+		{
 			name: "nil_value",
 			register: func(t *testing.T, root *doger.RootScope) (string, int) {
 				file, line := nextLine(t)
@@ -198,6 +208,26 @@ func TestSourceTracking_NewCallSite(t *testing.T) {
 	output, ok := doger.ExplainService[*explainFrameDB](root)
 	require.True(t, ok)
 	assertRegisteredAt(t, output, file, line)
+}
+
+func TestSourceTracking_DeeperThanSearchFallsBack(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	// the consumer's frame is beyond the frames searched for it
+	pkg := doger.Eager(&explainFrameDB{})
+	for range 40 {
+		pkg = doger.Package(pkg)
+	}
+	root := doger.New(pkg)
+
+	output, ok := doger.ExplainService[*explainFrameDB](root)
+	require.True(t, ok)
+	require.NotNil(t, output.Invoked)
+	is.NotEmpty(output.Invoked.File)
+	is.NotEmpty(output.Invoked.Function)
+	is.Positive(output.Invoked.Line)
+	is.NotContains(invokedLine(output.String()), "::0")
 }
 
 // invokedLine returns the "Invoked:" line of an ExplainServiceOutput string.

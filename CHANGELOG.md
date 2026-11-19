@@ -19,7 +19,7 @@ Each entry gives the change and its migration.
 | `As`, `AsNamed`, `MustAs`, `MustAsNamed` | `Alias`, `AliasNamed`, `MustAlias`, `MustAliasNamed` | Rename the calls. `Bind`/`BindNamed` are unchanged. |
 | `ExportAs(name)` | `WithExportName(name)` | Rename the call. |
 | `Flatten()` | `ExtendIntoRoot()` | Rename the call. `Extend` with a nil root, typed-nil included, returns `ErrNilInjector`. |
-| `HealthReportOption` (struct) | `type HealthReportOption func(*healthReportOptions)` | None for callers of `MatchHealthTags`/`IgnoreContainerPhase`. A zero value no longer exists. |
+| `HealthReportOption` (struct) | A function type (`func` over an unexported query); a nil option is ignored | None for callers of `MatchHealthTags`/`IgnoreContainerPhase`; consumers can compose options in their own helpers. The struct literal `HealthReportOption{}` no longer compiles: use `nil` or no option. |
 | `Stage` and `DependencySource` start at 0 | Constants start at 1; 0 is invalid, its `String()` is `"unknown"`, and marshalling or using it fails | Use the named constants. |
 | `var Runnable` | `func Runnable() Kind[Runner, struct{}]` | `Runnable.Handle(...)` becomes `Runnable().Handle(...)`, and `Runnable.With(m)` becomes `Runnable().With(m)`. |
 | `var MaxInvocationFrames` | `InjectorOpts.MaxInvocationFrames int` (0 means 100, negative turns recording off) | Set the option per container. |
@@ -38,7 +38,7 @@ Each entry gives the change and its migration.
 | Starting, resolving, registering or creating a scope on a container after shutdown | `ErrShutdown`: `Invoke*`, `InvokeAll*`, collection reads, `Alias*` and `Export*` return it; `Provide*`, `Override*` and `Scope()` panic with it, also from Closing hooks. A container cannot be reused after Shutdown | Build a new container. |
 | An error panic value from a provider returned as is | Wrapped: matches `ErrProviderPanic` and the original | Keep using `errors.Is`/`errors.As`; don't compare with `==`. |
 | Web UI page functions and adapter `Use` | Gain a variadic `...dogerhttp.Option` | Source-compatible; no change needed. |
-| `ServiceDescription` JSON keys `ScopeID`, `ScopeName`, `Service` | `scopeId`, `scopeName`, `service` (also changes Explain JSON) | Update JSON consumers. |
+| `ServiceDescription` JSON keys `ScopeID`, `ScopeName`, `Service` | `scopeId`, `scopeName`, `service`, wherever a `ServiceDescription` is marshalled (`ListProvidedServices`/`ListInvokedServices` results, `HealthReport` entries); the Explain output types have their own keys and are unchanged | Update JSON consumers of those values. |
 | `Stage` without a text form | `MarshalText` gives `before-start` / `after-start` | None. |
 | `HealthCheckTimeout` 0 meaning none on every forced path | 10s on `RootScope.HealthCheck`, `Scope.HealthCheck` and the per-service functions (`HealthCheckSingleTimeout` 0 inherits it); `HealthCheckGlobalTimeout` ≤ 0 means no global bound | Set a negative value for unbounded. |
 | Typed-nil injector, root or scope | Treated as nil: `ErrNilInjector` | Pass a real container. |

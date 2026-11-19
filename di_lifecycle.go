@@ -191,8 +191,6 @@ type Ordered interface {
 //
 // Returns an error if the health check fails, or nil if the service is healthy.
 //
-// Play: https://go.dev/play/p/dg1OzQCFJVm
-//
 // Example:
 //
 //	err := doger.HealthCheck[*Database](injector)
@@ -213,8 +211,6 @@ func HealthCheck[T any](i Injector) error {
 //   - i: The injector containing the service
 //
 // Returns an error if the health check fails, or nil if the service is healthy.
-//
-// Play: https://go.dev/play/p/jhaaEIPad_d
 //
 // Example:
 //
@@ -240,8 +236,6 @@ func HealthCheckWithContext[T any](ctx context.Context, i Injector) error {
 //
 // Returns an error if the health check fails, or nil if the service is healthy.
 //
-// Play: https://go.dev/play/p/jhaaEIPad_d
-//
 // Example:
 //
 //	err := doger.HealthCheckNamed(injector, "main-database")
@@ -266,9 +260,9 @@ func HealthCheckNamed(i Injector, name string) error {
 //
 // The check is bounded, on the injector's clock, by
 // InjectorOpts.HealthCheckSingleTimeout when it is set (a negative value
-// means no bound), and otherwise by HealthCheckTimeout when it is greater
-// than zero, as each check of HealthCheck() is; HealthCheckGlobalTimeout
-// does not apply. HealthCheck, HealthCheckWithContext
+// means no bound), and otherwise by HealthCheckTimeout as each check of
+// HealthCheck() is: 0 means DefaultHealthReportCheckTimeout (10s) and a
+// negative value no bound. HealthCheckGlobalTimeout does not apply. HealthCheck, HealthCheckWithContext
 // and HealthCheckNamed go through this function and follow the same rule.
 //
 // A check of the service already in flight, started by any path, is shared:
@@ -295,21 +289,10 @@ func HealthCheckNamedWithContext(ctx context.Context, i Injector, name string) e
 	}
 
 	opts := injector.RootScope().opts
-	ctx, cancel := healthCheckContextWithin(ctx, opts.Clock, opts.singleHealthCheckTimeout())
+	ctx, cancel := healthCheckContextWithin(ctx, opts.Clock, serviceBound(opts, boundSingle))
 	defer cancel()
 
 	return injector.serviceHealthCheck(ctx, name)
-}
-
-// singleHealthCheckTimeout returns the bound of a single-service health
-// check: HealthCheckSingleTimeout, or HealthCheckTimeout when it is 0. A
-// value of 0 or less means no bound.
-func (o *InjectorOpts) singleHealthCheckTimeout() time.Duration {
-	if o.HealthCheckSingleTimeout != 0 {
-		return o.HealthCheckSingleTimeout
-	}
-
-	return o.HealthCheckTimeout
 }
 
 // healthCheckContextWithin bounds ctx by timeout on clock when timeout is
@@ -332,8 +315,6 @@ func healthCheckContextWithin(ctx context.Context, clock Clock, timeout time.Dur
 //
 // Returns an error if the shutdown fails, or nil if the shutdown was successful.
 //
-// Play: https://go.dev/play/p/uOvsiVWa9_R
-//
 // Example:
 //
 //	err := doger.Shutdown[*Database](injector)
@@ -354,8 +335,6 @@ func Shutdown[T any](i Injector) error {
 //   - i: The injector containing the service
 //
 // Returns an error if the shutdown fails, or nil if the shutdown was successful.
-//
-// Play: https://go.dev/play/p/qAaIo5dWz7J
 //
 // Example:
 //
@@ -380,8 +359,6 @@ func ShutdownWithContext[T any](ctx context.Context, i Injector) error {
 //   - name: The name of the service to shutdown
 //
 // Returns an error if the shutdown fails, or nil if the shutdown was successful.
-//
-// Play: https://go.dev/play/p/qAaIo5dWz7J
 //
 // Example:
 //
@@ -431,8 +408,6 @@ func ShutdownNamedWithContext(ctx context.Context, i Injector, name string) erro
 //
 // Panics if the shutdown fails.
 //
-// Play: https://go.dev/play/p/cjKFvjZpeAV
-//
 // Example:
 //
 //	doger.MustShutdown[*Database](injector)
@@ -449,8 +424,6 @@ func MustShutdown[T any](i Injector) {
 //   - i: The injector containing the service
 //
 // Panics if the shutdown fails.
-//
-// Play: https://go.dev/play/p/cjKFvjZpeAV
 //
 // Example:
 //
@@ -472,8 +445,6 @@ func MustShutdownWithContext[T any](ctx context.Context, i Injector) {
 //
 // Panics if the shutdown fails.
 //
-// Play: https://go.dev/play/p/cjKFvjZpeAV
-//
 // Example:
 //
 //	doger.MustShutdownNamed(injector, "main-database")
@@ -491,8 +462,6 @@ func MustShutdownNamed(i Injector, name string) {
 //   - name: The name of the service to shutdown
 //
 // Panics if the shutdown fails.
-//
-// Play: https://go.dev/play/p/cjKFvjZpeAV
 //
 // Example:
 //

@@ -352,7 +352,7 @@ Examples:
 <!-- cases: 10 backward compatibility: String() output is unchanged; text methods are additive -->
 
 ### Requirement: A health report marshals to JSON for monitoring
-`json.Marshal` of a `HealthReport` SHALL succeed and SHALL emit lower-camel keys: `state` and `phase` as their text form, `monitored`, `checkedAt`, and `services`. Each service SHALL emit `service` (`scopeId`, `scopeName`, `service`), `tags`, `optional`, `state`, `error` (the error's message, omitted when nil), `checkedAt` and `pendingSince` (RFC 3339, omitted when zero), and `duration` (a Go duration string).
+`json.Marshal` of a `HealthReport` the library returns SHALL succeed and SHALL emit lower-camel keys: `state` and `phase` as their text form, `monitored`, `checkedAt`, and `services`. Each service SHALL emit `service` (`scopeId`, `scopeName`, `service`), `tags`, `optional`, `state`, `error` (the error's message, also when it is empty; omitted only when the error is nil), `checkedAt` and `pendingSince` (RFC 3339, omitted when zero), and `duration` (a Go duration string).
 
 #### Scenario: Report JSON
 ```gherkin
@@ -381,13 +381,28 @@ Examples:
   | the zero HealthReport{}                                                                                         | equals {"state":"unknown","phase":"idle","monitored":false,"services":[]}                       |
   | a report whose "db" entry has a check in flight since 2026-01-01T00:00:00Z and no recorded result               | has for "db" "state":"unknown", "pendingSince":"2026-01-01T00:00:00Z", "duration":"0s", and no "error" or "checkedAt" key |
   | a report whose "db" entry has Err set to a wrapped error fmt.Errorf("ping: %w", context.DeadlineExceeded)        | has for "db" "error":"ping: context deadline exceeded"                                          |
+  | a report whose "db" entry has Err set to errors.New("")                                                         | has for "db" "error":""                                                                         |
+  | a report whose "db" entry has nil Tags                                                                          | has for "db" "tags":[]                                                                          |
+```
+
+#### Scenario: A hand-built report with an out-of-range enum does not marshal
+```gherkin
+Given a HealthReport built by the consumer with <field>
+When the consumer calls json.Marshal on it
+Then the error is not nil
+
+Examples:
+  | field                                                  |
+  | State HealthState(42)                                  |
+  | Phase ContainerPhase(-1)                               |
+  | one entry for "db" with State HealthState(9)           |
 ```
 
 <!-- cases: 1 default: a zero-config report marshals with no option -->
 <!-- cases: N/A 2 overrides: consumers needing another shape map the exported fields themselves -->
 <!-- cases: 3 zero values: the zero HealthReport (services as [] not null; zero times omitted); a nil Err omitted -->
 <!-- cases: 4 boundaries: zero, one service; zero and positive durations -->
-<!-- cases: 5 errors: wrapped errors are emitted as their full message; json.Marshal never fails on a report -->
+<!-- cases: 5 errors: wrapped errors are emitted as their full message; an error with an empty message keeps the "error" key; json.Marshal never fails on a report the library returns, while a hand-built report with an out-of-range State or Phase fails, as the strict enum text methods do -->
 <!-- cases: N/A 6 not found/duplicate: not applicable -->
 <!-- cases: 7 lifecycle: an entry with a check in flight (pendingSince) -->
 <!-- cases: N/A 8 concurrency: a report is the caller's own copy (existing requirement) -->

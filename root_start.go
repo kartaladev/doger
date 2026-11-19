@@ -199,19 +199,32 @@ func (s *RootScope) logHookPanic(p hookPanic) {
 // and the type of its value, and the value itself only in a Debug record,
 // since it could hold a secret. service is "" when it concerns none.
 func (s *RootScope) logRecoveredPanic(point, service string, value any) {
-	s.self.logRecoveredPanic(point, service, value)
+	s.self.logRecoveredPanicAs(point, service, fmt.Sprintf("%T", value), value)
+}
+
+// logRecoveredPanicAs is logRecoveredPanic with panicType in place of the
+// type of value, for an end that is not a panic value, such as
+// runtime.Goexit.
+func (s *RootScope) logRecoveredPanicAs(point, service, panicType string, value any) {
+	s.self.logRecoveredPanicAs(point, service, panicType, value)
 }
 
 // logRecoveredPanic logs a recovered panic on scope s, as
 // RootScope.logRecoveredPanic does.
 func (s *Scope) logRecoveredPanic(point, service string, value any) {
+	s.logRecoveredPanicAs(point, service, fmt.Sprintf("%T", value), value)
+}
+
+// logRecoveredPanicAs is Scope.logRecoveredPanic with panicType in place of
+// the type of value.
+func (s *Scope) logRecoveredPanicAs(point, service, panicType string, value any) {
 	var attrs []slog.Attr
 	if service != "" {
 		attrs = append(attrs, slog.String("service", service))
 	}
 	attrs = append(attrs, slog.String("point", point))
 	if s.logEnabled(slog.LevelError) {
-		s.log(slog.LevelError, "panic recovered", append(attrs, slog.String("panic_type", fmt.Sprintf("%T", value)))...)
+		s.log(slog.LevelError, "panic recovered", append(attrs, slog.String("panic_type", panicType))...)
 	}
 	if s.logEnabled(slog.LevelDebug) {
 		s.log(slog.LevelDebug, "panic value", append(attrs, slog.String("value", fmt.Sprint(value)))...)

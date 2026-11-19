@@ -266,37 +266,37 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 38. HealthCheckTimeout defaults to 10s
 
-- [ ] 38.1 RED: add `TestHealthCheck_DefaultTimeoutZeroConfig` and update the default rows of `TestHealthCheck_TimeoutOptionsOnClock`, `TestHealthCheck_NotBeforeClockReachesTimeout`, `TestHealthCheck_PerServiceTimeout`, `TestHealthCheck_ConsumerDeadlineOnContextOnly`, `TestHealthCheckSingleTimeout` and `TestHealthCheck_JoinerOwnBound` (health-check-timeouts scenarios); verify `go test -race -run 'TestHealthCheck' .` fails on the default rows
-- [ ] 38.2 GREEN: forced-path and single-service bounds use the report bound (0 → 10s, negative → none) and a global ≤ 0 means no global bound; verify the 38.1 tests pass and `make test` is green
-- [ ] 38.3 REFACTOR: Consolidate Duplicate Conditional Fragments into one `serviceBound(opts, path)` helper; verify `make test` and `make lint` pass
-- [ ] 38.4 Docs: godoc of `HealthCheckTimeout`/`HealthCheckSingleTimeout` and the CHANGELOG/migration row ("set a negative value for unbounded"); verify `go doc InjectorOpts.HealthCheckTimeout` states the default
+- [x] 38.1 RED: add `TestHealthCheck_DefaultTimeoutZeroConfig`; in `TestHealthCheck_TimeoutOptionsOnClock` turn `no_timeout_check_1h` into `default_check_1h` (expects the timeout) and add the 9.999s, exact-10s and negative-timeout rows; make `TestHealthCheck_NotBeforeClockReachesTimeout` a table with a `default_10s` row; in `TestHealthCheck_PerServiceTimeout` turn `HealthCheckNamed_no_timeout_check_1h` into `HealthCheckNamed_default_check_1h` and add the 9.999s and negative rows; set `HealthCheckTimeout: -1` on the 0 row of `TestHealthCheck_ConsumerDeadlineOnContextOnly` (now `per_check_negative`) and on `named_global_30ms_does_not_apply` of `TestHealthCheck_JoinerOwnBound`, which also gains two default-bound rows; add the `New()` 10s row of `TestClock_DefaultRealClock` (deferred from 10.5). `TestHealthCheckSingleTimeout` needed no change: its rows already match the spec. (health-check-timeouts scenarios); verify `go test -race -run 'TestHealthCheck' .` fails on the default rows
+- [x] 38.2 GREEN: forced-path and single-service bounds use the report bound (0 → 10s, negative → none) and a global ≤ 0 means no global bound; verify the 38.1 tests pass and `make test` is green
+- [x] 38.3 REFACTOR: Consolidate Duplicate Conditional Fragments into one `serviceBound(opts, path)` helper; verify `make test` and `make lint` pass
+- [x] 38.4 Docs: godoc of `HealthCheckTimeout`/`HealthCheckSingleTimeout` and the CHANGELOG/migration row ("set a negative value for unbounded"); verify `go doc InjectorOpts.HealthCheckTimeout` states the default
 
 ## 39. A Goexit in a check does not block later checks
 
-- [ ] 39.1 RED: regression tests `TestHealthCheck_GoexitDoesNotWedge`, `TestHealthCheck_GoexitAllWaiters` and `TestHealthRound_GoexitKeepsRecording`; verify `go test -race -run Goexit .` fails (second call times out, HealthCheck invoked 1 time)
-- [ ] 39.2 GREEN: defer `finishCall` in `runCall` with a "did not return" flag producing `fmt.Errorf("%w: runtime.Goexit", ErrHealthCheckPanic)`, logged at Error without calling HookContainerPanic; verify the 39.1 tests pass with goleak
-- [ ] 39.3 REFACTOR: Extract Function `runCheckGuarded` wrapping the check, recover and Goexit detection; verify `make test` and `make lint` pass
+- [x] 39.1 RED: regression tests `TestHealthCheck_GoexitDoesNotWedge`, `TestHealthCheck_GoexitAllWaiters` and `TestHealthRound_GoexitKeepsRecording`; verify `go test -race -run Goexit .` fails (second call times out, HealthCheck invoked 1 time)
+- [x] 39.2 GREEN: defer `finishCall` in `runCall` with a "did not return" flag producing `fmt.Errorf("%w: runtime.Goexit", ErrHealthCheckPanic)`, logged at Error without calling HookContainerPanic; verify the 39.1 tests pass with goleak
+- [x] 39.3 REFACTOR: Extract Function `runCheckGuarded` wrapping the check, recover and Goexit detection; verify `make test` and `make lint` pass
 
 ## 40. A monitored read joins the first check in flight
 
-- [ ] 40.1 RED: add `TestHealthReport_ReadAfterReadyJoinsFirstRound` and `TestHealthReport_ConcurrentFirstReadsShareRound` and update `TestHealthReport_MonitoredFirstCheck` rows; verify `go test -race -run 'TestHealthReport_(ReadAfterReady|ConcurrentFirstReads|MonitoredFirstCheck)' .` fails (got HealthUnknown)
-- [ ] 40.2 GREEN: a monitored read of a never-checked service joins its in-flight first check under the read's bound; verify the 40.1 tests pass and `make test` is green
-- [ ] 40.3 REFACTOR: Inline the monitored and unmonitored branches into one `needsWait` predicate; verify `make test` and `make lint` pass
-- [ ] 40.4 Docs: align the godoc of `HealthReportWithContext`, `HealthReport.Monitored` and `HealthScheduler` with the joined read; verify `go doc HealthReport.Monitored` shows it
+- [x] 40.1 RED: add `TestHealthReport_ReadAfterReadyJoinsFirstRound` and `TestHealthReport_ConcurrentFirstReadsShareRound` and update `TestHealthReport_MonitoredFirstCheck` rows; verify `go test -race -run 'TestHealthReport_(ReadAfterReady|ConcurrentFirstReads|MonitoredFirstCheck)' .` fails (got HealthUnknown)
+- [x] 40.2 GREEN: a monitored read of a never-checked service joins its in-flight first check under the read's bound; verify the 40.1 tests pass and `make test` is green
+- [x] 40.3 REFACTOR: Inline the monitored and unmonitored branches into one `needsWait` predicate; verify `make test` and `make lint` pass
+- [x] 40.4 Docs: align the godoc of `HealthReportWithContext`, `HealthReport.Monitored` and `HealthScheduler` with the joined read; verify `go doc HealthReport.Monitored` shows it
 
 ## 41. HealthReportOption is a functional option
 
-- [ ] 41.1 RED: add `TestHealthReportOption_Compose` (rows include a nil option) and update the nil row of `TestHealthReport_MatchTags` (scenarios "Report options are functions a consumer can compose", "Filtered reports"); verify it fails to compile on `HealthReportOption(nil)` against the struct type
-- [ ] 41.2 GREEN: `type HealthReportOption func(*reportQuery)` and skip nil options; verify `TestHealthReport_MatchTags*` and the new test pass and `make test` is green
-- [ ] 41.3 REFACTOR: none needed — a mechanical type change; verify `make test` and `make lint` pass
-- [ ] 41.4 Docs: add `ExampleHealthReportOption` (a consumer composes `liveness()`); verify `go test -run ExampleHealthReportOption .` passes
+- [x] 41.1 RED: add `TestHealthReportOption_Compose` (rows include a nil option) and update the nil row of `TestHealthReport_MatchTags` (scenarios "Report options are functions a consumer can compose", "Filtered reports"); verify it fails to compile on `HealthReportOption(nil)` against the struct type
+- [x] 41.2 GREEN: `type HealthReportOption func(*reportQuery)` and skip nil options; verify `TestHealthReport_MatchTags*` and the new test pass and `make test` is green
+- [x] 41.3 REFACTOR: none needed — a mechanical type change; verify `make test` and `make lint` pass
+- [x] 41.4 Docs: add `ExampleHealthReportOption` (a consumer composes `liveness()`); verify `go test -run ExampleHealthReportOption .` passes
 
 ## 42. Health enums and reports serialize for monitoring
 
-- [ ] 42.1 RED: add `TestHealthEnums_TextRoundTrip`, `TestHealthEnums_UnmarshalTextRejectsUnknown`, `TestHealthReport_MarshalJSON` and `TestHealthReport_MarshalJSONEdgeCases`; verify `go test -race -run 'TestHealthEnums|TestHealthReport_MarshalJSON' .` fails (no text methods; `Err` marshals as `{}`)
-- [ ] 42.2 GREEN: `MarshalText`/`UnmarshalText` on `HealthState` and `ContainerPhase`, and `MarshalJSON` on `HealthReport`/`ServiceHealth` (error string, omitted zero times, duration string, `[]` services); verify the 42.1 tests pass and `make test` is green
-- [ ] 42.3 REFACTOR: Extract Function `enumText` shared by both enums' `String` and `MarshalText`; verify `make test` and `make lint` pass
-- [ ] 42.4 Docs: add `ExampleHealthReport_json` with `// Output:` and document the JSON shape on the health docs page; verify `go test -run ExampleHealthReport_json .` passes
+- [x] 42.1 RED: add `TestHealthEnums_TextRoundTrip`, `TestHealthEnums_UnmarshalTextRejectsUnknown`, `TestHealthReport_MarshalJSON` and `TestHealthReport_MarshalJSONEdgeCases`; verify `go test -race -run 'TestHealthEnums|TestHealthReport_MarshalJSON' .` fails (no text methods; `Err` marshals as `{}`)
+- [x] 42.2 GREEN: `MarshalText`/`UnmarshalText` on `HealthState` and `ContainerPhase`, and `MarshalJSON` on `HealthReport`/`ServiceHealth` (error string, omitted zero times, duration string, `[]` services); verify the 42.1 tests pass and `make test` is green
+- [x] 42.3 REFACTOR: Extract Function `enumText` shared by both enums' `String` and `MarshalText`; verify `make test` and `make lint` pass
+- [x] 42.4 Docs: add `ExampleHealthReport_json` with `// Output:` and document the JSON shape on the health docs page; verify `go test -run ExampleHealthReport_json .` passes
 
 ## 43. Web UI escapes names and links
 
@@ -366,10 +366,10 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 - [x] 53.1 Add `TestShutdownOrder_ThreeLevelChain` (synctest; a→b→c in one scope, c must not stop before b finishes) and `TestDAG_removeDependent`; they pass on arrival, so prove they can fail (not committed): deleting the `removeService` dependents loop (mutant M07) fails `TestDAG_removeDependent`, and making `listServicesHavingNoDependent` ignore dependents fails `TestShutdownOrder_ThreeLevelChain`, whose order does not depend on that loop; verify `go test -race -run 'TestShutdownOrder_ThreeLevelChain|TestDAG_removeDependent' .` fails under each mutant and passes without them
 - [x] 53.2 Add `TestLazyShutdown_ShutdownerWithContext_IsCalled` and ended-context rows for lazy and eager services; prove they can fail by temporarily replacing `instance.Shutdown(ctx)` with `_ = instance` (mutant M29); verify the same red/green check
-- [ ] 53.3 Add `TestHealthReport_TimeoutNotOverwrittenByLateResult` (synctest: an unbounded `HealthCheckNamed` holds the check while `HealthReport` times out); prove it can fail by temporarily dropping `&& !call.timedOut` in `finishCall` (mutant M18); verify the same red/green check
+- [x] 53.3 Add `TestHealthReport_TimeoutNotOverwrittenByLateResult` (synctest: an unbounded `HealthCheckNamed` holds the check while `HealthReport` times out); prove it can fail by temporarily dropping `&& !call.timedOut` in `finishCall` (mutant M18); verify the same red/green check
 - [x] 53.4 Add `TestInvokeNamedAny_ListedAsInvoked`; prove it can fail by temporarily removing `onServiceInvoke` from `invokeAnyByNameAs` (mutant M22); verify the same red/green check
-- [ ] 53.5 Add `TestHealthCheck_QueuedDeadlineBoundary` (`HealthCheckParallelism: 1`; a queued check returning exactly at its deferred bound reports a timeout) for mutant M15, recording in a comment if the mutant proves equivalent; verify `go test -race -run TestHealthCheck_QueuedDeadlineBoundary .`
-- [ ] 53.6 Cover the uncovered health branches (service left while callers queued, take-over by a fresh check, queue ordering, `keepOnly` pruning, `deliverTransitions` re-panic, scheduler double-start guard) as named subtests in `health_run_test.go`/`health_monitor_test.go`; verify `go test -race -coverprofile=c.out . && go tool cover -func=c.out` shows those blocks covered
+- [x] 53.5 Add `TestHealthCheck_QueuedDeadlineBoundary` (`HealthCheckParallelism: 1`; a queued check returning exactly at its deferred bound reports a timeout) for mutant M15, recording in a comment if the mutant proves equivalent; verify `go test -race -run TestHealthCheck_QueuedDeadlineBoundary .`
+- [x] 53.6 Cover the uncovered health branches (service left while callers queued, take-over by a fresh check, queue ordering, `keepOnly` pruning, `deliverTransitions` re-panic, scheduler double-start guard) as named subtests in `health_run_test.go`/`health_monitor_test.go`; verify `go test -race -coverprofile=c.out . && go tool cover -func=c.out` shows those blocks covered
 - [x] 53.7 Cover the virtual-scope pass-through methods called from inside a provider in `virtual_scope_test.go` and the broken alias/export chains of `aliasResolvesTo`; verify the coverage report shows `virtual_scope.go` pass-throughs and `aliasResolvesTo` covered
 - [ ] 53.8 Add `TestShutdownOnSignals_Default` (SIGUSR1 through a test-only signal set) and give `ExampleRootScope_ShutdownOnSignals` a runnable `// Output:`; verify `go test -race -run ShutdownOnSignals .` passes
 - [x] 53.9 Harden the `tests` package: goleak `TestMain`, a `testWithTimeout` with a 5s floor reporting through `t` instead of `os.Exit`, and real report/error assertions in `TestParallelShutdown`, `TestConcurrentHealthCheckDuringShutdown`, `TestConcurrentBlockingOperations` and `TestRaceConditionShutdownInvocation`; verify `go test -race -count=20 -shuffle=on ./tests` passes
@@ -388,12 +388,12 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 55. Documentation for the first release
 
-- [ ] 55.1 Add `doc.go` with a package overview (quickstart, scopes, lifecycle, health, extensions) and remove the `package-comments` suppression; verify `make lint` passes and `go doc . | head -40` shows the overview
-- [ ] 55.2 Remove the `Play:` links that run samber/do code (or replace them with doger playground links); verify `grep -rn 'go.dev/play' --include=*.go . | wc -l` prints 0 or each remaining link imports `github.com/kartaladev/doger`
+- [x] 55.1 Add `doc.go` with a package overview (quickstart, scopes, lifecycle, health, extensions) and remove the `package-comments` suppression; verify `make lint` passes and `go doc . | head -40` shows the overview
+- [x] 55.2 Remove the `Play:` links that run samber/do code (or replace them with doger playground links); verify `grep -rn 'go.dev/play' --include=*.go . | wc -l` prints 0 or each remaining link imports `github.com/kartaladev/doger`
 - [ ] 55.3 Rewrite `docs/docs/migrating/migrating-from-samber-do.md` from the D9/D10 tables (every break with before/after code, the variadic `...ProvideOption` changes, all new `InjectorOpts` fields, the Go 1.27 floor and its reason); verify the before/after snippets compile in a `docs_snippets_test.go`
 - [x] 55.4 README: add a 20-line quickstart, fix the gocron snippet's unused `err`, remove upstream templates and "See also" links, and update the feature list (start lifecycle, extensions, properties, kinds, collections, health reports); verify the snippets compile in `readme_snippets_test.go`
 - [x] 55.5 Add the missing `Example*` tests with `// Output:` (`Eager`, `Lazy`, `Transient`, `Package`, `Bind`, `ExportNamed`, `MustExport`, `ExtendIntoRoot`, `ExtendScopeName`, `WithHealthTags`, `AsOptionalHealth`, `IgnoreContainerPhase`, `ExtensionProperties`, `HealthScheduler`, `EnableRunnerAutoDetection`, `PropertySource`, `StructTagKey`); verify `go test -run '^Example' .` passes
-- [ ] 55.6 Document the Go 1.27 floor and why it exists in README and `docs/docs/getting-started`; verify `grep -n '1.27' README.md` shows it
+- [x] 55.6 Document the Go 1.27 floor and why it exists in README and `docs/docs/getting-started`; verify `grep -n '1.27' README.md` shows it
 
 ## 56. Integration checks
 

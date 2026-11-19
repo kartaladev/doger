@@ -30,8 +30,8 @@ injector.HealthCheckWithContext(context.Context) map[string]error
 // returns error on failure
 doger.HealthCheck[T any](doger.Injector) error
 doger.HealthCheckWithContext[T any](context.Context, doger.Injector) error
-doger.HealthCheckNamed[T any](doger.Injector, string) error
-doger.HealthCheckNamedWithContext[T any](context.Context, doger.Injector, string) error
+doger.HealthCheckNamed(doger.Injector, string) error
+doger.HealthCheckNamedWithContext(context.Context, doger.Injector, string) error
 ```
 
 ## Extension scopes {#extension-scopes}
@@ -81,8 +81,6 @@ ctx := context.WithTimeout(10 * time.Second)
 i.HealthCheckWithContext(ctx)
 ```
 
-**Play: https://go.dev/play/p/ILV7UpAJDtc**
-
 ## Health check options {#health-check-options}
 
 The root scope can be created with health check parameters, for controlling parallelism or timeouts.
@@ -95,8 +93,9 @@ doger.InjectorOpts{
     // HealthCheckParallelism==1 will trigger sequential checks.
     HealthCheckParallelism    uint
 
-    // When many services are checked at the same time.
+    // When many services are checked at the same time: <= 0 is no global bound.
     HealthCheckGlobalTimeout: time.Duration
+    // Each service's check: 0 is the 10s default, < 0 is unbounded.
     HealthCheckTimeout:       time.Duration
     // Single-service checks only: 0 keeps HealthCheckTimeout, < 0 is unbounded.
     HealthCheckSingleTimeout: time.Duration
@@ -141,7 +140,7 @@ The result of a health check does not depend on goroutine scheduling:
 
 ### Single-service checks {#single-service-checks}
 
-`doger.HealthCheck[T]`, `HealthCheckWithContext[T]`, `HealthCheckNamed` and `HealthCheckNamedWithContext` are bounded by `HealthCheckTimeout` when it is greater than zero, exactly like each check of `injector.HealthCheck()`. `HealthCheckGlobalTimeout` does not apply to them, since they check a single service. With `HealthCheckTimeout` at zero they are unbounded, unless your context has a deadline.
+`doger.HealthCheck[T]`, `HealthCheckWithContext[T]`, `HealthCheckNamed` and `HealthCheckNamedWithContext` are bounded by `HealthCheckTimeout`, exactly like each check of `injector.HealthCheck()`: with its default, 0, every check is bounded at 10s (`DefaultHealthReportCheckTimeout`), and a negative value leaves checks unbounded. `HealthCheckGlobalTimeout` does not apply to them, since they check a single service.
 
 To give them a different bound, set `HealthCheckSingleTimeout`: a positive value is their own bound, and a negative value leaves them unbounded. Its default, 0, keeps `HealthCheckTimeout` for them. The checks run by `injector.HealthCheck()` always use `HealthCheckTimeout`.
 
@@ -166,6 +165,38 @@ err := doger.HealthCheckNamedWithContext(ctx, i, "db")
 errors.Is(err, doger.ErrHealthCheckTimeout) // true
 errors.Is(err, context.Canceled)            // true
 ```
+
+## Health report JSON {#health-report-json}
+
+`HealthReport` and `ServiceHealth` marshal to JSON for monitoring endpoints, with lower-camel keys:
+
+```json
+{
+  "state": "unhealthy",
+  "phase": "ready",
+  "monitored": true,
+  "checkedAt": "2026-01-01T00:00:02Z",
+  "services": [
+    {
+      "service": {"scopeId": "<scope id>", "scopeName": "[root]", "service": "db"},
+      "tags": ["readiness"],
+      "optional": false,
+      "state": "unhealthy",
+      "error": "down",
+      "checkedAt": "2026-01-01T00:00:02Z",
+      "duration": "2s"
+    }
+  ]
+}
+```
+
+- `state` and `phase` are the names `HealthState.String()` and `ContainerPhase.String()` return (`unknown`, `healthy`, `degraded`, `unhealthy`; `idle`, `starting`, `started`, `ready`, `failed`, `closing`, `closed`). Both types implement `MarshalText` and `UnmarshalText`.
+- `error` is the error's message, omitted when the check passed.
+- `checkedAt` and `pendingSince` are RFC 3339 times, omitted when zero (no recorded result, no check in flight).
+- `duration` is a Go duration string, such as `"2s"` or `"0s"`.
+- `services` and `tags` are `[]`, never `null`.
+
+To serve another shape, map the exported fields yourself.
 
 ### Testing timeouts with a fake clock {#testing-timeouts-with-a-fake-clock}
 

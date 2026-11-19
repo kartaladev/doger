@@ -408,9 +408,12 @@ func TestHealthRound_Results(t *testing.T) {
 		advance time.Duration
 		returns bool
 		cState  HealthState
+		pending bool // "c" is still in flight at the read
 	}{
 		{name: "default_10s", advance: DefaultHealthReportCheckTimeout, returns: true, cState: HealthUnhealthy},
-		{name: "default_9999ms", advance: DefaultHealthReportCheckTimeout - time.Millisecond, cState: HealthUnknown},
+		// the check of "c" is still in flight: a read joins it, so this one
+		// stops waiting at once and shows it pending
+		{name: "default_9999ms", advance: DefaultHealthReportCheckTimeout - time.Millisecond, cState: HealthUnhealthy, pending: true},
 		{name: "50ms", timeout: 50 * time.Millisecond, advance: 50 * time.Millisecond, returns: true, cState: HealthUnhealthy},
 	}
 
@@ -445,15 +448,20 @@ func TestHealthRound_Results(t *testing.T) {
 					is.False(tt.returns, "the round did not return at the bound")
 				}
 
-				report := i.HealthReport()
+				ctx, cancel := context.WithCancel(context.Background())
+				if tt.pending {
+					cancel()
+				}
+				report := i.HealthReportWithContext(ctx)
+				cancel()
 				is.Equal(HealthHealthy, healthReportTestEntry(t, report, "a").State)
 				is.Equal(HealthUnhealthy, healthReportTestEntry(t, report, "b").State)
 				entryC := healthReportTestEntry(t, report, "c")
 				is.Equal(tt.cState, entryC.State)
-				if tt.cState == HealthUnknown {
+				is.ErrorIs(entryC.Err, ErrHealthCheckTimeout)
+				if tt.pending {
+					is.ErrorIs(entryC.Err, context.Canceled)
 					is.NotZero(entryC.PendingSince)
-				} else {
-					is.ErrorIs(entryC.Err, ErrHealthCheckTimeout)
 				}
 
 				close(c.release)
@@ -1535,4 +1543,133 @@ func BenchmarkHealthRound(b *testing.B) {
 	for b.Loop() {
 		scheduler.runRound()
 	}
+}
+
+func TestHealthRound_GoexitKeepsRecording(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		scheduler := &manualScheduler{}
+		i := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler})
+		var calls atomic.Int32
+		ProvideNamedValue(i, "db", healthRunTestGoexitOnce(&calls))
+		require.NoError(t, i.Start())
+		defer i.Shutdown()
+
+		scheduler.runRound()
+		entry := healthReportTestEntry(t, i.HealthReport(), "db")
+		is.Equal(HealthUnhealthy, entry.State)
+		is.ErrorIs(entry.Err, ErrHealthCheckPanic)
+
+		scheduler.runRound()
+		is.Equal(HealthHealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
+	})
+}
+
+func TestHealthMonitor_Guards(t *testing.T) {
+	t.Parallel()
+
+	t.Run("keep_only_pruning", func(t *testing.T) {
+		t.Parallel()
+		is := assert.New(t)
+
+		i := New()
+		var mu sync.Mutex
+		var states []HealthState // current state of each container transition
+		i.AddContainerHealthChangedHook(func(_ *RootScope, _, current HealthState) {
+			mu.Lock()
+			defer mu.Unlock()
+			states = append(states, current)
+		})
+		db := &healthReportTestSwitch{}
+		db.set(errors.New("down"))
+		ProvideNamedValue(i, "db", db)
+		is.Equal(HealthUnhealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
+
+		// a listing without "db" drops its record and membership, and the
+		// container's state no longer counts it
+		i.health.keepOnly(map[any]healthTarget{})
+		i.deliverTransitions()
+
+		mu.Lock()
+		is.Equal([]HealthState{HealthUnhealthy, HealthHealthy}, states, "container states")
+		mu.Unlock()
+
+		i.health.mu.Lock()
+		_, recorded := i.health.records[i.self.services["db"]]
+		_, member := i.health.members[i.self.services["db"]]
+		i.health.mu.Unlock()
+		is.False(recorded, "record of db")
+		is.False(member, "membership of db")
+	})
+
+	t.Run("deliver_transitions_repanic", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			fc := newFakeClock()
+			i := NewWithOpts(&InjectorOpts{
+				Clock:              fc,
+				HealthCheckTimeout: 50 * time.Millisecond,
+				HookContainerPanic: func(_ *RootScope, point string, value any) {
+					panic(fmt.Sprintf("%s: %v", point, value))
+				},
+			})
+			var delivered atomic.Int32
+			i.AddServiceHealthChangedHook(func(*Scope, string, ServiceHealth, ServiceHealth) {
+				if delivered.Add(1) == 1 {
+					panic("boom")
+				}
+			})
+			db := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "db", db)
+
+			// the read records its timeout and delivers the transition
+			// itself: HookContainerPanic re-panics, out of the read
+			recovered := make(chan any, 1)
+			go func() {
+				defer func() { recovered <- recover() }()
+				i.HealthReport()
+			}()
+			synctest.Wait()
+			fc.Advance(50 * time.Millisecond)
+			is.Equal("healthchanged: boom", <-recovered)
+
+			// delivering was reset: the next transition is delivered
+			close(db.release)
+			synctest.Wait()
+			is.NoError(HealthCheckNamed(i, "db"))
+			synctest.Wait()
+			is.GreaterOrEqual(delivered.Load(), int32(2), "transitions delivered after the re-panic")
+			i.Shutdown()
+		})
+	})
+
+	t.Run("scheduling_stopped_before_ready", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+		is := assert.New(t)
+
+		// the root's own scope is shut down by a Started hook, which stops
+		// health scheduling for good: reaching Ready does not start it
+		scheduler := &manualScheduler{}
+		i := NewWithOpts(&InjectorOpts{
+			HealthScheduler: scheduler,
+			HookContainerStarted: []func(context.Context, *RootScope){
+				func(_ context.Context, root *RootScope) { root.self.Shutdown() },
+			},
+		})
+		require.NoError(t, i.Start())
+
+		is.Equal(PhaseReady, i.Phase())
+		is.Zero(scheduler.callCount(), "ScheduleHealthRounds calls")
+		is.False(i.HealthReport().Monitored)
+		i.Shutdown()
+	})
 }

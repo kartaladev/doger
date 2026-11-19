@@ -2,7 +2,9 @@ package doger
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -245,8 +247,6 @@ func (sdd *ExplainServiceDependencyOutput) String() string {
 //
 // Note: Please call Invoke[T] before ExplainService[T] to ensure that the service is registered.
 //
-// Play: https://go.dev/play/p/Eii-vX9Rc-a
-//
 // Example:
 //
 //	// First invoke the service to ensure it's registered
@@ -279,18 +279,17 @@ func ExplainService[T any](i Injector) (description ExplainServiceOutput, ok boo
 // explains it. Only dependencies that built successfully are recorded.
 //
 // Each of the Dependencies and Dependents trees expands a service once, at
-// its first occurrence (depth first, ordered by scope ID then name). Every
-// later occurrence, including one closing a cycle through a
-// [DeclareDependency] edge, is a node with Ref set to true and no Recursive
-// children: the output grows with the number of edges, not of paths. To see
-// what a referenced service depends on, explain it by name.
+// its first occurrence (depth first, siblings ordered by scope name, then
+// service name). Every later occurrence, including one closing a cycle
+// through a [DeclareDependency] edge, is a node with Ref set to true and no
+// Recursive children: the output grows with the number of edges, not of
+// paths, and the same graph always renders the same way. To see what a
+// referenced service depends on, explain it by name.
 //
 // String renders plain text: names are written verbatim, never HTML-escaped.
 // Escaping for HTML is the caller's responsibility.
 //
 // Note: Please call Invoke[T] before ExplainNamedService[T] to ensure that the service is registered.
-//
-// Play: https://go.dev/play/p/GTcGyPFC8IB
 //
 // Example:
 //
@@ -369,20 +368,14 @@ func newExplainWalk(i Injector, mode string) *explainWalk {
 func newExplainServiceDependencies(walk *explainWalk, desc ServiceDescription) []ExplainServiceDependencyOutput {
 	walk.visited[desc] = struct{}{}
 
-	dag := walk.injector.RootScope().dag
-	dependencies, dependents := dag.explainService(desc.ScopeID, desc.ScopeName, desc.Service)
+	edges := walk.injector.RootScope().dag.edgesOf(desc, walk.mode == "dependents")
+	deps := keys(edges)
 
-	deps := dependencies
-	if walk.mode == "dependents" {
-		deps = dependents
-	}
-
-	// order by scope id then service name to have a deterministic output in unit tests
-	sort.Slice(deps, func(i, j int) bool {
-		if deps[i].ScopeID == deps[j].ScopeID {
-			return deps[i].Service < deps[j].Service
-		}
-		return deps[i].ScopeID < deps[j].ScopeID
+	// order by scope name, then service name (then scope ID, between scopes
+	// of the same name), so the output and the node that expands a repeated
+	// service are the same on every run
+	slices.SortFunc(deps, func(a, b ServiceDescription) int {
+		return cmp.Or(cmp.Compare(a.ScopeName, b.ScopeName), cmp.Compare(a.Service, b.Service), cmp.Compare(a.ScopeID, b.ScopeID))
 	})
 
 	return mAp(deps, func(item ServiceDescription, _ int) ExplainServiceDependencyOutput {
@@ -394,11 +387,7 @@ func newExplainServiceDependencies(walk *explainWalk, desc ServiceDescription) [
 			recursive = newExplainServiceDependencies(walk, item)
 		}
 
-		from, to := desc, item
-		if walk.mode == "dependents" {
-			from, to = item, desc
-		}
-		source, _ := dag.edgeSource(from, to)
+		source := edges[item]
 
 		// @TODO: differentiate status of lazy services (built, not built). Such as: "😴 (✅)"
 		return ExplainServiceDependencyOutput{
@@ -599,8 +588,6 @@ func (idss *ExplainInjectorServiceOutput) String() string {
 //
 //	explanation := doger.ExplainInjector(injector)
 //	fmt.Println(explanation.String())
-//
-// Play: https://go.dev/play/p/mRs4Q7TJ5jj
 //
 // Output example:
 //

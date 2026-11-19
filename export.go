@@ -262,7 +262,7 @@ type serviceExport[T any] struct {
 }
 
 func newServiceExport[T any](name string, owner *Scope, childName, sourceName string) *serviceExport[T] {
-	providerFrame, _ := stacktrace.NewFrameFromCaller()
+	providerFrame := registrationFrame()
 
 	return &serviceExport[T]{
 		name:       name,

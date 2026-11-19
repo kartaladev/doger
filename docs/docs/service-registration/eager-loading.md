@@ -44,8 +44,6 @@ doger.ProvideValue(i, config)
 doger.ProvideNamedValue(i, "my.really.cool.config", config)
 ```
 
-**Play: https://go.dev/play/p/5TOSiI-c17Y**
-
 ## Hot service replacement {#hot-service-replacement}
 
 By default, providing a service twice will panic. Service can be replaced at runtime using `doger.Override` helper.

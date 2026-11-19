@@ -3,6 +3,7 @@ package doger
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,9 +14,10 @@ const (
 	// DefaultHealthReportCacheTTL is the HealthReportCacheTTL used when it
 	// is 0.
 	DefaultHealthReportCacheTTL = time.Second
-	// DefaultHealthReportCheckTimeout bounds each check a HealthReport read
-	// or a scheduled round waits for when HealthCheckTimeout is 0, so a read
-	// never hangs on a check that ignores its context.
+	// DefaultHealthReportCheckTimeout bounds each health check, on every
+	// path (HealthCheck(), the single-service functions, HealthReport reads
+	// and scheduled rounds), when HealthCheckTimeout is 0, so no call hangs
+	// on a check that ignores its context.
 	DefaultHealthReportCheckTimeout = 10 * time.Second
 )
 
@@ -35,21 +37,62 @@ const (
 	HealthUnhealthy
 )
 
+// healthStateNames are the names of the HealthState constants, by value.
+var healthStateNames = []string{"unknown", "healthy", "degraded", "unhealthy"}
+
 // String returns the lower-case state name, or "HealthState(n)" for an
 // unknown value.
 func (s HealthState) String() string {
-	switch s {
-	case HealthUnknown:
-		return "unknown"
-	case HealthHealthy:
-		return "healthy"
-	case HealthDegraded:
-		return "degraded"
-	case HealthUnhealthy:
-		return "unhealthy"
-	default:
-		return fmt.Sprintf("HealthState(%d)", int(s))
+	if name, ok := enumText(s, healthStateNames); ok {
+		return name
 	}
+
+	return fmt.Sprintf("HealthState(%d)", int(s))
+}
+
+// MarshalText encodes the state as its String form, so JSON shows it by
+// name. A value outside the declared constants fails to marshal, and so
+// does a JSON encoding holding it: the library never reports one.
+func (s HealthState) MarshalText() ([]byte, error) {
+	name, ok := enumText(s, healthStateNames)
+	if !ok {
+		return nil, libErrorf("invalid health state %d", int(s))
+	}
+
+	return []byte(name), nil
+}
+
+// UnmarshalText decodes the String form of a state. Any other text fails
+// and leaves s unchanged.
+func (s *HealthState) UnmarshalText(text []byte) error {
+	value, ok := enumValue[HealthState](text, healthStateNames)
+	if !ok {
+		return libErrorf("unknown health state %q", text)
+	}
+	*s = value
+
+	return nil
+}
+
+// enumText returns the name of value among names, indexed by value, and
+// false for a value outside them.
+func enumText[E ~int](value E, names []string) (string, bool) {
+	if value < 0 || int(value) >= len(names) {
+		return "", false
+	}
+
+	return names[value], true
+}
+
+// enumValue returns the value whose name among names is text, and false
+// when none is.
+func enumValue[E ~int](text []byte, names []string) (E, bool) {
+	index := slices.Index(names, string(text))
+	if index < 0 {
+		return 0, false
+	}
+
+	return E(index), true
 }
 
 // ServiceHealth is the entry of one health-checked service in a
@@ -87,11 +130,93 @@ type HealthReport struct {
 	// Phase is the container phase at the read.
 	Phase ContainerPhase
 	// Monitored reports whether a HealthScheduler keeps the results fresh.
+	// A monitored read returns the recorded results and checks only the
+	// covered services never checked yet; one whose first check is in
+	// flight, started by a round or another read, is joined: the read waits
+	// for it within its context and the report bound.
 	Monitored bool
 	// CheckedAt is the latest CheckedAt of the entries.
 	CheckedAt time.Time
 	// Services holds one entry per covered health check.
 	Services []ServiceHealth
+}
+
+// serviceHealthJSON is the JSON form of a ServiceHealth.
+type serviceHealthJSON struct {
+	Service      ServiceDescription `json:"service"`
+	Tags         []string           `json:"tags"`
+	Optional     bool               `json:"optional"`
+	State        HealthState        `json:"state"`
+	Error        *string            `json:"error,omitempty"` // nil only when the check passed
+	CheckedAt    *time.Time         `json:"checkedAt,omitempty"`
+	PendingSince *time.Time         `json:"pendingSince,omitempty"`
+	Duration     string             `json:"duration"`
+}
+
+// MarshalJSON encodes the entry with lower-camel keys: the state by name,
+// the error as its message (omitted only when Err is nil, so an error with an
+// empty message keeps the key), CheckedAt and PendingSince in RFC 3339
+// (omitted when zero) and Duration as a Go duration string. It fails for a
+// State outside the declared constants, which only an entry built by hand
+// can hold.
+func (h ServiceHealth) MarshalJSON() ([]byte, error) {
+	entry := serviceHealthJSON{
+		Service:      h.Service,
+		Tags:         h.Tags,
+		Optional:     h.Optional,
+		State:        h.State,
+		CheckedAt:    nonZeroTime(h.CheckedAt),
+		PendingSince: nonZeroTime(h.PendingSince),
+		Duration:     h.Duration.String(),
+	}
+	if entry.Tags == nil {
+		entry.Tags = []string{}
+	}
+	if h.Err != nil {
+		message := h.Err.Error()
+		entry.Error = &message
+	}
+
+	return json.Marshal(entry)
+}
+
+// healthReportJSON is the JSON form of a HealthReport.
+type healthReportJSON struct {
+	State     HealthState     `json:"state"`
+	Phase     ContainerPhase  `json:"phase"`
+	Monitored bool            `json:"monitored"`
+	CheckedAt *time.Time      `json:"checkedAt,omitempty"`
+	Services  []ServiceHealth `json:"services"`
+}
+
+// MarshalJSON encodes the report for monitoring, with lower-camel keys: the
+// state and phase by name, CheckedAt in RFC 3339 (omitted when zero) and
+// services as an array, [] when there is none; see ServiceHealth.MarshalJSON
+// for each entry. It never fails for a report the library returns; a report
+// built by hand fails when its State, its Phase or an entry's State is
+// outside the declared constants.
+func (r HealthReport) MarshalJSON() ([]byte, error) {
+	report := healthReportJSON{
+		State:     r.State,
+		Phase:     r.Phase,
+		Monitored: r.Monitored,
+		CheckedAt: nonZeroTime(r.CheckedAt),
+		Services:  r.Services,
+	}
+	if report.Services == nil {
+		report.Services = []ServiceHealth{}
+	}
+
+	return json.Marshal(report)
+}
+
+// nonZeroTime returns &t, or nil for the zero time, so JSON omits it.
+func nonZeroTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+
+	return &t
 }
 
 // stateOf returns the state of a check that returned result: healthy for
@@ -148,9 +273,14 @@ func (s *Scope) HealthReport(opts ...HealthReportOption) HealthReport {
 // not health checkers at the read (plain values, transient services, lazy
 // services not built yet).
 //
-// A recorded result is reused for HealthReportCacheTTL; a service whose
-// result is missing or older is checked during the read, sharing any check
-// in flight with other callers, within ctx and the report bound:
+// On a container whose HealthScheduler keeps the results fresh (see
+// HealthReport.Monitored), a recorded result is always reused and only a
+// service with no recorded result is checked during the read: its first
+// check, when in flight from a round or another read, is joined. Otherwise
+// a recorded result is reused for HealthReportCacheTTL and a service whose
+// result is missing or older is checked during the read. Either way the read
+// shares any check in flight with other callers, within ctx and the report
+// bound:
 // HealthCheckTimeout when positive, DefaultHealthReportCheckTimeout when 0,
 // none when negative; HealthCheckGlobalTimeout does not apply. A check still
 // running at the report bound is recorded as timed out then, and its later
@@ -175,11 +305,11 @@ func (s *RootScope) HealthReportWithContext(ctx context.Context, opts ...HealthR
 }
 
 // HealthReportOption selects what a HealthReport read covers. Values come
-// only from the constructors of this package, such as [MatchHealthTags]; the
-// zero value is ignored.
-type HealthReportOption struct {
-	apply func(query *reportQuery)
-}
+// from the constructors of this package, such as [MatchHealthTags] and
+// [IgnoreContainerPhase], and a consumer composes them in its own helpers,
+// such as func liveness() HealthReportOption { return
+// MatchHealthTags(HealthTagLiveness) }. A nil option is ignored.
+type HealthReportOption func(query *reportQuery)
 
 // reportQuery is what a report read covers: targets, the services listed;
 // prune, set when they list the whole container; tags, the tags matched,
@@ -195,8 +325,8 @@ type reportQuery struct {
 func newReportQuery(targets []healthTarget, prune bool, opts []HealthReportOption) reportQuery {
 	query := reportQuery{targets: targets, prune: prune, tags: map[string]struct{}{}}
 	for _, opt := range opts {
-		if opt.apply != nil {
-			opt.apply(&query)
+		if opt != nil {
+			opt(&query)
 		}
 	}
 
@@ -231,7 +361,7 @@ func (q reportQuery) matches(opts *serviceOptions) bool {
 // State is then the overall state of the covered services in every phase
 // but PhaseClosed, whose report stays empty and HealthUnknown.
 func IgnoreContainerPhase() HealthReportOption {
-	return HealthReportOption{apply: func(query *reportQuery) { query.ignorePhase = true }}
+	return func(query *reportQuery) { query.ignorePhase = true }
 }
 
 // MatchHealthTags limits a report, its overall state and the checks it runs
@@ -240,11 +370,11 @@ func IgnoreContainerPhase() HealthReportOption {
 // checker. A tag no service carries covers none, and such a report is
 // HealthHealthy: use the HealthTag constants to avoid a mistyped tag.
 func MatchHealthTags(tags ...string) HealthReportOption {
-	return HealthReportOption{apply: func(query *reportQuery) {
+	return func(query *reportQuery) {
 		for _, tag := range tags {
 			query.tags[tag] = struct{}{}
 		}
-	}}
+	}
 }
 
 // containerCheckers lists the services of every scope of the container,
@@ -316,12 +446,8 @@ func (s *RootScope) healthReport(ctx context.Context, query reportQuery) HealthR
 	}
 
 	report.Monitored = s.health.monitored(report.Phase)
-	switch {
-	case report.Monitored:
-		s.checkOnDemand(ctx, covered, s.health.neverChecked)
-	case report.Phase == PhaseIdle || report.Phase == PhaseFailed || report.Phase == PhaseReady:
-		ttl, now := s.opts.healthReportCacheTTL(), s.opts.Clock.Now()
-		s.checkOnDemand(ctx, covered, func(service any) bool { return s.health.stale(service, now, ttl) })
+	if needsWait := s.needsWait(report.Monitored, report.Phase); needsWait != nil {
+		s.checkOnDemand(ctx, covered, needsWait)
 	}
 
 	report.Services = s.reportEntries(covered)
@@ -332,6 +458,23 @@ func (s *RootScope) healthReport(ctx context.Context, query reportQuery) HealthR
 	report.CheckedAt = latestCheck(report.Services)
 
 	return report
+}
+
+// needsWait returns the predicate selecting the services a read in phase
+// checks, or waits for when their check is in flight: on a monitored
+// container those never checked, otherwise those whose result is missing or
+// older than HealthReportCacheTTL. It returns nil in a phase whose reads
+// check nothing.
+func (s *RootScope) needsWait(monitored bool, phase ContainerPhase) func(service any) bool {
+	switch {
+	case monitored:
+		return s.health.neverChecked
+	case phase == PhaseIdle || phase == PhaseFailed || phase == PhaseReady:
+		ttl, now := s.opts.healthReportCacheTTL(), s.opts.Clock.Now()
+		return func(service any) bool { return s.health.stale(service, now, ttl) }
+	default:
+		return nil
+	}
 }
 
 // eligibleForReport reports whether a started container's reports and
@@ -355,7 +498,7 @@ func coveredMembers(covered []*reportCheck) map[any]healthTarget {
 // checkOnDemand checks, within ctx and the report bound, each of covered
 // that is eligible and that due accepts, sharing checks in flight.
 func (s *RootScope) checkOnDemand(ctx context.Context, covered []*reportCheck, due func(service any) bool) {
-	bound := reportBound(s.opts)
+	bound := serviceBound(s.opts, boundScopeWide)
 
 	for _, c := range covered {
 		if !c.unstarted && due(c.target.wrapper) {
@@ -453,10 +596,25 @@ func (s *RootScope) coveredChecks(targets []healthTarget) []*reportCheck {
 	return covered
 }
 
-// reportBound returns the bound of a check a report read or a round waits
-// for: HealthCheckTimeout, or DefaultHealthReportCheckTimeout when it is 0. A
-// negative value means none.
-func reportBound(opts *InjectorOpts) time.Duration {
+// boundPath is the path a health check is waited for on, which decides its
+// per-service bound (see serviceBound).
+type boundPath int
+
+const (
+	// boundScopeWide: HealthCheck(), report reads and scheduled rounds
+	boundScopeWide boundPath = iota
+	// boundSingle: HealthCheck[T], HealthCheckNamed and their WithContext forms
+	boundSingle
+)
+
+// serviceBound returns the per-service bound of a health check waited for on
+// path: HealthCheckSingleTimeout for a single-service path when it is not 0,
+// otherwise HealthCheckTimeout, or DefaultHealthReportCheckTimeout when it is
+// 0. A negative value means none.
+func serviceBound(opts *InjectorOpts, path boundPath) time.Duration {
+	if path == boundSingle && opts.HealthCheckSingleTimeout != 0 {
+		return opts.HealthCheckSingleTimeout
+	}
 	if opts.HealthCheckTimeout == 0 {
 		return DefaultHealthReportCheckTimeout
 	}

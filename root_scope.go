@@ -27,8 +27,6 @@ var discardLogger = slog.New(slog.DiscardHandler)
 //
 // Returns a new RootScope instance ready for service registration.
 //
-// Play: https://go.dev/play/p/-Fvet5zLoVY
-//
 // Example:
 //
 //	injector := doger.New()
@@ -52,8 +50,6 @@ func New(packages ...func(Injector)) *RootScope {
 // caller's value is never written, so one value can configure several
 // independent containers, and hooks added to one container reach no other.
 // A nil opts behaves like &InjectorOpts{}.
-//
-// Play: https://go.dev/play/p/SmhFpWZGKUw
 //
 // Example:
 //
@@ -555,8 +551,6 @@ func (s *RootScope) onServiceInvoke(name string) { s.self.onServiceInvoke(name) 
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-//
-// Play: https://go.dev/play/p/IstT_4oovQD
 func (s *RootScope) AddBeforeRegistrationHook(hook func(*Scope, string)) {
 	if hook == nil {
 		return
@@ -573,8 +567,6 @@ func (s *RootScope) AddBeforeRegistrationHook(hook func(*Scope, string)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-//
-// Play: https://go.dev/play/p/IstT_4oovQD
 func (s *RootScope) AddAfterRegistrationHook(hook func(*Scope, string)) {
 	if hook == nil {
 		return
@@ -591,8 +583,6 @@ func (s *RootScope) AddAfterRegistrationHook(hook func(*Scope, string)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-//
-// Play: https://go.dev/play/p/IstT_4oovQD
 func (s *RootScope) AddBeforeInvocationHook(hook func(*Scope, string)) {
 	if hook == nil {
 		return
@@ -609,8 +599,6 @@ func (s *RootScope) AddBeforeInvocationHook(hook func(*Scope, string)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-//
-// Play: https://go.dev/play/p/IstT_4oovQD
 func (s *RootScope) AddAfterInvocationHook(hook func(*Scope, string, error)) {
 	if hook == nil {
 		return
@@ -643,8 +631,6 @@ func (s *RootScope) AddAfterBuildHook(hook func(*Scope, string, any)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-//
-// Play: https://go.dev/play/p/FFKDcV0hMJx
 func (s *RootScope) AddBeforeShutdownHook(hook func(*Scope, string)) {
 	if hook == nil {
 		return
@@ -661,8 +647,6 @@ func (s *RootScope) AddBeforeShutdownHook(hook func(*Scope, string)) {
 // operation already running sees it is unspecified. Use the InjectorOpts
 // field to set hooks at configuration time, and this method for plugins
 // that add hooks to a container they did not create.
-//
-// Play: https://go.dev/play/p/FFKDcV0hMJx
 func (s *RootScope) AddAfterShutdownHook(hook func(*Scope, string, error)) {
 	if hook == nil {
 		return
@@ -896,8 +880,6 @@ func (s *RootScope) AddScopeClosedHook(hook func(context.Context, *Scope)) {
 // and its clones: the first of them to shut it down calls its Shutdown, and
 // the others only drop their registration. A lazy service is built and
 // shut down once per container.
-//
-// Play: https://go.dev/play/p/DqIlXhZ8c4t
 func (s *RootScope) Clone() *RootScope {
 	return s.CloneWithOpts(s.hooks.optsWith(s.opts))
 }
@@ -912,8 +894,6 @@ func (s *RootScope) Clone() *RootScope {
 // resolve from its own scopes. An installation still running when the clone
 // is taken is not copied, nor is its partly built private scope, so the
 // clone can install that extension itself.
-//
-// Play: https://go.dev/play/p/fT-v63fbFk5
 func (s *RootScope) CloneWithOpts(opts *InjectorOpts) *RootScope {
 	clone := NewWithOpts(opts)
 	s.cloneWithExtensions(clone)

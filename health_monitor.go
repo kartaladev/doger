@@ -33,7 +33,9 @@ const (
 // cancel: it must stop scheduling and return once no round of this schedule
 // runs. A Shutdown that begins while ScheduleHealthRounds runs waits for it
 // to return, even past the end of Shutdown's context, so
-// ScheduleHealthRounds must return promptly. Each call is an independent
+// ScheduleHealthRounds must return promptly. While the rounds are scheduled,
+// a HealthReport read reuses their recorded results and joins the first
+// check of a service still in flight instead of starting another. Each call is an independent
 // schedule, so one value may serve several containers, such as a container
 // and its clones.
 //
@@ -228,7 +230,7 @@ func (s *RootScope) healthRound(ctx context.Context) {
 	defer cancel()
 	defer context.AfterFunc(roundCtx, cancel)()
 
-	bound := reportBound(s.opts)
+	bound := serviceBound(s.opts, boundScopeWide)
 	covered := s.coveredChecks(containerCheckers(s))
 	m.keepOnly(coveredMembers(covered))
 	s.deliverTransitions()
@@ -251,15 +253,14 @@ func (m *healthMonitor) monitored(phase ContainerPhase) bool {
 	return m.sched == schedScheduled && phase != PhaseClosing && phase != PhaseClosed
 }
 
-// neverChecked reports whether service has no recorded result and no check
-// in flight.
+// neverChecked reports whether service has no recorded result. A monitored
+// read checks such a service, joining its first check when one is in flight.
 func (m *healthMonitor) neverChecked(service any) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	_, recorded := m.records[service]
-	_, inflight := m.inflight[service]
-	return !recorded && !inflight
+	return !recorded
 }
 
 // healthTransition is a state change waiting for the hooks: a service's

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"runtime"
@@ -607,7 +608,9 @@ func TestHealthCheck_JoinerOwnBound(t *testing.T) {
 		{name: "named_single_unbounded_at_10m", timeout: 50 * time.Millisecond, single: -time.Nanosecond, entry: named, advance: 10 * time.Minute},
 		{name: "forced_global_30ms_at_30ms", global: 30 * time.Millisecond, entry: forced, advance: 30 * time.Millisecond, want: healthCheckTestDeadlineMessage},
 		{name: "forced_global_30ms_at_29ms", global: 30 * time.Millisecond, entry: forced, advance: 29 * time.Millisecond},
-		{name: "named_global_30ms_does_not_apply", global: 30 * time.Millisecond, entry: named, advance: 10 * time.Minute},
+		{name: "named_global_30ms_does_not_apply", timeout: -time.Nanosecond, global: 30 * time.Millisecond, entry: named, advance: 10 * time.Minute},
+		{name: "named_default_10s_at_10s", entry: named, advance: 10 * time.Second, want: healthCheckTestDeadlineMessage},
+		{name: "named_default_10s_before_10s", entry: named, advance: 9999 * time.Millisecond},
 	}
 
 	for _, tt := range tests {
@@ -1500,8 +1503,9 @@ func TestHealthCheck_QueuedKeepSlotRule(t *testing.T) {
 		second func(i *RootScope) any
 	}{
 		{
-			name:   "forced_waits_for_slot",
-			holder: true,
+			name:    "forced_waits_for_slot",
+			timeout: -time.Nanosecond, // unbounded: 0 is the 10s default
+			holder:  true,
 			first: func(i *RootScope) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 				defer cancel()
@@ -1697,4 +1701,313 @@ func (healthRunTestGoroutineScheduler) ScheduleHealthRounds(_ Clock, _ func(cont
 	done := make(chan struct{})
 	go func() { <-done }()
 	return func(context.Context) error { close(done); return nil }, nil
+}
+
+// healthRunTestGoexitSuffix ends the message of a check that exited its
+// goroutine.
+const healthRunTestGoexitSuffix = "health check panic: runtime.Goexit"
+
+// healthRunTestGoexitOnce is a check calling runtime.Goexit on its first
+// call and returning nil afterwards, counting its calls.
+func healthRunTestGoexitOnce(calls *atomic.Int32) healthReportTestFunc {
+	return healthReportTestFunc{check: func(context.Context) error {
+		if calls.Add(1) == 1 {
+			runtime.Goexit()
+		}
+		return nil
+	}}
+}
+
+func TestHealthCheck_GoexitDoesNotWedge(t *testing.T) {
+	t.Parallel()
+
+	named := func(_ *testing.T, i *RootScope) error { return HealthCheckNamed(i, "db") }
+	forced := func(_ *testing.T, i *RootScope) error { return i.HealthCheck()["db"] }
+	report := func(t *testing.T, i *RootScope) error {
+		t.Helper()
+		entry := healthReportTestEntry(t, i.HealthReport(), "db")
+		if entry.Err == nil && entry.State != HealthHealthy {
+			return fmt.Errorf("state %v", entry.State)
+		}
+		return entry.Err
+	}
+
+	tests := []struct {
+		name        string
+		parallelism uint
+		entry       func(t *testing.T, i *RootScope) error
+	}{
+		{name: "named_unlimited", entry: named},
+		{name: "forced_unlimited", entry: forced},
+		{name: "forced_parallelism_1", parallelism: 1, entry: forced},
+		{name: "report_unlimited", entry: report},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				i := NewWithOpts(&InjectorOpts{
+					HealthCheckTimeout:     50 * time.Millisecond,
+					HealthCheckParallelism: tt.parallelism,
+					HealthReportCacheTTL:   -1,
+				})
+				var calls atomic.Int32
+				ProvideNamedValue(i, "db", healthRunTestGoexitOnce(&calls))
+
+				first := tt.entry(t, i)
+				is.ErrorIs(first, ErrHealthCheckPanic)
+				if is.Error(first) {
+					is.True(strings.HasSuffix(first.Error(), healthRunTestGoexitSuffix), "first: %v", first)
+				}
+				is.NoError(tt.entry(t, i), "second call")
+				is.Equal(int32(2), calls.Load(), "calls of the check")
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_GoexitAllWaiters(t *testing.T) {
+	t.Parallel()
+
+	const waiters = 10
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		panics := &healthRunTestPanicRecorder{}
+		log := newLogRecorder(slog.LevelDebug)
+		i := NewWithOpts(&InjectorOpts{HookContainerPanic: panics.hook, Logger: log.logger()})
+		release := make(chan struct{})
+		ProvideNamedValue(i, "db", healthReportTestFunc{check: func(context.Context) error {
+			<-release
+			runtime.Goexit()
+			return nil
+		}})
+
+		results := make(chan error, waiters)
+		for range waiters {
+			go func() { results <- HealthCheckNamed(i, "db") }()
+		}
+		synctest.Wait()
+		close(release)
+
+		for range waiters {
+			err := <-results
+			is.ErrorIs(err, ErrHealthCheckPanic)
+			if is.Error(err) {
+				is.True(strings.HasSuffix(err.Error(), healthRunTestGoexitSuffix), "got %v", err)
+			}
+		}
+		is.Empty(panics.recorded(), "HookContainerPanic calls")
+		recovered := log.withMessage("panic recovered")
+		if is.Len(recovered, 1, "one Error record for the one check") {
+			is.Equal(slog.LevelError, recovered[0].level)
+			is.Equal("healthcheck", recovered[0].attrs["point"])
+			is.Equal("db", recovered[0].attrs["service"])
+			is.Equal("runtime.Goexit", recovered[0].attrs["panic_type"])
+		}
+		values := log.withMessage("panic value")
+		if is.Len(values, 1, "one Debug record for the one check") {
+			is.Equal(slog.LevelDebug, values[0].level)
+			is.Equal("runtime.Goexit", values[0].attrs["value"])
+		}
+		i.Shutdown()
+	})
+}
+
+// TestHealthCheck_QueuedDeadlineBoundary pins that a check whose per-service
+// bound was deferred until it left the queue, and that returns exactly when
+// that bound elapses, reports a timeout (the "at the deadline" guard of
+// callResult). The fake clock fires the bound and wakes the check at the
+// same instant in no fixed order, so the guard decides only some runs: with
+// the guard weakened to clock.Now().After(deadline) (mutant M15), a few
+// percent of the runs return nil, so the mutant is not equivalent.
+func TestHealthCheck_QueuedDeadlineBoundary(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 10*time.Second)
+
+	const runs = 200
+
+	var unexpected int
+	var firstErr error
+	synctest.Test(t, func(t *testing.T) {
+		for range runs {
+			fc := newFakeClock()
+			i := NewWithOpts(&InjectorOpts{
+				Clock:                  fc,
+				HealthCheckParallelism: 1,
+				HealthCheckTimeout:     10 * time.Millisecond,
+				HealthReportCacheTTL:   -1,
+			})
+			hog := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "hog", hog)
+			first := make(chan map[string]error, 1)
+			go func() { first <- i.HealthCheck() }()
+			synctest.Wait()
+
+			// "db" waits behind "hog" for the only slot
+			ProvideNamedValue(i, "db", &healthCheckTestOnClock{clock: fc, duration: 10 * time.Millisecond})
+			second := make(chan map[string]error, 1)
+			go func() { second <- i.HealthCheck() }()
+			synctest.Wait()
+
+			close(hog.release) // "db" takes the slot: its bound starts now
+			synctest.Wait()
+			fc.Advance(10 * time.Millisecond) // "db" returns exactly at its bound
+			err := (<-second)["db"]
+			<-first
+
+			if err == nil || err.Error() != healthCheckTestDeadlineMessage {
+				unexpected++
+				if firstErr == nil {
+					firstErr = fmt.Errorf("got %v", err) //nolint:errorlint
+				}
+			}
+			i.Shutdown()
+		}
+	})
+
+	assert.Zero(t, unexpected, "runs not timing out at the deferred bound (first: %v)", firstErr)
+}
+
+// healthRunTestTwoCalls is a Healthchecker whose first call blocks until
+// first is closed and whose later calls block until second is closed.
+type healthRunTestTwoCalls struct {
+	calls         atomic.Int32
+	first, second chan struct{}
+}
+
+func newHealthRunTestTwoCalls() *healthRunTestTwoCalls {
+	return &healthRunTestTwoCalls{first: make(chan struct{}), second: make(chan struct{})}
+}
+
+func (c *healthRunTestTwoCalls) HealthCheck() error {
+	if c.calls.Add(1) == 1 {
+		<-c.first
+	} else {
+		<-c.second
+	}
+	return nil
+}
+
+// healthRunTestAbandon starts a single-service check of "db" with a context
+// it then cancels, leaving the check running but abandoned: a caller
+// arriving afterwards waits for it to return, then for a fresh check.
+func healthRunTestAbandon(t *testing.T, i *RootScope) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	go func() { first <- HealthCheckNamedWithContext(ctx, i, "db") }()
+	synctest.Wait()
+	cancel()
+	require.ErrorIs(t, <-first, context.Canceled, "the abandoned call")
+}
+
+func TestHealthCheck_QueuedBehindAbandonedCall(t *testing.T) {
+	t.Parallel()
+
+	t.Run("service_left_while_callers_queued", func(t *testing.T) {
+		t.Parallel()
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			i := New()
+			db := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "db", db)
+			healthRunTestAbandon(t, i)
+
+			queued := make(chan error, 1)
+			go func() { queued <- HealthCheckNamed(i, "db") }()
+			synctest.Wait()
+
+			// "db" leaves while the caller waits for the abandoned check
+			OverrideNamedValue(i, "db", &healthReportTestSwitch{})
+			close(db.release)
+
+			is.NoError(<-queued, "the queued caller gets the result of the check of the service that left")
+			is.Equal(int32(1), db.calls.Load(), "calls of the check")
+			i.Shutdown()
+		})
+	})
+
+	// The fresh check is built from whichever queued caller the map yields
+	// first: when it is the pooled HealthCheck() call, the single-service
+	// caller takes the fresh check over and runs it at once. Both orders
+	// run over the iterations.
+	t.Run("take_over_by_fresh_check", func(t *testing.T) {
+		t.Parallel()
+
+		const runs = 20
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			for range runs {
+				i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1})
+				db := newHealthRunTestBlocking(nil)
+				ProvideNamedValue(i, "db", db)
+				healthRunTestAbandon(t, i)
+
+				pooled := make(chan map[string]error, 1)
+				single := make(chan error, 1)
+				go func() { pooled <- i.HealthCheck() }()
+				go func() { single <- HealthCheckNamed(i, "db") }()
+				synctest.Wait()
+				close(db.release)
+
+				is.NoError((<-pooled)["db"])
+				is.NoError(<-single)
+				is.Equal(int32(2), db.calls.Load(), "the abandoned check and one fresh check")
+				i.Shutdown()
+			}
+		})
+	})
+
+	// The fresh check is pending since the earliest queued caller asked,
+	// whichever caller the map yields first.
+	t.Run("queue_ordering", func(t *testing.T) {
+		t.Parallel()
+
+		const runs = 20
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			for range runs {
+				fc := newFakeClockAt(healthReportTestEpoch)
+				i := NewWithOpts(&InjectorOpts{Clock: fc})
+				db := newHealthRunTestTwoCalls()
+				ProvideNamedValue(i, "db", db)
+				healthRunTestAbandon(t, i)
+
+				fc.Advance(time.Second)
+				earlier := make(chan map[string]error, 1)
+				go func() { earlier <- i.HealthCheck() }()
+				synctest.Wait()
+				fc.Advance(time.Second)
+				later := make(chan error, 1)
+				go func() { later <- HealthCheckNamed(i, "db") }()
+				synctest.Wait()
+
+				close(db.first) // the abandoned check returns: the fresh one starts
+				synctest.Wait()
+				ended, cancel := context.WithCancel(context.Background())
+				cancel()
+				entry := healthReportTestEntry(t, i.HealthReportWithContext(ended), "db")
+				is.Equal(healthReportTestEpoch.Add(time.Second), entry.PendingSince, "pending since the earliest queued caller asked")
+
+				close(db.second)
+				is.NoError((<-earlier)["db"])
+				is.NoError(<-later)
+				i.Shutdown()
+			}
+		})
+	})
 }
