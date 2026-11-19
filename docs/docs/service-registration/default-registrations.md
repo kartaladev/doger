@@ -75,7 +75,7 @@ An explicit service registered in an ancestor afterwards does not replace a defa
 
 ## Lifecycle {#lifecycle}
 
-A default that **yields** behaves like an alias of the service it yields to. It is never started, shut down, health-checked or handled by a kind on its own, so the target goes through each of these exactly once. A health check from the default's scope reports the target's result under the name. The other options of the default (`AsStarter`, `DependsOn`, `AsRunnable`, kinds, `WithOrder`) have no effect.
+A default that **yields** behaves like an alias of the service it yields to: on every resolution it resolves that name in the ancestor scope, so a later `Override*` of the target is seen, and a target that was shut down and removed gives an error matching `ErrServiceNotFound`. It is never started, shut down, health-checked or handled by a kind on its own, so the target goes through each of these exactly once. A health check from the default's scope reports the target's result under the name. The other options of the default (`AsStarter`, `DependsOn`, `AsRunnable`, kinds, `WithOrder`) have no effect.
 
 A default that **uses its own provider** takes part in start, kind handling, health checks and shutdown exactly like the same registration without `AsDefault()`.
 

@@ -193,9 +193,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 28. A yielded default follows its target by name
 
-- [ ] 28.1 RED: add `TestAsDefault_YieldedFollowsOverride` (5 rows), `TestAsDefault_YieldedAliasFollowsOverride` and `TestAsDefault_YieldedConcurrentOverride`, and add `TestAsDefault_NilInjector` (the former test of that name is now `TestAsDefault_ResolvesByType`) plus the `doger:`/`Alias` texts of existing default tests (default-registrations scenarios); verify the override rows fail (`expected app-dialer-2, actual app-dialer-1`)
-- [ ] 28.2 GREEN: each yielded resolution looks the name up in `targetScope` instead of the stored wrapper, returning `ErrServiceNotFound` when gone; verify the 28.1 tests pass under `-race` and `go test -race -run TestAsDefault .` and `make test` are green
-- [ ] 28.3 REFACTOR: Inline Variable to remove the stored `target` field, keeping `targetScope` for Explain; verify `make test` and `make lint` pass
+- [x] 28.1 RED: add `TestAsDefault_YieldedFollowsOverride` (5 rows), `TestAsDefault_YieldedAliasFollowsOverride` and `TestAsDefault_YieldedConcurrentOverride`, and add `TestAsDefault_NilInjector` (the former test of that name is now `TestAsDefault_ResolvesByType`) plus the `doger:`/`Alias` texts of existing default tests (default-registrations scenarios); verify the override rows fail (`expected app-dialer-2, actual app-dialer-1`)
+- [x] 28.2 GREEN: each yielded resolution looks the name up in `targetScope` instead of the stored wrapper, returning `ErrServiceNotFound` when gone; verify the 28.1 tests pass under `-race` and `go test -race -run TestAsDefault .` and `make test` are green
+- [x] 28.3 REFACTOR: Inline Variable to remove the stored `target` field, keeping `targetScope` for Explain; verify `make test` and `make lint` pass
 
 ## 29. Per-service hook signatures with context and elapsed
 
