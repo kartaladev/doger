@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
 	"github.com/kartaladev/doger"
+	dogerclockwork "github.com/kartaladev/doger/clock/clockwork"
 )
 
 var _ doger.HealthScheduler = (*Scheduler)(nil)
@@ -20,6 +21,11 @@ const DefaultInterval = 30 * time.Second
 
 // ErrInvalidOption is matched by the error New returns for an invalid option.
 var ErrInvalidOption = errors.New("doger: invalid option")
+
+// ErrUnsupportedClock is matched by the error ScheduleHealthRounds returns,
+// without WithScheduler, for a clock gocron cannot run on: a clock neither
+// made by dogerclockwork.Wrap nor equal to doger.RealClock(), or nil.
+var ErrUnsupportedClock = errors.New("doger: unsupported clock")
 
 // Option configures a Scheduler. It returns an error for an invalid value.
 type Option func(*config) error
@@ -140,9 +146,14 @@ func WithScheduler(s gocron.Scheduler) Option {
 // ScheduleHealthRounds implements doger.HealthScheduler: it schedules round
 // as a gocron job on clock, and returns the function stopping it. Without
 // WithScheduler, it creates and starts its own gocron scheduler, which stop
-// shuts down within its context; a job gocron rejects is returned as an
-// error, and leaves no goroutine behind.
-func (s *Scheduler) ScheduleHealthRounds(clock clockwork.Clock, round func(ctx context.Context)) (func(ctx context.Context) error, error) {
+// shuts down within its context, on the clockwork clock matching clock: the
+// one dogerclockwork.Unwrap returns, or clockwork's real clock for
+// doger.RealClock(). Any other clock, nil included, returns an error
+// matching ErrUnsupportedClock; the container then stays unmonitored. A job
+// gocron rejects is returned as an error too, and neither leaves a goroutine
+// behind. With WithScheduler, clock is ignored: the shared scheduler runs on
+// its own clock.
+func (s *Scheduler) ScheduleHealthRounds(clock doger.Clock, round func(ctx context.Context)) (func(ctx context.Context) error, error) {
 	definition := s.cfg.definition
 	if definition == nil {
 		definition = gocron.DurationJob(s.cfg.interval)
@@ -164,7 +175,12 @@ func (s *Scheduler) ScheduleHealthRounds(clock clockwork.Clock, round func(ctx c
 		return sharedStop(s.cfg.shared, job.ID(), rounds), nil
 	}
 
-	scheduler, err := gocron.NewScheduler(schedulerOptions(s.cfg, clock)...)
+	runOn, err := gocronClock(clock)
+	if err != nil {
+		return nil, err
+	}
+
+	scheduler, err := gocron.NewScheduler(schedulerOptions(s.cfg, runOn)...)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +192,20 @@ func (s *Scheduler) ScheduleHealthRounds(clock clockwork.Clock, round func(ctx c
 	scheduler.Start()
 
 	return scheduler.ShutdownWithContext, nil
+}
+
+// gocronClock returns the clockwork clock an own gocron scheduler runs on
+// for clock: the clock dogerclockwork.Unwrap returns, clockwork's real clock
+// for doger.RealClock(), and an error matching ErrUnsupportedClock otherwise.
+func gocronClock(clock doger.Clock) (clockwork.Clock, error) {
+	if unwrapped, ok := dogerclockwork.Unwrap(clock); ok {
+		return unwrapped, nil
+	}
+	if clock == doger.RealClock() {
+		return clockwork.NewRealClock(), nil
+	}
+
+	return nil, fmt.Errorf("%w: %T", ErrUnsupportedClock, clock)
 }
 
 // sharedStop returns the stop of the job id on scheduler, a scheduler the

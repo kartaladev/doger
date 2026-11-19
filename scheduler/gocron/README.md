@@ -22,13 +22,28 @@ The container calls the scheduler once it reaches `PhaseReady` and stops it when
 |---|---|
 | A duration job every 30s (`DefaultInterval`) | `WithInterval(d)`, or any job definition with `WithJobDefinition(def)`, such as `gocron.CronJob("*/5 * * * *", false)`; a job definition wins over an interval |
 | The first round at once | `WithStartAt(opt)`, such as `gocron.WithStartDateTime(t)` |
-| The container's clock | `WithScheduler(s)` uses `s`'s own clock |
+| The container's clock: a clock made by `dogerclockwork.Wrap(c)` runs gocron on `c`, the default `doger.RealClock()` on clockwork's real clock | `WithScheduler(s)` uses `s`'s own clock and ignores the container's |
 | Singleton mode with `gocron.LimitModeReschedule`: a tick that finds a round still running is skipped | `WithJobOptions(opts...)`, applied after the defaults |
 | One gocron scheduler per container, owned by the adapter | `WithScheduler(s)`: the job is added to `s`, which the application starts and shuts down; stopping removes only that job |
 
 `WithSchedulerOptions(opts...)` passes options such as `gocron.WithLogger` or `gocron.WithMonitor` to the adapter's own gocron scheduler.
 
 `New` returns an error matching `ErrInvalidOption` for a non-positive interval or a nil job definition, start-at option or scheduler.
+
+## Clock
+
+Without `WithScheduler`, the adapter runs gocron on the container's clock. In tests, wrap a clockwork fake clock with the `clock/clockwork` module:
+
+```go
+fake := clockwork.NewFakeClock()
+injector := doger.NewWithOpts(&doger.InjectorOpts{
+    Clock:           dogerclockwork.Wrap(fake),
+    HealthScheduler: scheduler,
+})
+// fake.Advance(dogergocron.DefaultInterval) runs the next round
+```
+
+Any other `doger.Clock`, such as one written by the consumer, cannot drive gocron: `ScheduleHealthRounds` returns an error matching `ErrUnsupportedClock`, the container logs it at Error level and stays unmonitored, and reads check stale services on demand. Use `WithScheduler(s)` to schedule on a gocron scheduler of your own instead.
 
 ## Caveats
 

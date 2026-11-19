@@ -82,10 +82,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 12. gocron adapter maps the container clock
 
-- [ ] 12.1 RED: add `TestScheduler_ClockMapping` and `TestScheduler_UnsupportedClockUnmonitored`, and switch `TestScheduler_DefaultCadence`/`TestScheduler_SingletonSkipsTick` to `dogerclockwork.Wrap(fake)`; verify `go test -race ./...` in `scheduler/gocron` fails on the signature and the missing `ErrUnsupportedClock`
-- [ ] 12.2 GREEN: `ScheduleHealthRounds(clock doger.Clock, …)` maps an `Unwrap` result, maps `RealClock()` to `clockwork.NewRealClock()`, else returns `ErrUnsupportedClock` (also for nil; ignored with `WithScheduler`); require `clock/clockwork`; verify `go test -race ./...` in `scheduler/gocron` passes with goleak
-- [ ] 12.3 REFACTOR: Extract Function `gocronClock(doger.Clock) (clockwork.Clock, error)`; verify `go test -race ./...` and `golangci-lint run ./...` in `scheduler/gocron` pass
-- [ ] 12.4 Docs: update the gocron README/godoc and `ExampleNew` to show `Clock: dogerclockwork.Wrap(fake)`; verify `go test -run Example ./...` in `scheduler/gocron` passes
+- [x] 12.1 RED: add `TestScheduler_ClockMapping` and `TestScheduler_UnsupportedClockUnmonitored`, and switch `TestScheduler_DefaultCadence`/`TestScheduler_SingletonSkipsTick` to `dogerclockwork.Wrap(fake)`; verify `go test -race ./...` in `scheduler/gocron` fails on the signature and the missing `ErrUnsupportedClock`
+- [x] 12.2 GREEN: `ScheduleHealthRounds(clock doger.Clock, …)` maps an `Unwrap` result, maps `RealClock()` to `clockwork.NewRealClock()`, else returns `ErrUnsupportedClock` (also for nil; ignored with `WithScheduler`); require `clock/clockwork`; verify `go test -race ./...` in `scheduler/gocron` passes with goleak
+- [x] 12.3 REFACTOR: Extract Function `gocronClock(doger.Clock) (clockwork.Clock, error)`; verify `go test -race ./...` and `golangci-lint run ./...` in `scheduler/gocron` pass
+- [x] 12.4 Docs: update the gocron README/godoc and `ExampleNew` to show `Clock: dogerclockwork.Wrap(fake)`; verify `go test -run Example ./...` in `scheduler/gocron` passes
 
 ## 13. Shutdown panic isolation
 
