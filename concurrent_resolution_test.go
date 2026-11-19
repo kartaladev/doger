@@ -241,6 +241,15 @@ func TestConcurrentResolution_CapturedInjectorNoCycle(t *testing.T) {
 	assert.Equal(t, 3, value)
 }
 
+// waitingForBuilds returns how many goroutines wait for a build in flight
+// in root.
+func waitingForBuilds(root *RootScope) int {
+	waits := root.buildWaits()
+	waits.mu.Lock()
+	defer waits.mu.Unlock()
+	return len(waits.edges)
+}
+
 // resolutionDB is the instance of "db" in the single-build tests.
 type resolutionDB struct{}
 
@@ -374,14 +383,12 @@ func TestConcurrentResolution_WaitersShareFailure(t *testing.T) {
 
 			root := New()
 			var calls atomic.Int32
-			var waiting atomic.Int32
-			root.AddBeforeInvocationHook(func(*Scope, string) { waiting.Add(1) })
 			ProvideNamed(root, "db", func(Injector) (*resolutionDB, error) {
 				if calls.Add(1) == 1 {
-					for waiting.Load() < 9 {
+					// the 8 others wait for this build
+					for waitingForBuilds(root) < 8 {
 						runtime.Gosched()
 					}
-					time.Sleep(10 * time.Millisecond) // the 8 others reach the wait
 					return tt.outcome()
 				}
 				return &resolutionDB{}, nil
