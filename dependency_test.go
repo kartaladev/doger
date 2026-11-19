@@ -369,6 +369,22 @@ func TestDeclareDependency(t *testing.T) {
 				assert.Equal(t, "tenant", explained.ScopeName)
 			},
 		},
+		{
+			name:      "nil_injector",
+			injector:  func(*RootScope, *Scope) Injector { return nil },
+			dependent: "scheduler", dependency: "job-a", err: ErrNilInjector,
+			check: func(t *testing.T, root *RootScope, _ *Scope) {
+				assert.Empty(t, explainedNames(t, root, "scheduler", false), "the root records no edge")
+			},
+		},
+		{
+			name:      "typed_nil_scope",
+			injector:  func(*RootScope, *Scope) Injector { return (*Scope)(nil) },
+			dependent: "scheduler", dependency: "job-a", err: ErrNilInjector,
+			check: func(t *testing.T, root *RootScope, _ *Scope) {
+				assert.Empty(t, explainedNames(t, root, "scheduler", false), "the root records no edge")
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -388,6 +404,9 @@ func TestDeclareDependency(t *testing.T) {
 
 			if tt.err != nil {
 				assert.ErrorIs(t, err, tt.err)
+				if tt.check != nil {
+					tt.check(t, root, tenant)
+				}
 				return
 			}
 			require.NoError(t, err)
@@ -679,6 +698,8 @@ func TestDependencySource_UnmarshalText(t *testing.T) {
 		{text: "depends-on", source: DependencySourceDependsOn},
 		{text: "declared", source: DependencySourceDeclared},
 		{text: "other", errMsg: "other"},
+		{text: "unknown", errMsg: "unknown"},
+		{text: "", errMsg: "doger: unknown dependency source"},
 	}
 
 	for _, tt := range tests {
@@ -700,6 +721,42 @@ func TestDependencySource_UnmarshalText(t *testing.T) {
 			}
 			is.NoError(err)
 			is.Equal(ExplainServiceDependencyOutput{Service: "db", Source: tt.source}, out)
+		})
+	}
+}
+
+func TestDependencySource_MarshalText(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		source  DependencySource
+		text    string
+		marshal string
+		errMsg  string
+	}{
+		{name: "invoked", source: DependencySourceInvoked, text: "invoked", marshal: "invoked"},
+		{name: "depends-on", source: DependencySourceDependsOn, text: "depends-on", marshal: "depends-on"},
+		{name: "declared", source: DependencySourceDeclared, text: "declared", marshal: "declared"},
+		{name: "zero", source: DependencySource(0), text: "unknown", errMsg: "doger: invalid dependency source 0"},
+		{name: "past the last", source: DependencySource(9), text: "unknown", errMsg: "doger: invalid dependency source 9"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			is.Equal(tt.text, tt.source.String())
+
+			marshalled, err := tt.source.MarshalText()
+			if tt.errMsg != "" {
+				is.ErrorContains(err, tt.errMsg)
+				is.Nil(marshalled)
+				return
+			}
+			is.NoError(err)
+			is.Equal(tt.marshal, string(marshalled))
 		})
 	}
 }

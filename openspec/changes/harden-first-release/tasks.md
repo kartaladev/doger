@@ -232,10 +232,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 34. DependencySource zero is invalid; DeclareDependency rejects nil
 
-- [ ] 34.1 RED: add nil and typed-nil rows to `TestDeclareDependency`, "unknown"/"" rows to `TestDependencySource_UnmarshalText` and `TestDependencySource_MarshalText` (scenarios "Declaring edges dynamically", "Explained output round-trips through JSON", "Encoding dependency sources"); verify `go test -race -run 'TestDeclareDependency|TestDependencySource_' .` fails on the new rows
-- [ ] 34.2 GREEN: DependencySource constants start at `iota + 1` (zero: `String()` "unknown", `MarshalText` error `doger: invalid dependency source N`) and `DeclareDependency` returns `ErrNilInjector` for nil/typed-nil; verify the 34.1 tests pass, `TestExplain_EdgeSourceCompat` stays green and `make test` is green
-- [ ] 34.3 REFACTOR: Replace Loop with a lookup table for the source texts; verify `make test` and `make lint` pass
-- [ ] 34.4 Docs: godoc of `DependencySource` and `DeclareDependency`; verify `go doc doger.DependencySource` shows the invalid zero value
+- [x] 34.1 RED: add nil and typed-nil rows to `TestDeclareDependency`, "unknown"/"" rows to `TestDependencySource_UnmarshalText` and `TestDependencySource_MarshalText` (scenarios "Declaring edges dynamically", "Explained output round-trips through JSON", "Encoding dependency sources"); verify `go test -race -run 'TestDeclareDependency|TestDependencySource_' .` fails on the new rows
+- [x] 34.2 GREEN: DependencySource constants start at `iota + 1` (zero: `String()` "unknown", `MarshalText` error `doger: invalid dependency source N`) and `DeclareDependency` returns `ErrNilInjector` for nil/typed-nil; verify the 34.1 tests pass, `TestExplain_EdgeSourceCompat` stays green and `make test` is green
+- [x] 34.3 REFACTOR: Replace Loop with a lookup table for the source texts; verify `make test` and `make lint` pass
+- [x] 34.4 Docs: godoc of `DependencySource` and `DeclareDependency`; verify `go doc doger.DependencySource` shows the invalid zero value
 
 ## 35. Extensions: ExtendIntoRoot, explicit root, Logger decline record
 

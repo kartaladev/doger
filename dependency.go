@@ -10,13 +10,15 @@ import (
 // handler during Start, for example to make a scheduler depend on the jobs
 // it drives.
 //
-// dependent is resolved from i (a nil i gives [ErrNilInjector]), and
+// dependent is resolved from i, and
 // dependency from the dependent's own scope or its ancestors, as Invoke
 // would. A name that cannot be resolved gives an error matching
 // [ErrServiceNotFound]. If dependency already reaches dependent through
 // recorded edges or static [DependsOn] declarations, the edge would close a
 // cycle and an error matching [ErrCircularDependency] is returned. Declaring
-// an edge twice changes nothing.
+// an edge twice changes nothing. A nil i, including a typed-nil *RootScope
+// or *Scope, gives [ErrNilInjector] and records nothing: there is no
+// default container.
 //
 // A declared edge orders start (when declared before or during
 // [StageBeforeStart]) and shutdown, but not construction, because it builds

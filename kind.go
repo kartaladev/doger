@@ -42,7 +42,7 @@ func (s Stage) String() string {
 	case StageAfterStart:
 		return "after-start"
 	default:
-		return "unknown"
+		return unknownText
 	}
 }
 

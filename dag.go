@@ -1,7 +1,6 @@
 package doger
 
 import (
-	"fmt"
 	"sync"
 )
 
@@ -38,12 +37,16 @@ type ServiceDescription struct {
 // DependencySource says how a dependency edge was recorded. When an edge
 // was recorded several ways, the first of invoked, depends-on and declared
 // is kept.
+//
+// The constants start at 1: the zero value is invalid. Its String is
+// "unknown" and MarshalText fails for it, so a struct literal that means
+// an invoked edge sets DependencySourceInvoked explicitly.
 type DependencySource int
 
 const (
 	// DependencySourceInvoked is an edge recorded when a provider invoked
-	// the service. It is the zero value.
-	DependencySourceInvoked DependencySource = iota
+	// the service.
+	DependencySourceInvoked DependencySource = iota + 1
 	// DependencySourceDependsOn is an edge from a DependsOn or
 	// DependsOnNamed registration option.
 	DependencySourceDependsOn
@@ -51,37 +54,56 @@ const (
 	DependencySourceDeclared
 )
 
-// String returns "invoked", "depends-on" or "declared", and
-// "DependencySource(n)" for an unknown value.
-func (s DependencySource) String() string {
-	switch s {
-	case DependencySourceInvoked:
-		return "invoked"
-	case DependencySourceDependsOn:
-		return "depends-on"
-	case DependencySourceDeclared:
-		return "declared"
-	default:
-		return fmt.Sprintf("DependencySource(%d)", int(s))
-	}
+// unknownText is the String of an invalid enumerated value, such as the
+// zero DependencySource or Stage.
+const unknownText = "unknown"
+
+// dependencySourceTexts maps each DependencySource constant to its text.
+var dependencySourceTexts = map[DependencySource]string{
+	DependencySourceInvoked:   "invoked",
+	DependencySourceDependsOn: "depends-on",
+	DependencySourceDeclared:  "declared",
 }
 
-// MarshalText encodes the source as its String form, so JSON shows it by name.
+// dependencySourcesByText maps each text of dependencySourceTexts back to
+// its DependencySource.
+var dependencySourcesByText = map[string]DependencySource{
+	"invoked":    DependencySourceInvoked,
+	"depends-on": DependencySourceDependsOn,
+	"declared":   DependencySourceDeclared,
+}
+
+// String returns "invoked", "depends-on" or "declared", and "unknown" for
+// any other value, the zero value included.
+func (s DependencySource) String() string {
+	if text, ok := dependencySourceTexts[s]; ok {
+		return text
+	}
+
+	return unknownText
+}
+
+// MarshalText encodes the source as its String form, so JSON shows it by
+// name. It fails for any value other than the three constants.
 func (s DependencySource) MarshalText() ([]byte, error) {
-	return []byte(s.String()), nil
+	text, ok := dependencySourceTexts[s]
+	if !ok {
+		return nil, libErrorf("invalid dependency source %d", int(s))
+	}
+
+	return []byte(text), nil
 }
 
 // UnmarshalText decodes "invoked", "depends-on" or "declared", so explained
 // output read back from JSON keeps its sources. Any other text is an error.
 func (s *DependencySource) UnmarshalText(text []byte) error {
-	for _, source := range []DependencySource{DependencySourceInvoked, DependencySourceDependsOn, DependencySourceDeclared} {
-		if source.String() == string(text) {
-			*s = source
-			return nil
-		}
+	source, ok := dependencySourcesByText[string(text)]
+	if !ok {
+		return libErrorf("unknown dependency source %q", text)
 	}
+	*s = source
 
-	return libErrorf("unknown dependency source %q", text)
+	return nil
 }
 
 // newDAG creates a new DAG (Directed Acyclic Graph) with initialized dependencies and dependents maps.
