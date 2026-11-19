@@ -278,8 +278,18 @@ check_release() {
 		step_body "$step" | grep -q '< <(modules)' ||
 			fail "$sr: $step does not run over every released module (< <(modules))"
 	done
-	step_body tidy | grep -q 'go mod tidy' ||
-		fail "$sr: tidy does not run 'go mod tidy'"
+	step_body tidy | grep -q 'tidy_module' ||
+		fail "$sr: tidy does not run tidy_module (drop test-only requirements, then go mod tidy)"
+	# tidy alone keeps a test-only requirement a dependency's graph mentions
+	local tm dep
+	tm="$(step_body tidy_module)"
+	{ grep -q -- '-droprequire=' <<<"$tm" && grep -q 'go mod tidy' <<<"$tm" &&
+		[ "$(grep -n -- '-droprequire=' <<<"$tm" | head -1 | cut -d: -f1)" -lt "$(grep -n 'go mod tidy' <<<"$tm" | head -1 | cut -d: -f1)" ]; } ||
+		fail "$sr: tidy_module does not drop the test-only requirements before 'go mod tidy'"
+	for dep in github.com/stretchr/testify go.uber.org/goleak; do
+		awk '/^test_only=\(/{on=1; next} on && /^\)/{exit} on' "$s" | grep -qx "[[:space:]]*$dep" ||
+			fail "$sr: test_only does not list $dep"
+	done
 	# every sibling requirement is pinned, and every replace goes
 	# shellcheck disable=SC2016 # matches literal $dep and $1 in the script
 	{ step_body pin | grep -q 'sibling_requirements' && step_body pin | grep -q -- '-require=\$dep@\$1'; } ||
@@ -613,6 +623,22 @@ pin() {
 	expect "$fx" release fail 'not derived from the go\.mod files'
 	expect "$fx" release fail 'pin does not pin every released sibling requirement'
 	expect "$fx" release fail 'pin does not drop every replace directive'
+
+	# release: a tidy that keeps test-only requirements gin's graph mentions
+	put scripts/release-steps.sh 'test_only=(
+	go.uber.org/goleak
+)
+tidy_module() {
+	go mod tidy
+	go mod edit -droprequire=go.uber.org/goleak
+}
+tidy() {
+	while IFS= read -r dir; do
+		(cd "$dir" && tidy_module)
+	done < <(modules)
+}'
+	expect "$fx" release fail 'tidy_module does not drop the test-only requirements before .go mod tidy.'
+	expect "$fx" release fail 'test_only does not list github\.com/stretchr/testify'
 
 	# dependabot: a widened job or step condition, and no module list
 	fixture

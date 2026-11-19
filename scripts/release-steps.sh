@@ -9,7 +9,8 @@
 #                          the root), each after the siblings it requires
 #   strip                  drops examples from go.work and removes tests,
 #                          examples/, docs/ and tests/
-#   tidy                   go mod tidy in every released module
+#   tidy                   drops the test-only requirements, then go mod
+#                          tidy, in every released module
 #   pin <semver>           every released module requires its released
 #                          siblings at <semver> and has no replace left
 #   verify                 go build and go vet in every released module
@@ -108,14 +109,58 @@ strip() {
 	rm -rf examples/ docs/ tests/
 }
 
+# test_only lists the modules only tests use. scripts/release-dry-run.sh
+# checks that no released go.mod requires them unless a non-test package
+# imports them.
+test_only=(
+	github.com/stretchr/testify
+	go.uber.org/goleak
+	github.com/jonboulle/clockwork
+)
+
+# tidy_module drops the test-only requirements of the module in the
+# current directory, then runs go mod tidy. Tidy alone keeps a requirement
+# the go.mod already lists when a dependency's own graph mentions it (gin
+# and echo mention testify), so the drop comes first. Tidy re-adds any that
+# a non-test package really imports, at the version the module required.
+tidy_module() {
+	local dep had
+	local -a drops=() kept=()
+	for dep in "${test_only[@]}"; do
+		had="$(go mod edit -json | jq -r --arg p "$dep" '.Require // [] | map(select(.Path == $p)) | .[0].Version // empty')"
+		[ -n "$had" ] || continue
+		drops+=("-droprequire=$dep")
+		kept+=("$dep@$had")
+	done
+	if [ "${#drops[@]}" -gt 0 ]; then
+		go mod edit "${drops[@]}"
+	fi
+	go mod tidy
+
+	# a re-added requirement keeps the version the module had
+	local spec now
+	local -a restore=()
+	for spec in ${kept[@]+"${kept[@]}"}; do
+		dep="${spec%@*}"
+		now="$(go mod edit -json | jq -r --arg p "$dep" '.Require // [] | map(select(.Path == $p)) | .[0].Version // empty')"
+		if [ -n "$now" ] && [ "$now" != "${spec#*@}" ]; then
+			restore+=("-require=$spec")
+		fi
+	done
+	if [ "${#restore[@]}" -gt 0 ]; then
+		go mod edit "${restore[@]}"
+		go mod tidy
+	fi
+}
+
 # go mod tidy everywhere while the local replace directives still point at
 # the siblings: with the tests gone, test-only requirements leave every
 # go.mod
 tidy() {
 	local dir
 	while IFS= read -r dir; do
-		echo "go mod tidy in $dir"
-		(cd "$dir" && go mod tidy)
+		echo "go mod tidy in $dir (test-only requirements dropped first)"
+		(cd "$dir" && tidy_module)
 	done < <(modules)
 }
 
