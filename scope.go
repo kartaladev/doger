@@ -458,15 +458,20 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // service (never built, without a Shutdown method, an alias, a transient
 // service or an export) gets no error. The HookBeforeShutdown and
 // HookAfterShutdown hooks still run for each of them, the latter with that
-// error (nil when none).
+// error (nil when none), and the call waits for them: a hook that never
+// returns blocks the call, even though ctx has ended.
 //
 // The call returns once ctx ends, even while a service's Shutdown, or the
 // build of a service, still runs: each such service is reported with ctx's
 // error and abandoned. Its Shutdown keeps running in the background, and its
-// HookAfterShutdown hooks run when it returns; a build still running then
-// finds the service shut down, so its instance is shut down once and never
-// handed out (the invoker gets an error matching ErrShutdown). With a
-// context that never ends, the call waits for every service and build.
+// HookAfterShutdown hooks run when it returns; a panic it raises then is
+// logged, the operation's HookContainerPanic dispatch being over. A build in
+// flight finds the service shut down when it completes: its instance is
+// never handed out (the invoker gets an error matching ErrShutdown) and is
+// shut down once, with this call's context, before the call returns when
+// ctx allows it, so its error or panic is reported under the service and
+// its dependencies shut down after it. With a context that never ends, the
+// call waits for every service and build.
 //
 // To give services time to shut down, pass a context that is still live,
 // for example context.WithTimeout(context.Background(), grace) created when
@@ -798,9 +803,16 @@ func (s *Scope) shutdownServicesWithoutDependenciesInParallel(ctx context.Contex
 		waitCtx = context.WithoutCancel(ctx)
 	}
 	for _, name := range serviceNames {
+		// removed before its goroutine starts: an abandoned service is never
+		// listed, and dispatched, again by a later layer
+		serviceAny, err := s.takeService(name)
+		if err != nil {
+			outcomes <- outcome{desc: newServiceDescription(s.id, s.name, name), err: err}
+			continue
+		}
 		go func() {
 			start := s.clock().Now()
-			err := s.shutdownServiceOf(ctx, name, panics)
+			err := s.shutdownTaken(ctx, name, serviceAny, panics)
 			outcomes <- outcome{desc: newServiceDescription(s.id, s.name, name), err: err, took: s.clock().Since(start)}
 		}()
 	}
@@ -1190,16 +1202,32 @@ func (s *Scope) shutdownService(ctx context.Context, name string) error {
 // shutdownServiceOf shuts the service name down as part of a shutdown whose
 // first panic panics keeps (nil for none).
 func (s *Scope) shutdownServiceOf(ctx context.Context, name string, panics *shutdownPanics) error {
+	serviceAny, err := s.takeService(name)
+	if err != nil {
+		return err
+	}
+
+	return s.shutdownTaken(ctx, name, serviceAny, panics)
+}
+
+// takeService removes the service name from s for its shutdown, or returns
+// an error matching ErrServiceNotFound.
+func (s *Scope) takeService(name string) (any, error) {
 	s.mu.Lock()
 	serviceAny, ok := s.removeLocked(name)
 	s.mu.Unlock()
 
 	if !ok {
-		return serviceNotFound(s, ErrServiceNotFound, []string{name})
+		return nil, serviceNotFound(s, ErrServiceNotFound, []string{name})
 	}
-
 	s.RootScope().forget(serviceAny)
 
+	return serviceAny, nil
+}
+
+// shutdownTaken shuts down serviceAny, the service name takeService removed
+// from s, with its hooks.
+func (s *Scope) shutdownTaken(ctx context.Context, name string, serviceAny any, panics *shutdownPanics) error {
 	service, ok := serviceAny.(serviceWrapperShutdown)
 	if !ok {
 		// Should never happen.
@@ -1248,6 +1276,9 @@ type shutdownPanics struct {
 	service  string
 	value    any
 	panicked bool
+	// closed is set once the operation's dispatch ran: a panic of an
+	// abandoned Shutdown arriving later is logged, never kept
+	closed bool
 }
 
 // keepFirst keeps the panic value of the service name of scope when it is
@@ -1260,18 +1291,19 @@ func (p *shutdownPanics) keepFirst(scope *Scope, name string, value any) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.panicked {
+	if p.panicked || p.closed {
 		return false
 	}
 	p.scope, p.service, p.value, p.panicked = scope, name, value, true
 	return true
 }
 
-// kept returns the panic p kept, if any.
-func (p *shutdownPanics) kept() (scope *Scope, service string, value any, panicked bool) {
+// close ends keeping panics, and returns the one kept, if any.
+func (p *shutdownPanics) close() (scope *Scope, service string, value any, panicked bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	p.closed = true
 	return p.scope, p.service, p.value, p.panicked
 }
 
@@ -1290,8 +1322,7 @@ func (s *Scope) recordShutdownPanic(panics *shutdownPanics, name string, value a
 // dispatchShutdownPanic passes the first panic panics kept to
 // HookContainerPanic, with the point "service-shutdown". Call it once the
 // shutdown is complete; a panic HookContainerPanic raises propagates.
-func (s *RootScope) dispatchShutdownPanic(panics *shutdownPanics) {
-	_, _, value, panicked := panics.kept()
+func (s *RootScope) dispatchShutdownPanic(value any, panicked bool) {
 	if panicked && s.opts.HookContainerPanic != nil {
 		s.opts.HookContainerPanic(s, "service-shutdown", value)
 	}
@@ -1302,19 +1333,19 @@ func (s *RootScope) dispatchShutdownPanic(panics *shutdownPanics) {
 // panic. When the first dispatch raises a panic, the service panic is
 // logged instead of dispatched, so it is never lost.
 func (s *RootScope) dispatchShutdownPanics(first hookPanic, panics *shutdownPanics) {
+	// from now on, a panic of an abandoned Shutdown is logged
+	scope, service, value, panicked := panics.close()
+
 	dispatched := false
 	defer func() {
-		if dispatched {
-			return
-		}
-		if scope, service, value, panicked := panics.kept(); panicked {
+		if !dispatched && panicked {
 			scope.logRecoveredPanic("service-shutdown", service, value)
 		}
 	}()
 
 	s.dispatchFirstPanic(first)
 	dispatched = true
-	s.dispatchShutdownPanic(panics)
+	s.dispatchShutdownPanic(value, panicked)
 }
 
 // recoverShutdownStep calls step, a hook or a Shutdown call, and returns its

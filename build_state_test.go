@@ -74,9 +74,11 @@ func TestBuildWaits_LiveCycle(t *testing.T) {
 	is.False(waits.add(1, b), "1 waits for 2, which waits for 1")
 }
 
-// TestGoroutineID_Unknown replaces the goroutine id reader, so it does not
-// run in parallel.
-func TestGoroutineID_Unknown(t *testing.T) { //nolint:paralleltest // replaces goroutineIDFunc
+// TestGoroutineID_Unknown replaces goroutineIDFunc, a package-level reader
+// every build uses. It is not parallel: Go runs a top-level test without
+// t.Parallel before the parallel ones resume, so no other test builds while
+// the reader is replaced, and t.Cleanup restores it before they do.
+func TestGoroutineID_Unknown(t *testing.T) { //nolint:paralleltest // replaces the package-level goroutineIDFunc
 	previous := goroutineIDFunc
 	goroutineIDFunc = func() uint64 { return 0 }
 	t.Cleanup(func() { goroutineIDFunc = previous })

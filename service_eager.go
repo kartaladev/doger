@@ -85,6 +85,10 @@ func (s *serviceEager[T]) getInstance(i Injector) (T, error) {
 	if err := s.resolveDependsOn(i); err != nil {
 		return empty[T](), err
 	}
+	// its scope may have shut it down while the dependencies resolved
+	if s.terminal.Load() {
+		return empty[T](), shutDownServiceError(s.name)
+	}
 
 	// the first successful invocation counts as the build of an eager value;
 	// the hook runs outside depsMu, so it may use this service
