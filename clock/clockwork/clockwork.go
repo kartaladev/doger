@@ -1,6 +1,7 @@
 package dogerclockwork
 
 import (
+	"reflect"
 	"time"
 
 	"github.com/jonboulle/clockwork"
@@ -9,12 +10,27 @@ import (
 
 // Wrap returns a doger.Clock that delegates every method to clock. Wrap(nil)
 // returns a nil doger.Clock, which a container reads as doger.RealClock().
+// A typed nil, such as a nil *clockwork.FakeClock, counts as nil.
 func Wrap(clock clockwork.Clock) doger.Clock {
-	if clock == nil {
+	if isNil(clock) {
 		return nil
 	}
 
 	return wrapped{clock: clock}
+}
+
+// isNil reports whether clock is nil or an interface holding a nil value
+// of a nilable kind.
+func isNil(clock clockwork.Clock) bool {
+	if clock == nil {
+		return true
+	}
+	v := reflect.ValueOf(clock)
+	k := v.Kind()
+	nilable := k == reflect.Pointer || k == reflect.Map || k == reflect.Slice ||
+		k == reflect.Func || k == reflect.Chan || k == reflect.Interface
+
+	return nilable && v.IsNil()
 }
 
 // Unwrap returns the clockwork clock a doger.Clock made by Wrap delegates

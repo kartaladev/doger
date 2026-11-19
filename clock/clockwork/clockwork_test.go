@@ -117,15 +117,31 @@ func (clockworkTestSlowCheck) HealthCheck() error {
 func TestWrap_NilIsDefault(t *testing.T) {
 	t.Parallel()
 
-	synctest.Test(t, func(t *testing.T) {
-		require.Nil(t, Wrap(nil))
+	tests := []struct {
+		name  string
+		clock clockwork.Clock
+	}{
+		{name: "nil", clock: nil},
+		// a typed nil would otherwise give a non-nil Clock that panics on
+		// first use
+		{name: "typed_nil_fake_clock", clock: (*clockwork.FakeClock)(nil)},
+	}
 
-		injector := doger.NewWithOpts(&doger.InjectorOpts{Clock: Wrap(nil), HealthCheckTimeout: 10 * time.Millisecond})
-		doger.ProvideNamedValue(injector, "svc", clockworkTestSlowCheck{})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-		err := doger.HealthCheckNamed(injector, "svc")
-		assert.EqualError(t, err, "doger: health check timeout: context deadline exceeded")
+			synctest.Test(t, func(t *testing.T) {
+				require.Nil(t, Wrap(tt.clock))
 
-		time.Sleep(20 * time.Millisecond) // let the abandoned check return
-	})
+				injector := doger.NewWithOpts(&doger.InjectorOpts{Clock: Wrap(tt.clock), HealthCheckTimeout: 10 * time.Millisecond})
+				doger.ProvideNamedValue(injector, "svc", clockworkTestSlowCheck{})
+
+				err := doger.HealthCheckNamed(injector, "svc")
+				assert.EqualError(t, err, "doger: health check timeout: context deadline exceeded")
+
+				time.Sleep(20 * time.Millisecond) // let the abandoned check return
+			})
+		})
+	}
 }

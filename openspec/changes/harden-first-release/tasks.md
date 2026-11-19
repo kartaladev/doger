@@ -75,7 +75,7 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 - [x] 11.1 RED: add `TestHealthScheduler_ReceivesRealClockByDefault` and switch `TestHealthScheduler_CalledAtReady` to a wrapped clock; verify `go test -race -run TestHealthScheduler_ .` fails to compile only on the `ScheduleHealthRounds` signature
 - [x] 11.2 GREEN: change `HealthScheduler.ScheduleHealthRounds(clock Clock, …)` and pass `opts.Clock` (`RealClock()` when nil); verify the 11.1 tests pass and `make test` is green
-- [x] 11.3 RED: update `TestHealthScheduler_Failure`, `TestHealthScheduler_StopReturnedWithError`, `TestHealthScheduler_StopFailure`, `TestHealthHooks_Panic` and `TestHealthHooks_NilSkipped` to assert slog records (Error without the value, Debug with it); verify they fail on the old logging path
+- [x] 11.3 RED: update `TestHealthScheduler_Failure`, `TestHealthScheduler_StopReturnedWithError`, `TestHealthScheduler_StopFailure`, `TestHealthHooks_Panic` and `TestHealthHooks_NilSkipped` to assert slog records (Error without the value, Debug with it); verify they fail on the old logging path (observed: only 2 of the 5 failed on the old path; the other 3 already passed, because group 8 had routed those failures through `Logger`)
 - [x] 11.4 GREEN: route scheduler, stop and health-hook failures through `Logger` at Error with panic values only at Debug; verify the 11.3 tests pass and `make test` is green
 - [x] 11.5 REFACTOR: Extract Function `logSchedulerFailure` shared by the schedule, stop and hook paths; verify `make test` and `make lint` pass
 - [x] 11.6 Docs: update the `HealthScheduler` godoc and the health-scheduling docs page to the doger.Clock signature; verify `go doc HealthScheduler` shows `Clock`

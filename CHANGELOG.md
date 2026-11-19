@@ -28,6 +28,7 @@ Each entry gives the change and its migration.
 | `DisableStarterAutoDetection` | `EnableStarterAutoDetection` (default false) | Add `AsStarter()` to services that must start, or set `EnableStarterAutoDetection: true`. |
 | `Logf` | `Logger *slog.Logger` | `Logger: slog.Default()`, or any handler. |
 | `Clock clockwork.Clock`, `HealthScheduler` taking a `clockwork.Clock` | `doger.Clock` | `Clock: dogerclockwork.Wrap(fake)` (new module `github.com/kartaladev/doger/clock/clockwork`); scheduler implementers take a `doger.Clock`. |
+| `dogergocron` ran on any `clockwork.Clock` the container held | It maps `doger.RealClock()` and clocks made by `dogerclockwork.Wrap`; a consumer-written `doger.Clock` makes `ScheduleHealthRounds` fail with `dogergocron.ErrUnsupportedClock`, and the container then stays unmonitored | Use `doger.RealClock()` or `dogerclockwork.Wrap(...)`, or pass your own gocron scheduler with `dogergocron.WithScheduler`, which brings its own clock |
 | `ErrStartAfterShutdown` | `ErrShutdown` | Rename the sentinel in `errors.Is` checks. |
 | `"DI: "` message prefix | `"doger: "`, carried once | Match with `errors.Is`/`errors.As`, not text. |
 | `ExplainServiceDependencyOutput` tree that expands every path | Each service expanded once; a repeat has `Ref: true` and no children | Follow `Ref` nodes through `ExplainNamedService`. |

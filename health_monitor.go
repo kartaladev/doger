@@ -26,8 +26,9 @@ const (
 // RealClock() when it is nil) and the round to run. A scheduler that needs a
 // github.com/jonboulle/clockwork clock gets one from a clock made by
 // dogerclockwork.Wrap with dogerclockwork.Unwrap, in the
-// github.com/kartaladev/doger/clock/clockwork module. Each call of round checks every eligible health checker once and
-// returns once each result is recorded or its bound elapsed; it honors ctx.
+// github.com/kartaladev/doger/clock/clockwork module. Each call of round
+// checks every eligible health checker once and returns once each result is
+// recorded or its bound elapsed; it honors ctx.
 // The returned stop function is called once, when root Shutdown begins and
 // before the Closing hooks run, with a context Shutdown's context cannot
 // cancel: it must stop scheduling and return once no round of this schedule
