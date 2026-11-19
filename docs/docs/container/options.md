@@ -127,6 +127,24 @@ fake.Advance(5 * time.Second) // a check still running now times out
 `InjectorOpts.Clock` was a `clockwork.Clock`. Replace `Clock: c` with `Clock: dogerclockwork.Wrap(c)` and require `github.com/kartaladev/doger/clock/clockwork`. The root module no longer depends on clockwork.
 :::
 
+### Health scheduler {#health-scheduler}
+
+`InjectorOpts.HealthScheduler` keeps `HealthReport()` results fresh in the background. The container calls its `ScheduleHealthRounds(clock doger.Clock, round func(ctx context.Context))` once, when it reaches `PhaseReady`, with the injector clock (`doger.RealClock()` when `Clock` is nil). The `scheduler/gocron` module provides one.
+
+A scheduler that needs a clockwork clock recovers it with `dogerclockwork.Unwrap(clock)`, which reports `false` for a clock not made by `dogerclockwork.Wrap`:
+
+```go
+func (s *myScheduler) ScheduleHealthRounds(clock doger.Clock, round func(context.Context)) (func(context.Context) error, error) {
+    cw, ok := dogerclockwork.Unwrap(clock)
+    if !ok {
+        cw = clockwork.NewRealClock()
+    }
+    // ... schedule round on cw
+}
+```
+
+An error or a panic of `ScheduleHealthRounds` leaves the container unmonitored and is logged at Error level on `InjectorOpts.Logger`; a panic value is logged at Debug level only. Migration: implementers change the parameter type from `clockwork.Clock` to `doger.Clock`.
+
 ### Start hooks {#start-hooks}
 
 `HookBeforeStart` and `HookAfterStart` run around each service's `Start` method when the container [starts](../service-lifecycle/starter.md), in the order they were added. `HookAfterStart` receives the error the method returned, **unwrapped**: `nil` on success, or the recovered panic as an error. No start hook runs for an `AsStarter()` service whose instance has no `Start` method, since no method is called. A panicking hook propagates out of `Start`, as a panicking shutdown hook does.

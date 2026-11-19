@@ -340,12 +340,12 @@ func TestClock_HealthSchedulerClock(t *testing.T) {
 	tests := []struct {
 		name  string
 		clock Clock
-		check func(t *testing.T, got clockwork.Clock)
+		check func(t *testing.T, got Clock)
 	}{
-		{name: "fake", clock: fake, check: func(t *testing.T, got clockwork.Clock) { t.Helper(); assert.Same(t, fake.FakeClock, got) }},
-		{name: "default_real", check: func(t *testing.T, got clockwork.Clock) {
+		{name: "fake", clock: fake, check: func(t *testing.T, got Clock) { t.Helper(); assert.Same(t, fake, got) }},
+		{name: "default_real", check: func(t *testing.T, got Clock) {
 			t.Helper()
-			assert.IsType(t, clockwork.NewRealClock(), got)
+			assert.Equal(t, RealClock(), got)
 		}},
 	}
 
@@ -561,6 +561,3 @@ func newFakeClock() *fakeClock { return &fakeClock{clockwork.NewFakeClock()} }
 func newFakeClockAt(t time.Time) *fakeClock { return &fakeClock{clockwork.NewFakeClockAt(t)} }
 
 func (c *fakeClock) AfterFunc(d time.Duration, f func()) Timer { return c.FakeClock.AfterFunc(d, f) }
-
-// Clockwork returns the clockwork clock, for the interim scheduler bridge.
-func (c *fakeClock) Clockwork() clockwork.Clock { return c.FakeClock }

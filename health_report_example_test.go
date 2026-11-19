@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // healthReportExampleDatabase is a health check that counts its calls.
@@ -87,7 +85,7 @@ func ExampleMatchHealthTags() {
 // the example runs it at will; dogergocron.New() runs it every 30s.
 type healthReportExampleScheduler struct{ round func(context.Context) }
 
-func (s *healthReportExampleScheduler) ScheduleHealthRounds(_ clockwork.Clock, round func(context.Context)) (func(context.Context) error, error) {
+func (s *healthReportExampleScheduler) ScheduleHealthRounds(_ Clock, round func(context.Context)) (func(context.Context) error, error) {
 	s.round = round
 	return func(context.Context) error { return nil }, nil
 }

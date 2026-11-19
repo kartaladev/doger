@@ -2,11 +2,8 @@ package doger
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"slices"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // schedState is where a container's HealthScheduler is.
@@ -25,8 +22,11 @@ const (
 // github.com/kartaladev/doger/scheduler/gocron module provides one.
 //
 // The container calls ScheduleHealthRounds once, when it reaches PhaseReady
-// and before the Ready hooks run, with the injector clock and the round to
-// run. Each call of round checks every eligible health checker once and
+// and before the Ready hooks run, with the injector clock (InjectorOpts.Clock,
+// RealClock() when it is nil) and the round to run. A scheduler that needs a
+// github.com/jonboulle/clockwork clock gets one from a clock made by
+// dogerclockwork.Wrap with dogerclockwork.Unwrap, in the
+// github.com/kartaladev/doger/clock/clockwork module. Each call of round checks every eligible health checker once and
 // returns once each result is recorded or its bound elapsed; it honors ctx.
 // The returned stop function is called once, when root Shutdown begins and
 // before the Closing hooks run, with a context Shutdown's context cannot
@@ -43,20 +43,7 @@ const (
 // reads check stale services on demand. A stop function returned together
 // with an error is called at once, before Start returns, and not again.
 type HealthScheduler interface {
-	ScheduleHealthRounds(clock clockwork.Clock, round func(ctx context.Context)) (stop func(ctx context.Context) error, err error)
-}
-
-// schedulerClock is the clockwork clock passed to the HealthScheduler for
-// clock: the real clockwork clock for RealClock(), and the clock a test
-// wrapper unwraps to otherwise.
-//
-// Deprecated: interim bridge until HealthScheduler takes a Clock.
-func schedulerClock(clock Clock) clockwork.Clock {
-	if u, ok := clock.(interface{ Clockwork() clockwork.Clock }); ok {
-		return u.Clockwork()
-	}
-
-	return clockwork.NewRealClock()
+	ScheduleHealthRounds(clock Clock, round func(ctx context.Context)) (stop func(ctx context.Context) error, err error)
 }
 
 // startScheduling calls the HealthScheduler, if any, for a container that
@@ -155,14 +142,34 @@ func (s *RootScope) callStop(ctx context.Context, stop func(context.Context) err
 			s.self.log(slog.LevelWarn, "health scheduler stop failed", slog.Any("error", err))
 		}
 	})
-	switch {
-	case !panicked:
-	case s.opts.HookContainerPanic != nil:
-		s.opts.HookContainerPanic(s, "healthscheduler", recovered)
-	default:
-		s.logRecoveredPanic("healthscheduler", "", recovered)
+	if panicked {
+		s.logSchedulerFailure("healthscheduler", recovered, "health scheduler stop failed", errSchedulerStopPanicked)
 	}
 }
+
+// logSchedulerFailure handles a panic recovered at point by the health
+// scheduling or a health hook: it is passed to HookContainerPanic when that
+// option is set. Otherwise it is logged, the value at Debug level only, and
+// then message, when not empty, at Error level with err.
+func (s *RootScope) logSchedulerFailure(point string, recovered any, message string, err error) {
+	if s.opts.HookContainerPanic != nil {
+		s.opts.HookContainerPanic(s, point, recovered)
+		return
+	}
+
+	s.logRecoveredPanic(point, "", recovered)
+	if message != "" {
+		s.self.log(slog.LevelError, message, slog.Any("error", err))
+	}
+}
+
+// errSchedulerPanicked and errSchedulerStopPanicked are logged for a
+// recovered panic of the HealthScheduler and of its stop function: the panic
+// value itself is logged at Debug level only.
+var (
+	errSchedulerPanicked     = libErrorf("health scheduler panicked")
+	errSchedulerStopPanicked = libErrorf("health scheduler stop panicked")
+)
 
 // callScheduler calls scheduler, recovering its panic: an error or a panic is
 // logged, or a panic is passed to HookContainerPanic when it is set, and
@@ -176,23 +183,18 @@ func (s *RootScope) callScheduler(scheduler HealthScheduler) (stop func(context.
 				recovered, panicked = r, true
 			}
 		}()
-		stop, err = scheduler.ScheduleHealthRounds(schedulerClock(s.opts.Clock), s.healthRound)
+		stop, err = scheduler.ScheduleHealthRounds(s.opts.Clock, s.healthRound)
 	}()
 
-	switch {
-	case panicked && s.opts.HookContainerPanic != nil:
-		s.opts.HookContainerPanic(s, "healthscheduler", recovered)
-		return nil, fmt.Errorf("doger: health scheduler panicked: %v", recovered)
-	case panicked:
-		s.logRecoveredPanic("healthscheduler", "", recovered)
-		err = fmt.Errorf("%v", recovered)
-	case err == nil && stop == nil:
+	if panicked {
+		s.logSchedulerFailure("healthscheduler", recovered, "health scheduler failed", errSchedulerPanicked)
+		return nil, errSchedulerPanicked
+	}
+	if err == nil && stop == nil {
 		stop = func(context.Context) error { return nil }
 	}
 	if err != nil {
-		if !panicked {
-			s.self.log(slog.LevelError, "health scheduler failed", slog.Any("error", err))
-		}
+		s.self.log(slog.LevelError, "health scheduler failed", slog.Any("error", err))
 		if stop != nil {
 			// a schedule partly started is stopped at once
 			s.callStop(context.Background(), stop)
@@ -352,16 +354,9 @@ func (s *RootScope) deliverTransition(transition healthTransition, serviceHooks 
 // to HookContainerPanic with the point "healthchanged" when it is set, and
 // is logged otherwise.
 func (s *RootScope) callHealthHook(call func()) {
-	recovered, panicked := callHookSafely(call)
-	if !panicked {
-		return
+	if recovered, panicked := callHookSafely(call); panicked {
+		s.logSchedulerFailure("healthchanged", recovered, "", nil)
 	}
-
-	if s.opts.HookContainerPanic != nil {
-		s.opts.HookContainerPanic(s, "healthchanged", recovered)
-		return
-	}
-	s.logRecoveredPanic("healthchanged", "", recovered)
 }
 
 // AddServiceHealthChangedHook adds a hook called when a service's recorded

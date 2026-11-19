@@ -15,7 +15,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -1694,7 +1693,7 @@ func healthRunTestReportErrWithContext(ctx context.Context, i *RootScope, name s
 // goroutine when called.
 type healthRunTestGoroutineScheduler struct{}
 
-func (healthRunTestGoroutineScheduler) ScheduleHealthRounds(_ clockwork.Clock, _ func(context.Context)) (func(context.Context) error, error) {
+func (healthRunTestGoroutineScheduler) ScheduleHealthRounds(_ Clock, _ func(context.Context)) (func(context.Context) error, error) {
 	done := make(chan struct{})
 	go func() { <-done }()
 	return func(context.Context) error { close(done); return nil }, nil

@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -172,7 +171,7 @@ type loggingScheduler struct {
 	stopErr error // returned by the stop function
 }
 
-func (s *loggingScheduler) ScheduleHealthRounds(_ clockwork.Clock, _ func(context.Context)) (func(context.Context) error, error) {
+func (s *loggingScheduler) ScheduleHealthRounds(_ Clock, _ func(context.Context)) (func(context.Context) error, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
