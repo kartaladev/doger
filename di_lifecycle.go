@@ -422,7 +422,7 @@ func ShutdownNamedWithContext(ctx context.Context, i Injector, name string) erro
 		return err
 	}
 
-	return injector.serviceShutdown(ctx, name)
+	return injector.shutdownService(ctx, name)
 }
 
 // MustShutdown stops a service, using type inference to determine the service name. It panics on error.

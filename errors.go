@@ -74,6 +74,14 @@ var (
 	// names the type or field. A dependency that fails to resolve does not
 	// match it.
 	ErrStructInjection = errors.New("doger: invalid struct injection target")
+	// ErrShutdownPanic is matched by the error a shutdown records for a
+	// service whose Shutdown method, or one of its HookBeforeShutdown or
+	// HookAfterShutdown hooks, panicked: the panic is recovered, never
+	// raised, and the other services and hooks still run. The panic value
+	// follows it in the message; an error value is wrapped, so errors.Is and
+	// errors.As also match it, including the *runtime.PanicNilError of
+	// panic(nil).
+	ErrShutdownPanic = errors.New("doger: shutdown panicked")
 )
 
 // libPrefix starts every message the library originates.
@@ -101,7 +109,7 @@ var libSentinels = []error{
 	ErrServiceAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
 	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted, ErrNilInjector,
-	ErrStructInjection, ErrProviderPanic,
+	ErrStructInjection, ErrProviderPanic, ErrShutdownPanic,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
 	ErrExtensionCycle, ErrExtensionConflict,
 }

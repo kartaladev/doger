@@ -155,6 +155,16 @@ type hookPanic struct {
 	point    string // as HookContainerPanic receives it
 	value    any
 	panicked bool
+
+	// services keeps the first service shutdown panic of a shutdown; nil
+	// outside one
+	services *shutdownPanics
+}
+
+// child returns the record of a part of p's operation run separately, such
+// as a child scope shutdown: it shares p's service shutdown panics.
+func (p *hookPanic) child() hookPanic {
+	return hookPanic{services: p.services}
 }
 
 // callObserver calls an observer hook of subject, recovering its panic: the
@@ -188,16 +198,22 @@ func (s *RootScope) logHookPanic(p hookPanic) {
 // and the type of its value, and the value itself only in a Debug record,
 // since it could hold a secret. service is "" when it concerns none.
 func (s *RootScope) logRecoveredPanic(point, service string, value any) {
+	s.self.logRecoveredPanic(point, service, value)
+}
+
+// logRecoveredPanic logs a recovered panic on scope s, as
+// RootScope.logRecoveredPanic does.
+func (s *Scope) logRecoveredPanic(point, service string, value any) {
 	var attrs []slog.Attr
 	if service != "" {
 		attrs = append(attrs, slog.String("service", service))
 	}
 	attrs = append(attrs, slog.String("point", point))
-	if s.self.logEnabled(slog.LevelError) {
-		s.self.log(slog.LevelError, "panic recovered", append(attrs, slog.String("panic_type", fmt.Sprintf("%T", value)))...)
+	if s.logEnabled(slog.LevelError) {
+		s.log(slog.LevelError, "panic recovered", append(attrs, slog.String("panic_type", fmt.Sprintf("%T", value)))...)
 	}
-	if s.self.logEnabled(slog.LevelDebug) {
-		s.self.log(slog.LevelDebug, "panic value", append(attrs, slog.String("value", fmt.Sprint(value)))...)
+	if s.logEnabled(slog.LevelDebug) {
+		s.log(slog.LevelDebug, "panic value", append(attrs, slog.String("value", fmt.Sprint(value)))...)
 	}
 }
 

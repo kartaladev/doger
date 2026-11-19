@@ -285,7 +285,8 @@ func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 		return s.waitForClose(ctx, ticket.done)
 	}
 
-	var first hookPanic
+	panics := &shutdownPanics{}
+	first := hookPanic{services: panics}
 	report := s.shutdownAsWinner(ctx, ticket, &first)
 	s.self.log(slog.LevelInfo, "container closed")
 
@@ -295,6 +296,7 @@ func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 	})
 
 	s.dispatchFirstPanic(first)
+	s.dispatchShutdownPanic(panics)
 
 	return report
 }
@@ -484,8 +486,8 @@ func (s *RootScope) serviceHealthCheck(ctx context.Context, name string) error {
 	return s.self.serviceHealthCheck(ctx, name)
 }
 
-func (s *RootScope) serviceShutdown(ctx context.Context, name string) error {
-	return s.self.serviceShutdown(ctx, name)
+func (s *RootScope) shutdownService(ctx context.Context, name string) error {
+	return s.self.shutdownService(ctx, name)
 }
 func (s *RootScope) onServiceInvoke(name string) { s.self.onServiceInvoke(name) }
 

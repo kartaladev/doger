@@ -89,8 +89,8 @@ type Injector interface {
 	serviceForEachRec(func(string, *Scope, any) bool)
 	// serviceHealthCheck performs a health check on a specific service in the current scope.
 	serviceHealthCheck(context.Context, string) error
-	// serviceShutdown gracefully shuts down a specific service in the current scope.
-	serviceShutdown(context.Context, string) error
+	// shutdownService gracefully shuts down a specific service in the current scope.
+	shutdownService(context.Context, string) error
 	// onServiceInvoke is called whenever a service is invoked in this scope.
 	onServiceInvoke(string)
 }
@@ -361,6 +361,15 @@ type InjectorOpts struct {
 	// scope shutdown, with the points "scope-started", "scope-closing" and
 	// "scope-closed". Default (nil): re-panic with the recovered value.
 	// Panics in Starting hooks are vetoes and never reach it.
+	//
+	// A panic of a service Shutdown method or of a HookBeforeShutdown or
+	// HookAfterShutdown hook is recorded in the shutdown report (see
+	// ErrShutdownPanic) and never raised by the container: the first one of
+	// a root or child shutdown reaches HookContainerPanic with the point
+	// "service-shutdown" once that shutdown is complete, Closed hooks
+	// included, and later ones are logged. With no HookContainerPanic, each
+	// is only recorded and logged. Other points: "healthscheduler" and
+	// "healthchanged" (see HealthScheduler), and "healthcheck".
 	HookContainerPanic func(scope *RootScope, hook string, recovered any)
 
 	// Logger receives the container's log records, each with a fixed

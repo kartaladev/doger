@@ -542,16 +542,21 @@ func TestLogging_Concurrent(t *testing.T) {
 func TestLogging_PanicValueDebugOnly(t *testing.T) {
 	t.Parallel()
 
-	// The second Closing hook panic of one Shutdown is logged; the first
-	// goes to HookContainerPanic. The service-shutdown point is task 13.4's.
+	// closing: the second Closing hook panic of one Shutdown is logged; the
+	// first goes to HookContainerPanic. service-shutdown: with no
+	// HookContainerPanic, a Shutdown panic is logged.
 	tests := []struct {
-		name   string
-		level  slog.Level
-		errors int
-		secret int
+		name    string
+		level   slog.Level
+		point   string
+		service string // the service attribute of the Error record
+		errors  int
+		secret  int
 	}{
-		{name: "debug", level: slog.LevelDebug, errors: 1, secret: 1},
-		{name: "info", level: slog.LevelInfo, errors: 1, secret: 0},
+		{name: "closing_debug", level: slog.LevelDebug, point: "closing", errors: 1, secret: 1},
+		{name: "closing_info", level: slog.LevelInfo, point: "closing", errors: 1, secret: 0},
+		{name: "service_shutdown_debug", level: slog.LevelDebug, point: "service-shutdown", service: "svc", errors: 1, secret: 1},
+		{name: "service_shutdown_info", level: slog.LevelInfo, point: "service-shutdown", service: "svc", errors: 1, secret: 0},
 	}
 
 	for _, tt := range tests {
@@ -559,20 +564,25 @@ func TestLogging_PanicValueDebugOnly(t *testing.T) {
 			t.Parallel()
 
 			recorder := newLogRecorder(tt.level)
-			root := NewWithOpts(&InjectorOpts{
-				Logger:             recorder.logger(),
-				HookContainerPanic: func(*RootScope, string, any) {},
-				HookContainerClosing: []func(context.Context, *RootScope){
+			opts := &InjectorOpts{Logger: recorder.logger()}
+			if tt.point == "closing" {
+				opts.HookContainerPanic = func(*RootScope, string, any) {}
+				opts.HookContainerClosing = []func(context.Context, *RootScope){
 					func(context.Context, *RootScope) { panic("first") },
 					func(context.Context, *RootScope) { panic("token=hunter2") },
-				},
-			})
+				}
+			}
+			root := NewWithOpts(opts)
+			if tt.point == "service-shutdown" {
+				provideBuilt(t, root, "svc", &shutdownTestPanicPlain{value: "token=hunter2"})
+			}
 
 			_ = root.Shutdown()
 
 			var errorRecords []logRecord
 			for _, rec := range recorder.withMessage("panic recovered") {
-				if rec.level == slog.LevelError && rec.attrs["point"] == "closing" && rec.attrs["panic_type"] == "string" {
+				if rec.level == slog.LevelError && rec.attrs["point"] == tt.point && rec.attrs["panic_type"] == "string" &&
+					(tt.service == "" || rec.attrs["service"] == tt.service) {
 					errorRecords = append(errorRecords, rec)
 				}
 			}

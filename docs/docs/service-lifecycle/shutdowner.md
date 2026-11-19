@@ -67,6 +67,23 @@ Only the root scope methods follow this rule. `Shutdown()` on a child scope, and
 
 :::
 
+### Panics are reported {#panics-are-reported}
+
+A panic in a service's `Shutdown` method, or in a `HookBeforeShutdown` or `HookAfterShutdown` hook, never crashes the process:
+
+- The panic is recovered, and the report holds an error for that service matching `doger.ErrShutdownPanic`. When the panic value is an error, the recorded error also matches it with `errors.Is` and `errors.As`.
+- Every other service still shuts down, and every other hook still runs. A panicking before hook does not skip `Shutdown`. When a hook panics and `Shutdown` returns an error, the recorded error matches both.
+- The first such panic of a root or child shutdown is passed to `HookContainerPanic` with the point `"service-shutdown"`, once the shutdown is complete (Closed hooks included). Later panics are logged at Error level. Without `HookContainerPanic`, each panic is only recorded and logged; its value is logged at Debug level only.
+
+```go
+report := injector.Shutdown()
+for service, err := range report.Errors {
+    if errors.Is(err, doger.ErrShutdownPanic) {
+        log.Printf("%s panicked while shutting down: %v", service.Service, err)
+    }
+}
+```
+
 ### Shutdown with a deadline {#shutdown-with-a-deadline}
 
 `ShutdownWithContext()`, on the root or on a child scope, stops shutting services down once its context has ended. Every service it reaches after that:
