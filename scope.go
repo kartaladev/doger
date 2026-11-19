@@ -119,9 +119,11 @@ func (s *Scope) Name() string {
 //
 // Returns the newly created child scope.
 //
-// Panics if a scope with the same name already exists in the parent, and
-// with an error matching [ErrShutdown] once the shutdown of s has begun,
-// including from its Closing hooks: a scope is never left behind a shutdown.
+// Panics with an error matching [ErrScopeAlreadyDeclared] if the parent
+// already has an attached child of that name (a child that was shut down is
+// detached and no longer counts), and with an error matching [ErrShutdown]
+// once the shutdown of s has begun, including from its Closing hooks: a
+// scope is never left behind a shutdown.
 func (s *Scope) Scope(name string, packages ...func(Injector)) *Scope {
 	s.mu.Lock()
 
@@ -131,7 +133,7 @@ func (s *Scope) Scope(name string, packages ...func(Injector)) *Scope {
 	}
 	if _, ok := s.childScopes[name]; ok {
 		s.mu.Unlock()
-		panic(libErrorf("scope `%s` has already been declared", name))
+		panic(duplicateScopeError(name))
 	}
 
 	child := newScope(name, s.rootScope, s)

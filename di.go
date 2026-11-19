@@ -313,6 +313,12 @@ func duplicateServiceError(name string) error {
 	return libErrorMatching(ErrServiceAlreadyDeclared, "service `%s` has already been declared", name)
 }
 
+// duplicateScopeError is the panic value of a child scope declaration
+// whose name its parent already has.
+func duplicateScopeError(name string) error {
+	return libErrorMatching(ErrScopeAlreadyDeclared, "scope `%s` has already been declared", name)
+}
+
 // wrapIfDefault returns the wrapper to store for service in scope: decorated
 // as a default when options carry AsDefault, service itself otherwise.
 func wrapIfDefault[T any](scope *Scope, service serviceWrapper[T], options *serviceOptions) serviceWrapper[T] {

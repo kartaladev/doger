@@ -47,6 +47,9 @@ Each entry gives the change and its migration.
 
 ### Changed
 
+- New sentinel `ErrScopeAlreadyDeclared`: `Scope(name)` on a scope that
+  already has an attached child named `name` panics with an error
+  matching it. A child that was shut down no longer counts.
 - New sentinel `ErrStructInjection`: the errors of `InvokeStruct` and
   `MustInvokeStruct` for an invalid target (not a struct, a recursive
   pointer type, a service not assignable to its field, `*` on a field that

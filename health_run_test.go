@@ -832,7 +832,7 @@ func TestHealthCheck_EndedContextStartsNoCheck(t *testing.T) {
 				}
 
 				synctest.Wait() // a check started anyway has returned
-				is.Empty(log.containing("health check requested", "service=db"))
+				is.Empty(log.containing("health check started", "service=db"))
 				close(db.release)
 			})
 		})

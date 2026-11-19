@@ -619,6 +619,7 @@ func (s *RootScope) joinOrStart(spec waitSpec, target healthTarget, check func(c
 		takeOver := !spec.pooled && call.claimLocked(s.opts.Clock)
 		m.mu.Unlock()
 		if takeOver {
+			logCheckStarted(call)
 			go s.runCall(call)
 		}
 		return waiter
@@ -700,9 +701,8 @@ func (m *healthMonitor) newCallLocked(target healthTarget, check func(context.Co
 // passed since it took the slot, so a check ignoring its context never
 // stalls the calls queued behind it.
 func (s *RootScope) startCall(call *sharedCall) {
-	call.target.scope.log(slog.LevelDebug, "health check requested", slog.String("service", call.target.name))
-
 	if !call.pooled {
+		logCheckStarted(call)
 		go s.runCall(call)
 		return
 	}
@@ -735,6 +735,7 @@ func (s *RootScope) startCall(call *sharedCall) {
 		s.health.mu.Unlock()
 
 		defer s.holdSlot(call, release)()
+		logCheckStarted(call)
 		s.runCall(call)
 	}()
 }
@@ -777,6 +778,14 @@ func (s *RootScope) runCheckGuarded(call *sharedCall, finish func(checkOutcome))
 	outcome := call.check(call.ctx)
 	returned = true
 	finish(outcome)
+}
+
+// logCheckStarted logs that the check of call runs. It is called once per
+// check, where the check is claimed to run: an unpooled call at once, a
+// pooled call once it holds a slot, a call taken over by a single-service
+// caller; a call abandoned while queued never is.
+func logCheckStarted(call *sharedCall) {
+	call.target.scope.log(slog.LevelDebug, "health check started", slog.String("service", call.target.name))
 }
 
 // finishCall decides the result of each waiter of call, whose check
@@ -827,6 +836,7 @@ func (s *RootScope) finishCall(call *sharedCall, outcome checkOutcome, ran bool)
 	if fresh != nil {
 		s.startCall(fresh)
 		if takeOver {
+			logCheckStarted(fresh)
 			go s.runCall(fresh)
 		}
 	}

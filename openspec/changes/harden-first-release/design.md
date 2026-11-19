@@ -136,7 +136,7 @@ These three methods are everything the root package uses today.
 
 | Level | Events |
 |---|---|
-| Debug | registration, invocation, build, `requested shutdown` (the first record of the winning root Shutdown), and the panic value of a recovered panic |
+| Debug | registration, invocation, build, `health check started`, `requested shutdown` (the first record of the winning root Shutdown), and the panic value of a recovered panic |
 | Info | container start, ready, closing and closed |
 | Warn | a fallback to an unmonitored container, a health state change to degraded |
 | Error | a health scheduler failure (a stop failure included), a shutdown error, a recovered panic not passed to `HookContainerPanic` (service name and panic type only): the first panic of an operation goes to that hook when it is set, and is logged only when it is not; later panics are logged |
@@ -749,5 +749,5 @@ Hot paths and the tests that cover them:
 | Messages that used to double the prefix (new rows: consumer-led abort, provider error) | module_identity_test.go: TestModuleIdentity_PrefixOnce/{consumer_led_abort,provider_error} (new rows) | table |
 | Declaring a child scope name twice | resolution_errors_test.go: TestResolutionErrors_DuplicateScope/{same,after_shutdown,sibling,grandchild,other_depth} (new) | table |
 | Concurrent declarations of one child scope name | resolution_errors_test.go: TestResolutionErrors_DuplicateScopeConcurrent (new) | race |
-| Which calls record a started check | container_logging_test.go: TestLogging_HealthCheckStarted/{single,joined,cancelled,forced} (new) | table |
-| The record is invisible above Debug | container_logging_test.go: TestLogging_HealthCheckStartedInfoLevel (new) | unit |
+| Which calls record a started check | logging_test.go: TestLogging_HealthCheckStarted/{HealthCheckNamed, a_second_caller_joins_the_check_in_flight, an_already-cancelled_context, root.HealthCheck, queued_then_abandoned, scheduled_round, child_scope} (new) | table |
+| The record is invisible above Debug | logging_test.go: TestLogging_HealthCheckStartedInfoLevel (new) | unit |

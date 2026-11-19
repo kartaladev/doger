@@ -31,6 +31,12 @@ var (
 	// registration functions without an error result, and the error the
 	// error-returning ones return. The existing service stays registered.
 	ErrServiceAlreadyDeclared = errors.New("doger: service has already been declared")
+	// ErrScopeAlreadyDeclared is matched by the panic value of Scope(name)
+	// on a scope that already has an attached child named name. The message
+	// is "doger: scope `<name>` has already been declared". A child that was
+	// shut down is detached, so its name can be declared again; the same
+	// name at another depth of the tree is a different scope.
+	ErrScopeAlreadyDeclared = errors.New("doger: scope has already been declared")
 	// ErrCircularDependency is matched by the error of an invocation or
 	// dependency declaration that would close a cycle between services, and
 	// by the error of Start when the dependencies it orders form a cycle. The
@@ -125,7 +131,7 @@ func (e *libError) Unwrap() error {
 // libSentinels are the exported sentinels, all library errors.
 var libSentinels = []error{
 	ErrServiceNotFound, ErrServiceNotMatch, ErrServiceTypeMismatch,
-	ErrServiceAlreadyDeclared, ErrCircularDependency,
+	ErrServiceAlreadyDeclared, ErrScopeAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
 	ErrAlreadyStarted, ErrShutdown, ErrNotStarted, ErrNilInjector,
 	ErrStructInjection, ErrProviderPanic, ErrShutdownPanic,
