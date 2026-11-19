@@ -439,7 +439,7 @@ func TestExport_Lifecycle(t *testing.T) {
 			root := New()
 			redis := root.Scope("redis")
 			pool := &exPool{}
-			Provide(redis, func(Injector) (*exPool, error) { return pool, nil })
+			Provide(redis, func(Injector) (*exPool, error) { return pool, nil }, AsStarter())
 			require.NoError(t, Export[*exPool](redis))
 			Provide(root, func(i Injector) (*exApp, error) {
 				p, err := Invoke[*exPool](i)
@@ -553,14 +553,14 @@ func TestExport_StartOrder(t *testing.T) {
 	root := New()
 	redis := root.Scope("redis")
 	recorder := &exRecorder{}
-	Provide(redis, func(Injector) (*exPool, error) { return &exPool{record: recorder.record}, nil })
+	Provide(redis, func(Injector) (*exPool, error) { return &exPool{record: recorder.record}, nil }, AsStarter())
 	require.NoError(t, Export[*exPool](redis))
 	Provide(root, func(i Injector) (*exServer, error) {
 		if _, err := Invoke[*exPool](i); err != nil {
 			return nil, err
 		}
 		return &exServer{record: recorder.record}, nil
-	})
+	}, AsStarter())
 
 	require.NoError(t, root.Start())
 

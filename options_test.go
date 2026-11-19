@@ -673,10 +673,10 @@ func TestProvideOptions_AsDefaultCombined(t *testing.T) {
 				return 1, nil
 			})
 			defaultPool := &dfPool{}
-			Provide(ext, poolProvider(defaultPool), append([]ProvideOption{AsDefault()}, tt.opts...)...)
+			Provide(ext, poolProvider(defaultPool), append([]ProvideOption{AsDefault(), AsStarter()}, tt.opts...)...)
 			rootPool := &dfPool{}
 			if tt.explicit {
-				Provide(root, poolProvider(rootPool))
+				Provide(root, poolProvider(rootPool), AsStarter())
 			}
 
 			require.NoError(t, root.Start())

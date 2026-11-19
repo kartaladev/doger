@@ -16,7 +16,7 @@ Every existing **call** compiles and behaves unchanged:
 
 ```go
 doger.Provide(injector, NewDatabase)                       // unchanged
-doger.Provide(injector, NewServer, doger.AsStarter())      // new: with an option
+doger.Provide(injector, NewServer, doger.AsStarter())      // new: with an option (Start only starts AsStarter() services by default)
 ```
 
 Code that stores one of these generic functions **as a value** of its old function type no longer compiles, because the function type now ends with `...doger.ProvideOption`:

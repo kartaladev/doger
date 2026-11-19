@@ -459,8 +459,8 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 			name: "start_rejects_dependency_cycle",
 			message: func(t *testing.T) string {
 				root := New()
-				ProvideNamed(root, "a", func(Injector) (prefixOnceStarter, error) { return prefixOnceStarter{}, nil })
-				ProvideNamed(root, "b", func(i Injector) (prefixOnceStarter, error) { return InvokeNamed[prefixOnceStarter](i, "a") })
+				ProvideNamed(root, "a", func(Injector) (prefixOnceStarter, error) { return prefixOnceStarter{}, nil }, AsStarter())
+				ProvideNamed(root, "b", func(i Injector) (prefixOnceStarter, error) { return InvokeNamed[prefixOnceStarter](i, "a") }, AsStarter())
 				require.NoError(t, DeclareDependency(root, "a", "b"))
 				err := root.Start()
 				require.ErrorIs(t, err, ErrCircularDependency)

@@ -137,27 +137,24 @@ type ShutdownerWithContextAndError interface {
 
 // Starter is a service started by [RootScope.Start] with Start().
 //
-// The four Starter variants (Starter, StarterWithError, StarterWithContext,
-// StarterWithContextAndError) are detected on the registered type, unlike
-// the Shutdowner variants, which are detected on the built instance. A lazy
-// service is therefore discovered without being built, but a service
-// registered under an interface type that has no Start method is not
-// auto-started even if its instance has one: register it with [AsStarter].
-// Transient services and aliases are never started.
+// A service is started only when it opts in: register it with [AsStarter].
+// The instance must then implement one of the four Starter variants
+// (Starter, StarterWithError, StarterWithContext, StarterWithContextAndError);
+// for a service registered under an interface type, the instance is checked
+// when Start runs. Transient services and aliases are never started.
+//
+// With [InjectorOpts.EnableStarterAutoDetection], every non-transient,
+// non-alias service whose registered type implements a Starter variant is
+// started too. Detection then uses the registered type, unlike the
+// Shutdowner variants, which are detected on the built instance, so a lazy
+// service is discovered without being built. It is off by default because
+// it can surprise: standard-library types such as *exec.Cmd (Start() error)
+// would be started, and code that already calls Start() by hand would start
+// its services twice.
 //
 // There is no Stop counterpart: a started service is stopped by its
 // Shutdowner method during Shutdown. A Starter without a Shutdowner method is
 // allowed; its lifecycle ends with the process.
-//
-// Auto-detection can surprise: any registered type with a matching Start
-// method is started, including standard-library types such as *exec.Cmd
-// (Start() error), and a *RootScope registered as a service of another
-// container (it is started, but never shut down automatically, because its
-// Shutdown returns a *ShutdownReport). Code that already calls Start() by
-// hand, as some of this repository's examples do, would start such services
-// twice once it calls [RootScope.Start]. Set
-// [InjectorOpts.DisableStarterAutoDetection], or register the service under
-// an interface type without Start, to opt out.
 type Starter interface {
 	Start()
 }

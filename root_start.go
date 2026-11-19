@@ -31,11 +31,11 @@ func (s *RootScope) Start() error {
 // then starts the Starters.
 //
 // Candidates are the non-transient, non-alias services of the root scope and
-// of every descendant scope that exists when Start takes its snapshot, whose
-// registered type implements a Starter variant (unless
-// [InjectorOpts.DisableStarterAutoDetection] is set) or that were registered
-// with [AsStarter]. Services registered after Start, and scopes created after
-// it, are not started until [RootScope.Refresh] or [Scope.Start]; until then,
+// of every descendant scope that exists when Start takes its snapshot that
+// were registered with [AsStarter], or whose registered type implements a
+// Starter variant when [InjectorOpts.EnableStarterAutoDetection] is set.
+// Services registered after Start, and scopes created after it, are not
+// started until [RootScope.Refresh] or [Scope.Start]; until then,
 // health reports list such a Starter as [HealthUnknown] and do not check it
 // (see [RootScope.HealthReport]), so readiness stays unknown until it starts.
 //
@@ -599,16 +599,22 @@ func (s *RootScope) newStartCandidate(scope *Scope, name string, depth int, serv
 }
 
 // declaresStarter reports whether Start, Refresh and Scope.Start start
-// service: it opted in with AsStarter, or its registered type is a Starter
-// and auto-detection is on. Transient services and aliases never are.
+// service; see isStartCandidate.
 func (s *RootScope) declaresStarter(service serviceWrapperAny) bool {
+	return isStartCandidate(s.opts, service)
+}
+
+// isStartCandidate reports whether a container with opts starts service: it
+// opted in with AsStarter, or its registered type is a Starter and
+// EnableStarterAutoDetection is on. Transient services and aliases never are.
+func isStartCandidate(opts *InjectorOpts, service serviceWrapperAny) bool {
 	if serviceType := service.getServiceType(); serviceType == ServiceTypeTransient || serviceType == ServiceTypeAlias {
 		return false
 	}
 
-	opts := service.getOptions()
-	return (opts != nil && opts.starter) ||
-		(!s.opts.DisableStarterAutoDetection && typeIsStarter(service.getReflectType()))
+	serviceOpts := service.getOptions()
+	return (serviceOpts != nil && serviceOpts.starter) ||
+		(opts.EnableStarterAutoDetection && typeIsStarter(service.getReflectType()))
 }
 
 // buildCandidates invokes every candidate, keeping its instance.

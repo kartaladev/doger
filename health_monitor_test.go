@@ -170,7 +170,7 @@ func TestHealthScheduler_CalledAtReady(t *testing.T) {
 			name: "start_fails",
 			action: func(t *testing.T, i *RootScope) {
 				t.Helper()
-				ProvideNamedValue(i, "starter", &healthReportTestStarter{release: closedChan(), err: errors.New("boom")})
+				ProvideNamedValue(i, "starter", &healthReportTestStarter{release: closedChan(), err: errors.New("boom")}, AsStarter())
 				require.Error(t, i.Start())
 			},
 			calls: 0, readyCalls: -1,
@@ -180,7 +180,7 @@ func TestHealthScheduler_CalledAtReady(t *testing.T) {
 			action: func(t *testing.T, i *RootScope) {
 				t.Helper()
 				release := make(chan struct{})
-				ProvideNamedValue(i, "starter", &healthReportTestStarter{release: release})
+				ProvideNamedValue(i, "starter", &healthReportTestStarter{release: release}, AsStarter())
 				started := make(chan error, 1)
 				go func() { started <- i.Start() }()
 				require.Eventually(t, func() bool { return i.Phase() == PhaseStarting }, time.Second, time.Millisecond)

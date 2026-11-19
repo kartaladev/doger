@@ -522,8 +522,8 @@ func TestAsDefault_YieldedLifecycle(t *testing.T) {
 			root := New()
 			shutdownOnCleanup(t, root)
 			ext := root.Scope("ext")
-			Provide(root, poolProvider(rootPool))
-			Provide(ext, poolProvider(&dfPool{}), AsDefault(), AsRunnable())
+			Provide(root, poolProvider(rootPool), AsStarter())
+			Provide(ext, poolProvider(&dfPool{}), AsDefault(), AsRunnable(), AsStarter())
 			_, err := Invoke[*dfPool](ext)
 			require.NoError(t, err)
 			if tt.before != nil {
@@ -574,7 +574,7 @@ func TestAsDefault_ChosenLifecycle(t *testing.T) {
 
 	pool := &dfPool{}
 	root := New()
-	Provide(root, poolProvider(pool), AsDefault())
+	Provide(root, poolProvider(pool), AsDefault(), AsStarter())
 	require.NoError(t, root.Start())
 
 	_ = root.Shutdown()

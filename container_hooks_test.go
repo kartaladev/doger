@@ -23,7 +23,7 @@ func provideBuildCountedServer(root *RootScope) *atomic.Int32 {
 	ProvideNamed(root, "server", func(Injector) (*startWithErr, error) {
 		builds.Add(1)
 		return &startWithErr{}, nil
-	})
+	}, AsStarter())
 	return builds
 }
 
@@ -181,7 +181,7 @@ func TestContainerHooks_StartOrder(t *testing.T) {
 
 	root := New()
 	rec := &callRecorder{}
-	ProvideNamedValue(root, "server", &recordingStarterRec{name: "server", rec: rec})
+	ProvideNamedValue(root, "server", &recordingStarterRec{name: "server", rec: rec}, AsStarter())
 	ProvideNamedValue(root, "migrate", &recordingRunner{name: "migrate", rec: rec}, AsRunnable())
 	addRecordingContainerHooks(root, rec, "starting", "started", "ready")
 
@@ -234,7 +234,7 @@ func TestContainerFailedHook_FailurePoint(t *testing.T) {
 		{
 			name: "provider of a Starter service",
 			setup: func(root *RootScope) {
-				ProvideNamed(root, "server", func(Injector) (*startWithErr, error) { return nil, errBoom })
+				ProvideNamed(root, "server", func(Injector) (*startWithErr, error) { return nil, errBoom }, AsStarter())
 			},
 			cause: errBoom,
 		},
@@ -250,7 +250,7 @@ func TestContainerFailedHook_FailurePoint(t *testing.T) {
 		{
 			name: "Start method of a Starter",
 			setup: func(root *RootScope) {
-				ProvideNamedValue(root, "server", &errorStarter{err: errBoom})
+				ProvideNamedValue(root, "server", &errorStarter{err: errBoom}, AsStarter())
 			},
 			cause: errBoom,
 		},
@@ -598,7 +598,7 @@ func TestContainerHooks_HookCallsShutdown(t *testing.T) {
 	}{
 		{
 			name:  "Started",
-			setup: func(root *RootScope) { ProvideNamedValue(root, "server", &startWithErr{}) },
+			setup: func(root *RootScope) { ProvideNamedValue(root, "server", &startWithErr{}, AsStarter()) },
 			register: func(root *RootScope, got *nested) {
 				root.AddContainerStartedHook(func(_ context.Context, r *RootScope) { got.report = r.Shutdown() })
 			},
@@ -606,7 +606,7 @@ func TestContainerHooks_HookCallsShutdown(t *testing.T) {
 		},
 		{
 			name:  "Ready",
-			setup: func(root *RootScope) { ProvideNamedValue(root, "server", &startWithErr{}) },
+			setup: func(root *RootScope) { ProvideNamedValue(root, "server", &startWithErr{}, AsStarter()) },
 			register: func(root *RootScope, got *nested) {
 				root.AddContainerReadyHook(func(_ context.Context, r *RootScope) { got.report = r.Shutdown() })
 			},
@@ -614,7 +614,7 @@ func TestContainerHooks_HookCallsShutdown(t *testing.T) {
 		},
 		{
 			name:  "Failed",
-			setup: func(root *RootScope) { ProvideNamedValue(root, "server", &errorStarter{err: errBoom}) },
+			setup: func(root *RootScope) { ProvideNamedValue(root, "server", &errorStarter{err: errBoom}, AsStarter()) },
 			register: func(root *RootScope, got *nested) {
 				root.AddContainerFailedHook(func(_ context.Context, r *RootScope, _ error) { got.report = r.Shutdown() })
 			},
@@ -790,7 +790,7 @@ func TestContainerHooks_ShutdownDuringStart(t *testing.T) {
 					<-ctx.Done()
 					rec.record("a.Start returned")
 					return ctx.Err()
-				}})
+				}}, AsStarter())
 				return func() {
 					<-entered
 					root.Shutdown()
@@ -1204,7 +1204,7 @@ func TestContainerHooks_ObserverPanicDefault(t *testing.T) {
 		{
 			name: "Failed",
 			register: func(root *RootScope, rec *callRecorder) []string {
-				ProvideNamedValue(root, "server", &errorStarter{err: errBoom})
+				ProvideNamedValue(root, "server", &errorStarter{err: errBoom}, AsStarter())
 				root.AddContainerFailedHook(func(context.Context, *RootScope, error) { panic("kaboom") })
 				root.AddContainerFailedHook(func(context.Context, *RootScope, error) { rec.record("next-failed") })
 				return []string{"next-failed"}
@@ -1391,7 +1391,7 @@ func TestContainerHooks_ConcurrentStart(t *testing.T) {
 	is := assert.New(t)
 
 	root := New()
-	ProvideNamedValue(root, "server", &startWithErr{})
+	ProvideNamedValue(root, "server", &startWithErr{}, AsStarter())
 	var starting, started, ready atomic.Int32
 	root.AddContainerStartingHook(func(context.Context, *RootScope) error { starting.Add(1); return nil })
 	root.AddContainerStartedHook(func(context.Context, *RootScope) { started.Add(1) })
@@ -1555,7 +1555,7 @@ func TestContainerHooks_NoHooksUnchanged(t *testing.T) {
 			is := assert.New(t)
 
 			root := tt.ctor()
-			ProvideNamedValue(root, "server", &startWithErr{})
+			ProvideNamedValue(root, "server", &startWithErr{}, AsStarter())
 			provideBuiltShutdowner(t, root, &callRecorder{}, "db", nil)
 
 			is.NotPanics(func() {
@@ -1709,11 +1709,11 @@ func TestContainerHooks_ShutdownInterruptsLateStep(t *testing.T) {
 			name: "cycle check",
 			step: func(t *testing.T, err error) { t.Helper(); assert.ErrorIs(t, err, ErrCircularDependency) },
 			setup: func(root *RootScope, shutdowns *sync.WaitGroup) {
-				ProvideNamed(root, "scheduler", func(Injector) (*startWithErr, error) { return &startWithErr{}, nil })
+				ProvideNamed(root, "scheduler", func(Injector) (*startWithErr, error) { return &startWithErr{}, nil }, AsStarter())
 				ProvideNamed(root, "job", func(i Injector) (*startWithErr, error) {
 					_, err := InvokeNamed[*startWithErr](i, "scheduler")
 					return &startWithErr{}, err
-				})
+				}, AsStarter())
 				if err := DeclareDependency(root, "scheduler", "job"); err != nil {
 					panic(err)
 				}

@@ -94,7 +94,7 @@ func TestPhase_Lifecycle(t *testing.T) {
 			entered := make(chan struct{})
 			release := make(chan struct{})
 			if tt.failA {
-				ProvideNamed(root, "a", func(Injector) (*ctxStarter, error) { return nil, errBuild })
+				ProvideNamed(root, "a", func(Injector) (*ctxStarter, error) { return nil, errBuild }, AsStarter())
 			} else {
 				provideLazy(root, "a", &ctxStarter{fn: func(context.Context) error {
 					close(entered)

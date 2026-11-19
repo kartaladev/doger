@@ -76,7 +76,7 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
     HealthCheckSingleTimeout: 0,                      // 0: single-service checks keep HealthCheckTimeout
 
     Clock: nil, // nil: the real clock
-    DisableStarterAutoDetection: false, // true: Start only starts AsStarter() services
+    EnableStarterAutoDetection: false, // true: Start also starts every type with a Start method
     StartParallelism: 0, // 0 or 1: sequential; n > 1: up to n Starters at a time
 })
 ```

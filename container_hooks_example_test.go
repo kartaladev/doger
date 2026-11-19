@@ -35,7 +35,7 @@ func (*exampleMigration) Run(context.Context) error {
 
 func ExampleRootScope_AddContainerReadyHook() {
 	root := New()
-	ProvideValue(root, &exampleDB{})
+	ProvideValue(root, &exampleDB{}, AsStarter())
 	ProvideValue(root, &exampleMigration{}, AsRunnable())
 
 	// Ready fires after every Starter, every runner and every Started hook.
@@ -58,8 +58,8 @@ func (*exampleBrokenServer) Start() error { return errors.New("port in use") }
 
 func ExampleRootScope_AddContainerFailedHook() {
 	root := New()
-	ProvideValue(root, &exampleDB{})
-	ProvideNamedValue(root, "http", &exampleBrokenServer{})
+	ProvideValue(root, &exampleDB{}, AsStarter())
+	ProvideNamedValue(root, "http", &exampleBrokenServer{}, AsStarter())
 
 	// Start rolls nothing back: clean up what did start. Failed hooks run
 	// after Start released, so they may call Shutdown.
@@ -98,7 +98,7 @@ func ExampleInjectorOpts_containerHooks() {
 			},
 		},
 	})
-	ProvideValue(root, &exampleDB{})
+	ProvideValue(root, &exampleDB{}, AsStarter())
 
 	_ = root.Start()
 	root.Shutdown()
@@ -147,7 +147,7 @@ func ExampleRootScope_AddContainerStartedHook() {
 
 func ExampleRootScope_AddContainerClosingHook() {
 	root := New()
-	ProvideValue(root, &exampleDB{})
+	ProvideValue(root, &exampleDB{}, AsStarter())
 	_ = root.Start()
 
 	// Runs before any service is shut down, for example to stop accepting
@@ -165,7 +165,7 @@ func ExampleRootScope_AddContainerClosingHook() {
 
 func ExampleRootScope_AddContainerClosedHook() {
 	root := New()
-	ProvideValue(root, &exampleDB{})
+	ProvideValue(root, &exampleDB{}, AsStarter())
 	_ = root.Start()
 
 	// Runs once every service is shut down, with the report Shutdown returns.
@@ -245,7 +245,7 @@ func ExampleRootScope_AddScopeStartedHook() {
 	})
 
 	tenant := root.Scope("tenant-a")
-	ProvideNamedValue(tenant, "worker", &exampleWorker{name: "worker"})
+	ProvideNamedValue(tenant, "worker", &exampleWorker{name: "worker"}, AsStarter())
 	_ = tenant.Start()
 	// Output:
 	// worker started

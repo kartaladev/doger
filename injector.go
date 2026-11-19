@@ -481,10 +481,12 @@ type InjectorOpts struct {
 	// live fake-clock context.
 	Clock clockwork.Clock
 
-	// DisableStarterAutoDetection makes Start start only the services
-	// registered with AsStarter. By default, every non-transient service whose
-	// registered type implements a Starter variant is started too.
-	DisableStarterAutoDetection bool
+	// EnableStarterAutoDetection makes Start also start every non-transient,
+	// non-alias service whose registered type implements a Starter variant.
+	// By default (false), Start starts only the services registered with
+	// AsStarter, so a type with a familiar Start method, such as *exec.Cmd,
+	// is never started by surprise. Clone keeps the setting.
+	EnableStarterAutoDetection bool
 
 	// StartParallelism is the number of Starters that Start, Refresh and
 	// Scope.Start may run concurrently, each only after every Starter it

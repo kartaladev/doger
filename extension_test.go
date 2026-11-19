@@ -1494,7 +1494,7 @@ func TestExtend_Phases(t *testing.T) {
 			run: func(t *testing.T, starts *atomic.Int32) {
 				t.Helper()
 				root := New()
-				ProvideValue(root, failingStarter{})
+				ProvideValue(root, failingStarter{}, AsStarter())
 				require.Error(t, root.Start())
 				require.NoError(t, Extend(root, starterExtension(starts)))
 				require.ErrorIs(t, root.Refresh(), ErrNotStarted)
