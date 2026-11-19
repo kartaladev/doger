@@ -60,6 +60,12 @@ var (
 	// the functions with an error result and the panic value of the others.
 	// No call falls back to a global container.
 	ErrNilInjector = errors.New("doger: nil injector")
+	// ErrProviderPanic is matched by the error of an invocation whose
+	// provider panicked, or whose dependency's provider panicked. The panic
+	// value follows it in the message; an error value is wrapped, so
+	// errors.Is and errors.As also match it, including the
+	// *runtime.PanicNilError of panic(nil).
+	ErrProviderPanic = errors.New("doger: provider panicked")
 	// ErrStructInjection is matched by the error of InvokeStruct and the
 	// panic value of MustInvokeStruct when the target cannot be injected:
 	// it is not a struct or a pointer chain to one, it is a recursive
@@ -95,7 +101,7 @@ var libSentinels = []error{
 	ErrServiceAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
 	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted, ErrNilInjector,
-	ErrStructInjection,
+	ErrStructInjection, ErrProviderPanic,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
 	ErrExtensionCycle, ErrExtensionConflict,
 }

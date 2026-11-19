@@ -379,7 +379,7 @@ func TestAsDefault_ProviderRegistersOwnName(t *testing.T) {
 
 	_, err := Invoke[*dfDialer](root)
 
-	require.EqualError(t, err, fmt.Sprintf("doger: service %q in scope \"[root]\": service `%s` has already been declared", NameOf[*dfDialer](), NameOf[*dfDialer]()))
+	require.EqualError(t, err, fmt.Sprintf("doger: service %q in scope \"[root]\": provider panicked: service `%s` has already been declared", NameOf[*dfDialer](), NameOf[*dfDialer]()))
 	require.ErrorIs(t, err, ErrServiceAlreadyDeclared)
 }
 

@@ -965,9 +965,9 @@ func handleProviderPanic[T any](provider Provider[T], i Injector) (svc T, err er
 	defer func() {
 		if r := recover(); r != nil {
 			if e, ok := r.(error); ok {
-				err = e
+				err = libErrorf("%w: %w", ErrProviderPanic, e)
 			} else {
-				err = libErrorf("%v", r)
+				err = libErrorf("%w: %v", ErrProviderPanic, r)
 			}
 		}
 	}()

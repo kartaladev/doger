@@ -150,9 +150,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 21. Provider panic errors
 
-- [ ] 21.1 RED: update the `TestInvoke_ProviderPanic` rows and add `TestProviderPanic_NestedProvider` (scenarios "Provider panic values become invocation errors", "Panic in a nested provider"); verify `go test -race -run 'TestInvoke_ProviderPanic$|TestProviderPanic_' .` fails to compile naming only `ErrProviderPanic`, then on the message rows
-- [ ] 21.2 GREEN: add `ErrProviderPanic`; `handleProviderPanic` wraps it with an error panic value (`%w` twice) or formats other values with `%v`, and `ServiceError` adds the service name; keep `TestInvoke_ProviderPanicNil_GODEBUGOverride` green; verify the 21.1 tests pass and `make test` is green
-- [ ] 21.3 REFACTOR: none needed — the change is local to `handleProviderPanic`; verify `make test` and `make lint` pass
+- [x] 21.1 RED: update the `TestInvoke_ProviderPanic` rows and add `TestProviderPanic_NestedProvider` (scenarios "Provider panic values become invocation errors", "Panic in a nested provider"); verify `go test -race -run 'TestInvoke_ProviderPanic$|TestProviderPanic_' .` fails to compile naming only `ErrProviderPanic`, then on the message rows
+- [x] 21.2 GREEN: add `ErrProviderPanic`; `handleProviderPanic` wraps it with an error panic value (`%w` twice) or formats other values with `%v`, and `ServiceError` adds the service name; keep `TestInvoke_ProviderPanicNil_GODEBUGOverride` green; verify the 21.1 tests pass and `make test` is green
+- [x] 21.3 REFACTOR: none needed — the change is local to `handleProviderPanic`; verify `make test` and `make lint` pass
 
 ## 22. InvokeAs and struct injection with nil interfaces and invalid targets
 

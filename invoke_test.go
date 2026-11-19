@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -89,7 +90,7 @@ func TestInvokeAnyByName(t *testing.T) {
 	})
 	svc, err = invokeAnyByName(i, "provider-panic-string")
 	is.Error(err)
-	is.EqualError(err, `doger: service "provider-panic-string" in scope "[root]": test panic`)
+	is.EqualError(err, `doger: service "provider-panic-string" in scope "[root]": provider panicked: test panic`)
 	is.Empty(svc)
 
 	// Test provider panic with error
@@ -98,7 +99,7 @@ func TestInvokeAnyByName(t *testing.T) {
 	})
 	svc, err = invokeAnyByName(i, "provider-panic-error")
 	is.Error(err)
-	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-panic-error", Err: assert.AnError}, err)
+	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-panic-error", Err: libErrorf("%w: %w", ErrProviderPanic, assert.AnError)}, err)
 	is.Empty(svc)
 
 	// Test nested scope resolution
@@ -218,7 +219,7 @@ func TestInvokeByName(t *testing.T) {
 	})
 	svc, err = invokeByName[string](i, "provider-panic-string")
 	is.Error(err)
-	is.EqualError(err, `doger: service "provider-panic-string" in scope "[root]": test panic`)
+	is.EqualError(err, `doger: service "provider-panic-string" in scope "[root]": provider panicked: test panic`)
 	is.Empty(svc)
 
 	// Test provider panic with error
@@ -227,7 +228,7 @@ func TestInvokeByName(t *testing.T) {
 	})
 	svc, err = invokeByName[string](i, "provider-panic-error")
 	is.Error(err)
-	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-panic-error", Err: assert.AnError}, err)
+	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-panic-error", Err: libErrorf("%w: %w", ErrProviderPanic, assert.AnError)}, err)
 	is.Empty(svc)
 
 	// Test nested scope resolution
@@ -822,12 +823,12 @@ func TestHandleProviderPanic(t *testing.T) {
 		{
 			name:     "panics with string",
 			provider: func(i Injector) (int, error) { panic("aïe") },
-			wantMsg:  "doger: aïe",
+			wantMsg:  "doger: provider panicked: aïe",
 		},
 		{
 			name:     "panics with error",
 			provider: func(i Injector) (int, error) { panic(assert.AnError) },
-			wantErr:  assert.AnError,
+			wantErr:  libErrorf("%w: %w", ErrProviderPanic, assert.AnError),
 		},
 	}
 
@@ -864,8 +865,8 @@ func TestInvoke_ProviderPanic(t *testing.T) {
 			return func() (int, error) { return Invoke[int](i) }
 		},
 		"transient": func(i Injector, value any) func() (int, error) {
-			ProvideNamedTransient(i, "svc", func(Injector) (int, error) { panic(value) })
-			return func() (int, error) { return InvokeNamed[int](i, "svc") }
+			ProvideTransient(i, func(Injector) (int, error) { panic(value) })
+			return func() (int, error) { return Invoke[int](i) }
 		},
 	}
 
@@ -877,12 +878,12 @@ func TestInvoke_ProviderPanic(t *testing.T) {
 		isNil   bool
 		isBoom  bool
 	}{
-		{name: "lazy_nil", kind: "lazy", value: nil, message: `doger: service "int" in scope "[root]": runtime error: panic called with nil argument`, isNil: true},
-		{name: "transient_nil", kind: "transient", value: nil, message: `doger: service "svc" in scope "[root]": runtime error: panic called with nil argument`, isNil: true},
-		{name: "lazy_error", kind: "lazy", value: errBoom, message: `doger: service "int" in scope "[root]": boom`, isBoom: true},
-		{name: "transient_error", kind: "transient", value: errBoom, message: `doger: service "svc" in scope "[root]": boom`, isBoom: true},
-		{name: "lazy_string", kind: "lazy", value: "s", message: `doger: service "int" in scope "[root]": s`},
-		{name: "lazy_int", kind: "lazy", value: 42, message: `doger: service "int" in scope "[root]": 42`},
+		{name: "lazy_nil", kind: "lazy", value: nil, message: `doger: service "int" in scope "[root]": provider panicked: runtime error: panic called with nil argument`, isNil: true},
+		{name: "transient_nil", kind: "transient", value: nil, message: `doger: service "int" in scope "[root]": provider panicked: runtime error: panic called with nil argument`, isNil: true},
+		{name: "lazy_error", kind: "lazy", value: errBoom, message: `doger: service "int" in scope "[root]": provider panicked: boom`, isBoom: true},
+		{name: "transient_error", kind: "transient", value: errBoom, message: `doger: service "int" in scope "[root]": provider panicked: boom`, isBoom: true},
+		{name: "lazy_string", kind: "lazy", value: "s", message: `doger: service "int" in scope "[root]": provider panicked: s`},
+		{name: "lazy_int", kind: "lazy", value: 42, message: `doger: service "int" in scope "[root]": provider panicked: 42`},
 	}
 
 	for _, tt := range tests {
@@ -897,11 +898,42 @@ func TestInvoke_ProviderPanic(t *testing.T) {
 			is.Equal(0, svc)
 			is.EqualError(err, tt.message)
 
+			is.ErrorIs(err, ErrProviderPanic)
 			var panicNilErr *runtime.PanicNilError
 			is.Equal(tt.isNil, errors.As(err, &panicNilErr), "errors.As *runtime.PanicNilError")
 			is.Equal(tt.isBoom, errors.Is(err, errBoom), "errors.Is boom")
+			var serviceErr *ServiceError
+			if is.ErrorAs(err, &serviceErr) {
+				is.Equal("int", serviceErr.Service)
+			}
 		})
 	}
+}
+
+func TestProviderPanic_NestedProvider(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+
+	root := New()
+	var dbBuilds atomic.Int32
+	ProvideNamed(root, "api", func(i Injector) (int, error) { return InvokeNamed[int](i, "db") })
+	ProvideNamed(root, "db", func(Injector) (int, error) {
+		dbBuilds.Add(1)
+		panic("connection pool exhausted")
+	})
+
+	_, err := InvokeNamed[int](root, "api")
+	is.ErrorIs(err, ErrProviderPanic)
+	var serviceErr *ServiceError
+	if is.ErrorAs(err, &serviceErr) {
+		is.Equal("api", serviceErr.Service)
+	}
+	is.EqualError(err, `doger: service "api" in scope "[root]": service "db" in scope "[root]": provider panicked: connection pool exhausted`)
+
+	_, err = InvokeNamed[int](root, "api")
+	is.ErrorIs(err, ErrProviderPanic)
+	is.Equal(int32(2), dbBuilds.Load(), "invoking api again calls the provider of db again")
 }
 
 // panicNilChildEnv marks the re-executed test binary of
