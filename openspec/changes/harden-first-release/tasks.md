@@ -312,7 +312,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 45. Web UI renders bounded dependency trees
 
-- [x] 45.1 RED: add `TestPages_TreeSizeFollowsGraph`, `TestPages_ReferenceLinks` and `TestWebUI_LayeredGraphBounded` per adapter (scenarios "Tree size follows the graph shape", "A reference links to the referenced service", "A layered graph renders each service once"); verify they fail (about 26 MB and 121391 entries for svc-23)
+- [x] 45.1 RED: add `TestPages_TreeSizeFollowsGraph`, `TestPages_ReferenceLinks` and `TestWebUI_LayeredGraphBounded` per adapter (scenarios "Tree size follows the graph shape", "A reference links to the referenced service", "A layered graph renders each service once"); verify they fail. Observed after the explain merge: "dependency tree lists 45 entries with 0 references, want 45 with 22" for svc-23 on every adapter (and 0 references for the diamond and ten-layer rows); the size and time bound already held, because group 26's `Ref` nodes bound the explain output, so the failure is the missing reference marking (the 26 MB / 121391 entries figure predates group 26)
 - [x] 45.2 GREEN: render `Ref` nodes as links with no children via the recursive template block; verify the 45.1 tests pass with the body under 64 KiB within 1s
 - [x] 45.3 REFACTOR: Extract Function `dependencyTree` template block shared by Dependencies and Dependents; verify the per-module tests and lint pass
 

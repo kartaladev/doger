@@ -59,12 +59,18 @@ func Use(router chi.Router, basePath string, injector doger.Injector, opts ...do
 func use(router chi.Router, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
 	base := webui.Base(basePath)
 
-	router.Get(webui.HomeRoute(base), func(w http.ResponseWriter, r *http.Request) {
+	// get serves pattern for GET, and for HEAD like GET.
+	get := func(pattern string, handler http.HandlerFunc) {
+		router.Get(pattern, handler)
+		router.Head(pattern, handler)
+	}
+
+	get(webui.HomeRoute(base), func(w http.ResponseWriter, r *http.Request) {
 		output, err := pages.index(base, opts...)
 		response(w, r, output, err, opts)
 	})
 
-	router.Get(base+"/scope", func(w http.ResponseWriter, r *http.Request) {
+	get(base+"/scope", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		if scopeID == "" {
 			dogerhttp.WriteHeaders(w.Header())
@@ -76,7 +82,7 @@ func use(router chi.Router, basePath string, injector doger.Injector, pages rend
 		response(w, r, output, err, opts)
 	})
 
-	router.Get(base+"/service", func(w http.ResponseWriter, r *http.Request) {
+	get(base+"/service", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		serviceName := r.URL.Query().Get("service_name")
 

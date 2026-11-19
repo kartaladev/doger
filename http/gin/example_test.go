@@ -1,6 +1,7 @@
 package dogergin_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,17 @@ import (
 	dogergin "github.com/kartaladev/doger/http/gin"
 )
 
+// debugAuth returns a basic-auth middleware for the debug UI. It refuses
+// empty credentials, so an unset variable never opens the UI; gin.BasicAuth
+// compares in constant time. The Web UI docs show this function.
+func debugAuth(user, password string) (gin.HandlerFunc, error) {
+	if user == "" || password == "" {
+		return nil, errors.New("debug UI: set DEBUG_USER and DEBUG_PASSWORD")
+	}
+
+	return gin.BasicAuth(gin.Accounts{user: password}), nil
+}
+
 // Pass your middleware to the group the UI is mounted on.
 func ExampleUse() {
 	gin.SetMode(gin.ReleaseMode)
@@ -17,8 +29,12 @@ func ExampleUse() {
 	injector := doger.New()
 	doger.ProvideNamedValue(injector, "db", "postgres://localhost")
 
+	auth, err := debugAuth("admin", "s3cret") // os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD")
+	if err != nil {
+		panic(err)
+	}
+
 	r := gin.New()
-	auth := gin.BasicAuth(gin.Accounts{"admin": "s3cret"})
 	dogergin.Use(r.Group("/debug/doger", auth), injector)
 
 	anonymous := httptest.NewRecorder()
@@ -31,4 +47,11 @@ func ExampleUse() {
 
 	fmt.Println(anonymous.Code, admin.Code)
 	// Output: 401 200
+}
+
+// Unset credentials refuse to mount the UI instead of opening it.
+func ExampleUse_emptyCredentials() {
+	_, err := debugAuth("", "")
+	fmt.Println(err)
+	// Output: debug UI: set DEBUG_USER and DEBUG_PASSWORD
 }

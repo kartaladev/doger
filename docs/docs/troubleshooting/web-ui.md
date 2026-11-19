@@ -46,6 +46,10 @@ handler := dogerhttpstd.Use("/debug/doger", injector,
 )
 ```
 
+## Protecting the UI {#protecting-the-ui}
+
+Each adapter section below defines a `debugAuth` function that builds basic-auth middleware from `DEBUG_USER` and `DEBUG_PASSWORD`. It refuses empty credentials, so an unset variable stops the program instead of opening the UI to anyone, and it compares in constant time. The same functions are compiled and run as each adapter's `ExampleUse`, so the snippets stay correct.
+
 ## Without framework {#without-framework}
 
 ```bash
@@ -57,12 +61,44 @@ go get github.com/kartaladev/doger/http/std
 ```go
 import dogerhttpstd "github.com/kartaladev/doger/http/std"
 
-injector := startProgram()
+// debugAuth returns a basic-auth middleware for the debug UI. It refuses
+// empty credentials, so an unset variable never opens the UI, and compares
+// in constant time.
+func debugAuth(user, password string) (func(http.Handler) http.Handler, error) {
+    if user == "" || password == "" {
+        return nil, errors.New("debug UI: set DEBUG_USER and DEBUG_PASSWORD")
+    }
 
-mux := http.NewServeMux()
-mux.Handle("/debug/doger/", basicAuth(dogerhttpstd.Use("/debug/doger", injector)))
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            u, p, ok := r.BasicAuth()
+            if !ok ||
+                subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
+                subtle.ConstantTimeCompare([]byte(p), []byte(password)) != 1 {
+                w.Header().Set("WWW-Authenticate", `Basic realm="debug"`)
+                http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 
-http.ListenAndServe("127.0.0.1:8081", mux)
+                return
+            }
+
+            next.ServeHTTP(w, r)
+        })
+    }, nil
+}
+
+func main() {
+    injector := startProgram()
+
+    auth, err := debugAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    mux := http.NewServeMux()
+    mux.Handle("/debug/doger/", auth(dogerhttpstd.Use("/debug/doger", injector)))
+
+    log.Fatal(http.ListenAndServe("127.0.0.1:8081", mux))
+}
 ```
 
 ## Gin {#gin}
@@ -71,18 +107,34 @@ http.ListenAndServe("127.0.0.1:8081", mux)
 go get github.com/kartaladev/doger/http/gin
 ```
 
-Pass the middleware to the group the UI is mounted on.
+Pass the middleware to the group the UI is mounted on. `gin.BasicAuth` compares in constant time.
 
 ```go
 import dogergin "github.com/kartaladev/doger/http/gin"
 
-injector := startProgram()
+// debugAuth returns a basic-auth middleware for the debug UI. It refuses
+// empty credentials, so an unset variable never opens the UI.
+func debugAuth(user, password string) (gin.HandlerFunc, error) {
+    if user == "" || password == "" {
+        return nil, errors.New("debug UI: set DEBUG_USER and DEBUG_PASSWORD")
+    }
 
-router := gin.New()
-auth := gin.BasicAuth(gin.Accounts{os.Getenv("DEBUG_USER"): os.Getenv("DEBUG_PASSWORD")})
-dogergin.Use(router.Group("/debug/doger", auth), injector)
+    return gin.BasicAuth(gin.Accounts{user: password}), nil
+}
 
-router.Run("127.0.0.1:8081")
+func main() {
+    injector := startProgram()
+
+    auth, err := debugAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    router := gin.New()
+    dogergin.Use(router.Group("/debug/doger", auth), injector)
+
+    log.Fatal(router.Run("127.0.0.1:8081"))
+}
 ```
 
 ## Fiber {#fiber}
@@ -93,19 +145,40 @@ go get github.com/kartaladev/doger/http/fiber
 
 ```go
 import (
+    "github.com/gofiber/fiber/v2"
     "github.com/gofiber/fiber/v2/middleware/basicauth"
     dogerfiber "github.com/kartaladev/doger/http/fiber"
 )
 
-injector := startProgram()
+// debugAuth returns a basic-auth middleware for the debug UI. It refuses
+// empty credentials, so an unset variable never opens the UI, and compares
+// in constant time.
+func debugAuth(user, password string) (fiber.Handler, error) {
+    if user == "" || password == "" {
+        return nil, errors.New("debug UI: set DEBUG_USER and DEBUG_PASSWORD")
+    }
 
-app := fiber.New()
-auth := basicauth.New(basicauth.Config{Users: map[string]string{
-    os.Getenv("DEBUG_USER"): os.Getenv("DEBUG_PASSWORD"),
-}})
-dogerfiber.Use(app.Group("/debug/doger", auth), "/debug/doger", injector)
+    return basicauth.New(basicauth.Config{
+        Authorizer: func(u, p string) bool {
+            return subtle.ConstantTimeCompare([]byte(u), []byte(user)) == 1 &&
+                subtle.ConstantTimeCompare([]byte(p), []byte(password)) == 1
+        },
+    }), nil
+}
 
-app.Listen("127.0.0.1:8081")
+func main() {
+    injector := startProgram()
+
+    auth, err := debugAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    app := fiber.New()
+    dogerfiber.Use(app.Group("/debug/doger", auth), "/debug/doger", injector)
+
+    log.Fatal(app.Listen("127.0.0.1:8081"))
+}
 ```
 
 ## Echo {#echo}
@@ -116,19 +189,38 @@ go get github.com/kartaladev/doger/http/echo
 
 ```go
 import (
+    "github.com/labstack/echo/v4"
     "github.com/labstack/echo/v4/middleware"
     dogerecho "github.com/kartaladev/doger/http/echo"
 )
 
-injector := startProgram()
+// debugAuth returns a basic-auth middleware for the debug UI. It refuses
+// empty credentials, so an unset variable never opens the UI, and compares
+// in constant time.
+func debugAuth(user, password string) (echo.MiddlewareFunc, error) {
+    if user == "" || password == "" {
+        return nil, errors.New("debug UI: set DEBUG_USER and DEBUG_PASSWORD")
+    }
 
-e := echo.New()
-auth := middleware.BasicAuth(func(user, password string, _ echo.Context) (bool, error) {
-    return checkDebugCredentials(user, password), nil
-})
-dogerecho.Use(e.Group("/debug/doger", auth), "/debug/doger", injector)
+    return middleware.BasicAuth(func(u, p string, _ echo.Context) (bool, error) {
+        return subtle.ConstantTimeCompare([]byte(u), []byte(user)) == 1 &&
+            subtle.ConstantTimeCompare([]byte(p), []byte(password)) == 1, nil
+    }), nil
+}
 
-e.Start("127.0.0.1:8081")
+func main() {
+    injector := startProgram()
+
+    auth, err := debugAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    e := echo.New()
+    dogerecho.Use(e.Group("/debug/doger", auth), "/debug/doger", injector)
+
+    log.Fatal(e.Start("127.0.0.1:8081"))
+}
 ```
 
 ## Chi {#chi}
@@ -137,21 +229,25 @@ e.Start("127.0.0.1:8081")
 go get github.com/kartaladev/doger/http/chi
 ```
 
-`dogerchi.Use` accepts any `chi.Router`, so mount it on `r.With(auth)` or inside `r.Group`.
+`dogerchi.Use` accepts any `chi.Router`, so mount it on `r.With(auth)` or inside `r.Group`. `debugAuth` is the same `net/http` middleware as in [Without framework](#without-framework).
 
 ```go
 import (
-    "github.com/go-chi/chi/v5/middleware"
+    "github.com/go-chi/chi/v5"
     dogerchi "github.com/kartaladev/doger/http/chi"
 )
 
-injector := startProgram()
+func main() {
+    injector := startProgram()
 
-r := chi.NewRouter()
-auth := middleware.BasicAuth("debug", map[string]string{
-    os.Getenv("DEBUG_USER"): os.Getenv("DEBUG_PASSWORD"),
-})
-dogerchi.Use(r.With(auth), "/debug/doger", injector)
+    auth, err := debugAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD"))
+    if err != nil {
+        log.Fatal(err)
+    }
 
-http.ListenAndServe("127.0.0.1:8081", r)
+    r := chi.NewRouter()
+    dogerchi.Use(r.With(auth), "/debug/doger", injector)
+
+    log.Fatal(http.ListenAndServe("127.0.0.1:8081", r))
+}
 ```

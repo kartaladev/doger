@@ -94,6 +94,16 @@ func NonGETRejected(t *testing.T, mount Mount) {
 			checkNotContains(t, resp.Body, "<!DOCTYPE html>")
 		})
 	}
+
+	// HEAD is served like GET, as the docs promise on every adapter.
+	t.Run("HEAD_served", func(t *testing.T) {
+		t.Parallel()
+
+		resp := Do(t, mount(t, newDBRoot()), NewRequest(t, http.MethodHead, BasePath+"/service"))
+
+		checkEqual(t, http.StatusOK, resp.StatusCode, "HEAD status")
+		AssertDefensiveHeaders(t, resp.Header)
+	})
 }
 
 // countingDB counts the lifecycle calls it receives.
