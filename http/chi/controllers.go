@@ -47,10 +47,17 @@ import (
 // Do not expose these routes publicly in production. They reveal internal details
 // about your DI graph. Protect the basePath with authentication (e.g., Basic Auth)
 // and/or network restrictions. Apply your auth middleware before calling Use.
-func Use(router *chi.Mux, basePath string, injector doger.Injector) {
+//
+// opts configure the pages, such as [dogerhttp.WithFullSourcePaths] and
+// [dogerhttp.WithErrorHandler].
+func Use(router *chi.Mux, basePath string, injector doger.Injector, opts ...dogerhttp.Option) {
+	use(router, basePath, injector, defaultRenderer, opts)
+}
+
+func use(router *chi.Mux, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
 	router.Get(basePath, func(w http.ResponseWriter, r *http.Request) {
-		output, err := dogerhttp.IndexHTML(basePath)
-		response(w, output, err)
+		output, err := pages.index(basePath, opts...)
+		response(w, r, output, err, opts)
 	})
 
 	router.Get(basePath+"/scope", func(w http.ResponseWriter, r *http.Request) {
@@ -62,8 +69,8 @@ func Use(router *chi.Mux, basePath string, injector doger.Injector) {
 			return
 		}
 
-		output, err := dogerhttp.ScopeTreeHTML(basePath, injector, scopeID)
-		response(w, output, err)
+		output, err := pages.scopeTree(basePath, injector, scopeID, opts...)
+		response(w, r, output, err, opts)
 	})
 
 	router.Get(basePath+"/service", func(w http.ResponseWriter, r *http.Request) {
@@ -71,18 +78,35 @@ func Use(router *chi.Mux, basePath string, injector doger.Injector) {
 		serviceName := r.URL.Query().Get("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := dogerhttp.ServiceListHTML(basePath, injector)
-			response(w, output, err)
+			output, err := pages.serviceList(basePath, injector, opts...)
+			response(w, r, output, err, opts)
 			return
 		}
 
-		output, err := dogerhttp.ServiceHTML(basePath, injector, scopeID, serviceName)
-		response(w, output, err)
+		output, err := pages.service(basePath, injector, scopeID, serviceName, opts...)
+		response(w, r, output, err, opts)
 	})
 }
 
 // response writes data as the page, or a generic 500 when it failed to
-// render: the error text never reaches the client.
-func response(w http.ResponseWriter, data string, err error) {
-	dogerhttp.WritePage(w, data, err)
+// render: the error text never reaches the client, only the error handler
+// of opts.
+func response(w http.ResponseWriter, r *http.Request, data string, err error, opts []dogerhttp.Option) {
+	dogerhttp.WritePage(w, r, data, err, opts...)
+}
+
+// renderer renders the pages of the UI. Tests replace a page to make it fail.
+type renderer struct {
+	index       func(basePath string, opts ...dogerhttp.Option) (string, error)
+	scopeTree   func(basePath string, injector doger.Injector, scopeID string, opts ...dogerhttp.Option) (string, error)
+	service     func(basePath string, injector doger.Injector, scopeID, serviceName string, opts ...dogerhttp.Option) (string, error)
+	serviceList func(basePath string, injector doger.Injector, opts ...dogerhttp.Option) (string, error)
+}
+
+// defaultRenderer renders the pages of package dogerhttp.
+var defaultRenderer = renderer{
+	index:       dogerhttp.IndexHTML,
+	scopeTree:   dogerhttp.ScopeTreeHTML,
+	service:     dogerhttp.ServiceHTML,
+	serviceList: dogerhttp.ServiceListHTML,
 }

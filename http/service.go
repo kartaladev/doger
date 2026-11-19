@@ -15,6 +15,8 @@ import (
 //   - injector: The injector containing the service
 //   - scopeID: The ID of the scope containing the service
 //   - serviceName: The name of the service to inspect
+//   - opts: Page options, such as WithFullSourcePaths to show the full path of
+//     the file where the service was provided instead of "<file base name>:<line>"
 //
 // Returns the HTML content as a string and any error that occurred during generation.
 //
@@ -34,21 +36,18 @@ import (
 //	    log.Fatal(err)
 //	}
 //	fmt.Fprint(w, html)
-func ServiceHTML(basePath string, injector doger.Injector, scopeID string, serviceName string) (string, error) {
+func ServiceHTML(basePath string, injector doger.Injector, scopeID string, serviceName string, opts ...Option) (string, error) {
 	scope, ok := getScopeByID(injector, scopeID)
 	if !ok {
-		return ServiceListHTML(basePath, injector)
+		return ServiceListHTML(basePath, injector, opts...)
 	}
 
 	service, ok := doger.ExplainNamedService(scope.Scope, serviceName)
 	if !ok {
-		return ServiceListHTML(basePath, injector)
+		return ServiceListHTML(basePath, injector, opts...)
 	}
 
-	invoked := ""
-	if service.Invoked != nil {
-		invoked = service.Invoked.String()
-	}
+	o := newPageOptions(opts)
 
 	return render("service", struct {
 		Menu             menuLinks
@@ -67,7 +66,7 @@ func ServiceHTML(basePath string, injector doger.Injector, scopeID string, servi
 		ServiceName:      service.ServiceName,
 		ServiceType:      service.ServiceType,
 		ServiceBuildTime: service.ServiceBuildTime,
-		Invoked:          invoked,
+		Invoked:          invokedAt(scope.Scope, service, o),
 		Dependencies:     dependencyEntries(basePath, service.Dependencies),
 		Dependents:       dependencyEntries(basePath, service.Dependents),
 	})
@@ -80,6 +79,7 @@ func ServiceHTML(basePath string, injector doger.Injector, scopeID string, servi
 // Parameters:
 //   - basePath: The base URL path for the web interface
 //   - injector: The injector containing the services to list
+//   - opts: Page options; none changes this page
 //
 // Returns the HTML content as a string and any error that occurred during generation.
 //
@@ -98,7 +98,7 @@ func ServiceHTML(basePath string, injector doger.Injector, scopeID string, servi
 //	    log.Fatal(err)
 //	}
 //	fmt.Fprint(w, html)
-func ServiceListHTML(basePath string, injector doger.Injector) (string, error) {
+func ServiceListHTML(basePath string, injector doger.Injector, opts ...Option) (string, error) {
 	scopes := getAllScopes(injector)
 
 	return render("serviceList", struct {

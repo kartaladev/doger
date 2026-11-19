@@ -56,12 +56,34 @@ import (
 // The handler serves GET and HEAD only; any other method gets 405 Method Not
 // Allowed. Every response carries the headers of [dogerhttp.WriteHeaders],
 // and a page that fails to render gets a generic 500 that reveals no detail.
-func Use(basePath string, injector doger.Injector) http.Handler {
+// opts configure the pages, such as [dogerhttp.WithFullSourcePaths] and
+// [dogerhttp.WithErrorHandler].
+func Use(basePath string, injector doger.Injector, opts ...dogerhttp.Option) http.Handler {
+	return use(basePath, injector, defaultRenderer, opts)
+}
+
+// renderer renders the pages of the UI. Tests replace a page to make it fail.
+type renderer struct {
+	index       func(basePath string, opts ...dogerhttp.Option) (string, error)
+	scopeTree   func(basePath string, injector doger.Injector, scopeID string, opts ...dogerhttp.Option) (string, error)
+	service     func(basePath string, injector doger.Injector, scopeID, serviceName string, opts ...dogerhttp.Option) (string, error)
+	serviceList func(basePath string, injector doger.Injector, opts ...dogerhttp.Option) (string, error)
+}
+
+// defaultRenderer renders the pages of package dogerhttp.
+var defaultRenderer = renderer{
+	index:       dogerhttp.IndexHTML,
+	scopeTree:   dogerhttp.ScopeTreeHTML,
+	service:     dogerhttp.ServiceHTML,
+	serviceList: dogerhttp.ServiceListHTML,
+}
+
+func use(basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		output, err := dogerhttp.IndexHTML(basePath)
-		response(w, []byte(output), err)
+		output, err := pages.index(basePath, opts...)
+		response(w, r, output, err, opts)
 	})
 
 	mux.HandleFunc("GET /scope", func(w http.ResponseWriter, r *http.Request) {
@@ -72,8 +94,8 @@ func Use(basePath string, injector doger.Injector) http.Handler {
 			return
 		}
 
-		output, err := dogerhttp.ScopeTreeHTML(basePath, injector, scopeID)
-		response(w, []byte(output), err)
+		output, err := pages.scopeTree(basePath, injector, scopeID, opts...)
+		response(w, r, output, err, opts)
 	})
 
 	mux.HandleFunc("GET /service", func(w http.ResponseWriter, r *http.Request) {
@@ -81,13 +103,13 @@ func Use(basePath string, injector doger.Injector) http.Handler {
 		serviceName := r.URL.Query().Get("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := dogerhttp.ServiceListHTML(basePath, injector)
-			response(w, []byte(output), err)
+			output, err := pages.serviceList(basePath, injector, opts...)
+			response(w, r, output, err, opts)
 			return
 		}
 
-		output, err := dogerhttp.ServiceHTML(basePath, injector, scopeID, serviceName)
-		response(w, []byte(output), err)
+		output, err := pages.service(basePath, injector, scopeID, serviceName, opts...)
+		response(w, r, output, err, opts)
 	})
 
 	return http.StripPrefix(basePath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +126,8 @@ func Use(basePath string, injector doger.Injector) http.Handler {
 }
 
 // response writes output as the page, or a generic 500 when it failed to
-// render: the error text never reaches the client.
-func response(w http.ResponseWriter, output []byte, err error) {
-	dogerhttp.WritePage(w, string(output), err)
+// render: the error text never reaches the client, only the error handler
+// of opts.
+func response(w http.ResponseWriter, r *http.Request, output string, err error, opts []dogerhttp.Option) {
+	dogerhttp.WritePage(w, r, output, err, opts...)
 }

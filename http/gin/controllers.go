@@ -45,12 +45,19 @@ import (
 // (e.g., Basic Auth) and/or network restrictions, since it can leak internals
 // about your application's DI graph. Attach auth middleware to the router group
 // before calling Use.
-func Use(router *gin.RouterGroup, injector doger.Injector) {
+//
+// opts configure the pages, such as [dogerhttp.WithFullSourcePaths] and
+// [dogerhttp.WithErrorHandler].
+func Use(router *gin.RouterGroup, injector doger.Injector, opts ...dogerhttp.Option) {
+	use(router, injector, defaultRenderer, opts)
+}
+
+func use(router *gin.RouterGroup, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
 	basePathDo := router.BasePath()
 
 	router.Handle("GET", "", func(c *gin.Context) {
-		output, err := dogerhttp.IndexHTML(basePathDo)
-		response(c, output, err)
+		output, err := pages.index(basePathDo, opts...)
+		response(c, output, err, opts)
 	})
 
 	router.Handle("GET", "/scope", func(c *gin.Context) {
@@ -62,8 +69,8 @@ func Use(router *gin.RouterGroup, injector doger.Injector) {
 			return
 		}
 
-		output, err := dogerhttp.ScopeTreeHTML(basePathDo, injector, scopeID)
-		response(c, output, err)
+		output, err := pages.scopeTree(basePathDo, injector, scopeID, opts...)
+		response(c, output, err, opts)
 	})
 
 	router.Handle("GET", "/service", func(c *gin.Context) {
@@ -71,18 +78,35 @@ func Use(router *gin.RouterGroup, injector doger.Injector) {
 		serviceName := c.Query("service_name")
 
 		if scopeID == "" || serviceName == "" {
-			output, err := dogerhttp.ServiceListHTML(basePathDo, injector)
-			response(c, output, err)
+			output, err := pages.serviceList(basePathDo, injector, opts...)
+			response(c, output, err, opts)
 			return
 		}
 
-		output, err := dogerhttp.ServiceHTML(basePathDo, injector, scopeID, serviceName)
-		response(c, output, err)
+		output, err := pages.service(basePathDo, injector, scopeID, serviceName, opts...)
+		response(c, output, err, opts)
 	})
 }
 
 // response writes data as the page, or a generic 500 when it failed to
-// render: the error text never reaches the client.
-func response(c *gin.Context, data string, err error) {
-	dogerhttp.WritePage(c.Writer, data, err)
+// render: the error text never reaches the client, only the error handler
+// of opts.
+func response(c *gin.Context, data string, err error, opts []dogerhttp.Option) {
+	dogerhttp.WritePage(c.Writer, c.Request, data, err, opts...)
+}
+
+// renderer renders the pages of the UI. Tests replace a page to make it fail.
+type renderer struct {
+	index       func(basePath string, opts ...dogerhttp.Option) (string, error)
+	scopeTree   func(basePath string, injector doger.Injector, scopeID string, opts ...dogerhttp.Option) (string, error)
+	service     func(basePath string, injector doger.Injector, scopeID, serviceName string, opts ...dogerhttp.Option) (string, error)
+	serviceList func(basePath string, injector doger.Injector, opts ...dogerhttp.Option) (string, error)
+}
+
+// defaultRenderer renders the pages of package dogerhttp.
+var defaultRenderer = renderer{
+	index:       dogerhttp.IndexHTML,
+	scopeTree:   dogerhttp.ScopeTreeHTML,
+	service:     dogerhttp.ServiceHTML,
+	serviceList: dogerhttp.ServiceListHTML,
 }

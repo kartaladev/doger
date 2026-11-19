@@ -7,14 +7,16 @@ import (
 
 // WritePage writes page to w with the headers of [WriteHeaders] and status
 // 200, or, when err is not nil, a generic 500 Internal Server Error whose
-// body reveals nothing of err.
+// body reveals nothing of err. It first passes err, with the context of r,
+// to the handler set with [WithErrorHandler] in opts.
 //
 // Adapters for frameworks that expose an [http.ResponseWriter] write every
 // page with it.
-func WritePage(w http.ResponseWriter, page string, err error) {
+func WritePage(w http.ResponseWriter, r *http.Request, page string, err error, opts ...Option) {
 	WriteHeaders(w.Header())
 
 	if err != nil {
+		ReportError(r.Context(), err, opts...)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

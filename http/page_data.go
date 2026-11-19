@@ -2,9 +2,34 @@ package dogerhttp
 
 import (
 	"net/url"
+	"slices"
+	"strconv"
 
 	"github.com/kartaladev/doger"
 )
+
+// invokedAt returns where service was provided, as "<path>:<line>", once it
+// was invoked, or "" before. The path is shortened to its file base name
+// unless o asks for full source paths.
+func invokedAt(scope doger.Injector, service doger.ExplainServiceOutput, o pageOptions) string {
+	if service.Invoked == nil || !isInvoked(scope, service) {
+		return ""
+	}
+
+	location := service.Invoked.File + ":" + strconv.Itoa(service.Invoked.Line)
+	if o.fullSourcePaths {
+		return location
+	}
+
+	return shortenSourcePath(location)
+}
+
+// isInvoked reports whether service, as seen from scope, was invoked.
+func isInvoked(scope doger.Injector, service doger.ExplainServiceOutput) bool {
+	return slices.ContainsFunc(scope.ListInvokedServices(), func(invoked doger.ServiceDescription) bool {
+		return invoked.ScopeID == service.ScopeID && invoked.Service == service.ServiceName
+	})
+}
 
 // pageLink returns the link to page under basePath with query. The path is
 // escaped as a URL path and the query values with URL query escaping.

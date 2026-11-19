@@ -38,7 +38,7 @@ func TestWritePage(t *testing.T) {
 			t.Parallel()
 
 			rec := httptest.NewRecorder()
-			WritePage(rec, "<p>page</p>", tt.err)
+			WritePage(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody), "<p>page</p>", tt.err)
 
 			assert.Equal(t, tt.status, rec.Code)
 			assert.Equal(t, tt.body, rec.Body.String())

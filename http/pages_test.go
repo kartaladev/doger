@@ -1,6 +1,7 @@
 package dogerhttp
 
 import (
+	"html/template"
 	"regexp"
 	"strings"
 	"testing"
@@ -283,6 +284,61 @@ func TestPages_EscapeNames(t *testing.T) {
 			webuitest.AssertNoInjectedMarkup(t, html)
 		})
 	}
+}
+
+func TestPages_ShortenSourcePath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		recorded string
+		shown    string
+	}{
+		{name: "unix", recorded: "/home/ci/work/app/main.go:42", shown: "main.go:42"},
+		{name: "windows", recorded: `C:\Users\ci\app\main.go:42`, shown: "main.go:42"},
+		{name: "base_name", recorded: "main.go:42", shown: "main.go:42"},
+		{name: "empty", recorded: "", shown: ""},
+		{name: "hostile", recorded: "/a/<script>.go:7", shown: "&lt;script&gt;.go:7"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.shown, template.HTMLEscapeString(shortenSourcePath(tt.recorded)))
+		})
+	}
+}
+
+func FuzzShortenSourcePath(f *testing.F) {
+	for _, seed := range []string{
+		"/home/ci/work/app/main.go:42", `C:\Users\ci\app\main.go:42`, "main.go:42", "", "/a/<script>.go:7", "/", `\`, "a/b\\c:1",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, recorded string) {
+		shown := shortenSourcePath(recorded)
+
+		assert.True(t, strings.HasSuffix(recorded, shown), "%q is not a suffix of %q", shown, recorded)
+		assert.NotContains(t, shown, "/")
+		assert.NotContains(t, shown, `\`)
+		if !strings.ContainsAny(recorded, `/\`) {
+			assert.Equal(t, recorded, shown)
+		}
+	})
+}
+
+func TestPages_NeverInvokedNoLocation(t *testing.T) {
+	t.Parallel()
+
+	root := doger.New()
+	doger.ProvideNamed(root, "db", func(doger.Injector) (string, error) { return "v", nil })
+
+	html, err := ServiceHTML("/debug/doger", root, root.ID(), "db")
+	require.NoError(t, err)
+
+	assert.Empty(t, webuitest.InvokedAt(t, html))
 }
 
 func TestPages_BasePathEscaped(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 //   - basePath: The base URL path for the web interface
 //   - injector: The injector instance to analyze
 //   - scopeID: The ID of the specific scope to highlight (optional)
+//   - opts: Page options; none changes this page
 //
 // Returns the HTML content as a string and any error that occurred during generation.
 //
@@ -30,7 +31,7 @@ import (
 //	    log.Fatal(err)
 //	}
 //	fmt.Fprint(w, html)
-func ScopeTreeHTML(basePath string, injector doger.Injector, scopeID string) (string, error) {
+func ScopeTreeHTML(basePath string, injector doger.Injector, scopeID string, opts ...Option) (string, error) {
 	description := doger.ExplainInjector(injector)
 
 	return render("scopeTree", struct {

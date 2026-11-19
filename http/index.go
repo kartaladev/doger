@@ -6,6 +6,7 @@ package dogerhttp
 //
 // Parameters:
 //   - basePath: The base URL path for the web interface (e.g., "/debug/di")
+//   - opts: Page options; none changes this page
 //
 // Returns the HTML content as a string and any error that occurred during generation.
 //
@@ -23,6 +24,6 @@ package dogerhttp
 //	    log.Fatal(err)
 //	}
 //	fmt.Fprint(w, html)
-func IndexHTML(basePath string) (string, error) {
+func IndexHTML(basePath string, opts ...Option) (string, error) {
 	return render("index", struct{ Menu menuLinks }{Menu: newMenuLinks(basePath)})
 }
