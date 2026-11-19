@@ -2,7 +2,10 @@ package doger
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -250,10 +253,10 @@ func TestShutdownContext_InFlightBuildWaited(t *testing.T) {
 
 		is.Equal(time.Second, time.Since(start))
 		is.NoError(report.Err())
+		is.Equal(int32(1), closes.Load(), "the instance was shut down before the call returned")
 		if err := <-g; err != nil {
 			is.ErrorIs(err, ErrShutdown)
 		}
-		is.Equal(int32(1), closes.Load(), "Shutdown calls of the instance")
 	})
 }
 
@@ -336,5 +339,229 @@ func TestShutdownContext_LateBuildDuringStart(t *testing.T) {
 		synctest.Wait()
 		is.ErrorIs(err, ErrShutdown)
 		is.Equal(int32(1), closes.Load(), "the late instance is shut down once")
+	})
+}
+
+// lateLog is an ordered log of shutdowns.
+type lateLog struct {
+	mu      sync.Mutex
+	entries []string
+}
+
+func (l *lateLog) add(s string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries = append(l.entries, s)
+}
+
+func (l *lateLog) list() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.entries...)
+}
+
+type lateDB struct{ log *lateLog }
+
+func (d *lateDB) Shutdown() error { d.log.add("db"); return nil }
+
+// lateConn sleeps 100ms in Shutdown, then fails or panics.
+type lateConn struct {
+	log    *lateLog
+	panics bool
+}
+
+func (c *lateConn) Shutdown() error {
+	time.Sleep(100 * time.Millisecond)
+	c.log.add("conn")
+	if c.panics {
+		panic("conn boom")
+	}
+	return errors.New("conn close failed")
+}
+
+func TestShutdownContext_UnboundedWaitsForLateInstance(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		panics bool
+		match  error
+	}{
+		{name: "late_shutdown_error"},
+		{name: "late_shutdown_panic", panics: true, match: ErrShutdownPanic},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				log := &lateLog{}
+				root := New()
+				ProvideNamed(root, "db", func(Injector) (*lateDB, error) { return &lateDB{log: log}, nil })
+				release := make(chan struct{})
+				ProvideNamed(root, "conn", func(i Injector) (*lateConn, error) {
+					MustInvokeNamed[*lateDB](i, "db") // conn depends on db
+					<-release
+					return &lateConn{log: log, panics: tt.panics}, nil
+				})
+				g := make(chan error, 1)
+				go func() {
+					_, err := InvokeNamed[*lateConn](root, "conn")
+					g <- err
+				}()
+				synctest.Wait() // conn's provider holds db, blocked
+
+				reports := make(chan *ShutdownReport, 1)
+				go func() { reports <- root.ShutdownWithContext(context.Background()) }()
+				synctest.Wait()
+				close(release)
+				report := <-reports
+				atReturn := log.list()
+
+				is.Equal([]string{"conn", "db"}, atReturn, "the late instance shut down before its dependency, before the call returned")
+				err := reportError(report, root.self, "conn")
+				is.ErrorContains(err, "conn")
+				if tt.match != nil {
+					is.ErrorIs(err, tt.match)
+				}
+				is.ErrorIs(<-g, ErrShutdown)
+			})
+		})
+	}
+}
+
+// lateBoomShutdowner panics in Shutdown once released.
+type lateBoomShutdowner struct{ release chan struct{} }
+
+func (p *lateBoomShutdowner) Shutdown() error {
+	<-p.release
+	panic("late-boom")
+}
+
+func TestShutdownContext_AbandonedShutdownPanicIsLogged(t *testing.T) {
+	t.Parallel()
+
+	for _, withHook := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no_hook", true: "with_hook"}[withHook], func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				recorder := newLogRecorder(slog.LevelDebug)
+				var hookCalls atomic.Int32
+				opts := &InjectorOpts{Logger: recorder.logger()}
+				if withHook {
+					opts.HookContainerPanic = func(*RootScope, string, any) { hookCalls.Add(1) }
+				}
+				root := NewWithOpts(opts)
+				p := &lateBoomShutdowner{release: make(chan struct{})}
+				ProvideNamedValue(root, "p", p)
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				defer cancel()
+
+				report := root.ShutdownWithContext(ctx)
+				is.ErrorIs(report.Err(), context.DeadlineExceeded)
+
+				close(p.release)
+				synctest.Wait()
+				is.Zero(hookCalls.Load(), "the dispatch was over when the panic arrived")
+				recovered := recorder.withMessage("panic recovered")
+				if is.Len(recovered, 1, "records: %v", recorder.all()) {
+					is.Equal("service-shutdown", recovered[0].attrs["point"])
+					is.Equal(slog.LevelError, recovered[0].level)
+				}
+				is.Len(recorder.containing("late-boom"), 1, "the value, at Debug only")
+			})
+		})
+	}
+}
+
+// slowShutdown sleeps 1ms in Shutdown.
+type slowShutdown struct{}
+
+func (slowShutdown) Shutdown() error { time.Sleep(time.Millisecond); return nil }
+
+func TestShutdownContext_AbandonUnscheduledOnce(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 120*time.Second)
+
+	notFound, dups, other := 0, 0, 0
+	for round := range 300 {
+		root := New()
+		ProvideNamed(root, "base", func(Injector) (slowShutdown, error) { return slowShutdown{}, nil })
+		for n := range 300 {
+			name := fmt.Sprintf("s%d", n)
+			ProvideNamed(root, name, func(i Injector) (slowShutdown, error) {
+				MustInvokeNamed[slowShutdown](i, "base")
+				return slowShutdown{}, nil
+			})
+			MustInvokeNamed[slowShutdown](root, name)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(20+round%200)*time.Microsecond)
+		report := root.ShutdownWithContext(ctx)
+		cancel()
+
+		seen := map[ServiceDescription]int{}
+		for _, d := range report.Services {
+			seen[d]++
+			if seen[d] == 2 {
+				dups++
+			}
+		}
+		for _, err := range report.Errors {
+			switch {
+			case errors.Is(err, ErrServiceNotFound):
+				notFound++
+			case !errors.Is(err, context.DeadlineExceeded):
+				other++
+			}
+		}
+	}
+
+	assert.Zero(t, notFound, "services reported not found")
+	assert.Zero(t, dups, "services listed twice")
+	assert.Zero(t, other, "other errors")
+}
+
+// closingPool records that its Shutdown ran.
+type closingPool struct{ closed atomic.Bool }
+
+func (p *closingPool) Shutdown() error { p.closed.Store(true); return nil }
+
+func TestShutdownContext_EagerDependsOnAfterShutdown(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		root := New()
+		release := make(chan struct{})
+		ProvideNamed(root, "dep", func(Injector) (int, error) { <-release; return 1, nil })
+		tenant := root.Scope("tenant")
+		pool := &closingPool{}
+		ProvideNamedValue(tenant, "pool", pool, DependsOnNamed("dep"))
+		type result struct {
+			pool *closingPool
+			err  error
+		}
+		g := make(chan result, 1)
+		go func() {
+			p, err := InvokeNamed[*closingPool](tenant, "pool")
+			g <- result{p, err}
+		}()
+		synctest.Wait() // G resolves "dep", blocked
+
+		is.NoError(tenant.Shutdown().Err())
+		is.True(pool.closed.Load())
+		close(release)
+		got := <-g
+
+		is.Nil(got.pool, "a shut-down eager value is not handed out")
+		is.ErrorIs(got.err, ErrShutdown)
+		root.Shutdown()
 	})
 }

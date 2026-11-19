@@ -34,6 +34,9 @@ type serviceLazy[T any] struct {
 	// and other callers wait for the build instead of a lock, so a cycle is
 	// reported instead of deadlocking
 	state buildState
+	// late receives the instance of a build that completed once the service
+	// was shut down, for the shutdown that waits for it; nil when none waits
+	late chan T
 	// published holds the instance once built, nil otherwise; health
 	// checks read it without s.mu, which a build holds for the whole
 	// provider call.
@@ -180,9 +183,14 @@ func (s *serviceLazy[T]) runBuild(i Injector, run *buildRun) (instance T, err er
 func (s *serviceLazy[T]) finishBuild(run *buildRun, instance T, elapsed time.Duration, err error) error {
 	s.mu.Lock()
 	late := err == nil && s.terminal
+	handedOver := false
 	switch {
 	case late:
 		err = shutDownServiceError(s.name)
+		if s.late != nil {
+			s.late <- instance // the shutdown waiting for it shuts it down
+			s.late, handedOver = nil, true
+		}
 	case err == nil:
 		s.instance = instance
 		s.built = true
@@ -193,8 +201,9 @@ func (s *serviceLazy[T]) finishBuild(run *buildRun, instance T, elapsed time.Dur
 	s.mu.Unlock()
 
 	run.release()
-	if late {
-		// nobody waits for it any more: its error and its panic are dropped
+	if late && !handedOver {
+		// the shutdown was reached after its context ended and waits for
+		// nothing: the instance is shut down here, its error and panic dropped
 		_, _ = callHookSafely(func() { _ = shutdownValue(context.Background(), instance) })
 	}
 
@@ -337,17 +346,34 @@ func (s *serviceLazy[T]) isShutdowner() bool {
 
 func (s *serviceLazy[T]) shutdown(ctx context.Context) error {
 	s.mu.Lock()
-	// a build in flight finds the service Terminal when it completes: it
-	// shuts its late instance down instead of publishing it (D4). The wait
-	// for it ends with ctx.
+	// a build in flight finds the service Terminal when it completes: its
+	// late instance is never published (D4), but handed to this shutdown,
+	// which shuts it down with the shutdown's context, reporting its error
+	// and panic as for any service. A bounded shutdown stops waiting when
+	// its context ends (the layer abandons this goroutine), but this
+	// goroutine still shuts the late instance down once.
 	if run := s.state.inFlight(); run != nil {
 		s.terminal = true
-		s.mu.Unlock()
-		select {
-		case <-run.done:
-			return nil
-		case <-ctx.Done():
+		if ctx.Err() != nil {
+			// reached after ctx ended: nothing waits here, so the build shuts
+			// its late instance down itself
+			s.mu.Unlock()
 			return ctx.Err()
+		}
+		late := make(chan T, 1)
+		s.late = late
+		s.mu.Unlock()
+
+		<-run.done
+		select {
+		case instance := <-late:
+			lateCtx := ctx
+			if ctx.Err() != nil {
+				lateCtx = context.WithoutCancel(ctx) // abandoned: shut it down anyway
+			}
+			return shutdownValue(lateCtx, instance)
+		default:
+			return nil // the build failed: nothing to shut down
 		}
 	}
 
