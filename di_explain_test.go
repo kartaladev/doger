@@ -97,12 +97,12 @@ func TestExplainService_String(t *testing.T) {
 				ServiceBuildTime: 2 * time.Second,
 				Invoked:          &stacktrace.Frame{File: "test.go", Line: 42, Function: "provider"},
 				Dependencies: []ExplainServiceDependencyOutput{
-					{ScopeID: "scope-123", ScopeName: "test-scope", Service: "dep1", Recursive: []ExplainServiceDependencyOutput{}},
-					{ScopeID: "scope-123", ScopeName: "test-scope", Service: "dep2", Recursive: []ExplainServiceDependencyOutput{}},
+					{ScopeID: "scope-123", ScopeName: "test-scope", Service: "dep1", Source: DependencySourceInvoked, Recursive: []ExplainServiceDependencyOutput{}},
+					{ScopeID: "scope-123", ScopeName: "test-scope", Service: "dep2", Source: DependencySourceInvoked, Recursive: []ExplainServiceDependencyOutput{}},
 				},
 				Dependents: []ExplainServiceDependencyOutput{
-					{ScopeID: "scope-123", ScopeName: "test-scope", Service: "dependent1", Recursive: []ExplainServiceDependencyOutput{}},
-					{ScopeID: "scope-123", ScopeName: "test-scope", Service: "dependent2", Recursive: []ExplainServiceDependencyOutput{}},
+					{ScopeID: "scope-123", ScopeName: "test-scope", Service: "dependent1", Source: DependencySourceInvoked, Recursive: []ExplainServiceDependencyOutput{}},
+					{ScopeID: "scope-123", ScopeName: "test-scope", Service: "dependent2", Source: DependencySourceInvoked, Recursive: []ExplainServiceDependencyOutput{}},
 				},
 			},
 			expected: `
@@ -191,24 +191,28 @@ func TestExplainServiceDependency_String(t *testing.T) {
 		ScopeID:   "1234",
 		ScopeName: "scope-a",
 		Service:   "service-a1",
+		Source:    DependencySourceInvoked,
 		Recursive: []ExplainServiceDependencyOutput{},
 	}
 	a2 := ExplainServiceDependencyOutput{
 		ScopeID:   "1234",
 		ScopeName: "scope-a",
 		Service:   "service-a2",
+		Source:    DependencySourceInvoked,
 		Recursive: []ExplainServiceDependencyOutput{},
 	}
 	b := ExplainServiceDependencyOutput{
 		ScopeID:   "1234",
 		ScopeName: "scope-a",
 		Service:   "service-b",
+		Source:    DependencySourceInvoked,
 		Recursive: []ExplainServiceDependencyOutput{a1, a2},
 	}
 	c := ExplainServiceDependencyOutput{
 		ScopeID:   "1234",
 		ScopeName: "scope-a",
 		Service:   "service-c",
+		Source:    DependencySourceInvoked,
 		Recursive: []ExplainServiceDependencyOutput{b},
 	}
 

@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"slices"
 	"time"
+
+	typetostring "github.com/samber/go-type-to-string"
 )
 
 //
@@ -20,26 +22,41 @@ func empty[T any]() (t T) {
 	return t
 }
 
-func deepEmpty[T any]() T {
-	var o T
-	t := reflect.TypeOf(o)
+// deepEmpty returns the zero value of T with every pointer of a pointer
+// chain allocated, or an error matching ErrStructInjection when T is a
+// recursive pointer type.
+func deepEmpty[T any]() (T, error) {
+	v, err := deepEmptyMakeValue(reflect.TypeFor[T](), nil) // reflect.Value with the desired shape
+	if err != nil {
+		return empty[T](), err
+	}
+	typed, _ := reflect.TypeAssert[T](v) // a nil interface gives the zero value
 
-	v := deepEmptyMakeValue(t) // reflect.Value with the desired shape
-	return v.Interface().(T)   //nolint:errcheck,forcetypeassert
+	return typed, nil
 }
 
-func deepEmptyMakeValue(t reflect.Type) reflect.Value {
+// deepEmptyMakeValue returns the zero value of t, with every pointer of a
+// pointer chain allocated. visited holds the pointer types already walked:
+// a recursive pointer type returns an error matching ErrStructInjection
+// instead of recursing without bound.
+func deepEmptyMakeValue(t reflect.Type, visited []reflect.Type) (reflect.Value, error) {
 	// Base case: not a pointer -> just zero of this type.
 	if t.Kind() != reflect.Pointer {
-		return reflect.Zero(t)
+		return reflect.Zero(t), nil
+	}
+	if slices.Contains(visited, t) {
+		return reflect.Value{}, structInjectionError("recursive pointer type `%s` cannot be injected", typetostring.GetReflectType(t))
 	}
 
 	// Recursive case: pointer -> allocate pointer, set its Elem to the
 	// recursively-constructed zero value of the element type.
-	elem := deepEmptyMakeValue(t.Elem())
+	elem, err := deepEmptyMakeValue(t.Elem(), append(visited, t))
+	if err != nil {
+		return reflect.Value{}, err
+	}
 	p := reflect.New(t.Elem())
 	p.Elem().Set(elem)
-	return p
+	return p, nil
 }
 
 func must0(err error) {

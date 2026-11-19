@@ -542,6 +542,12 @@ func MustInvokeNamed[T any](i Injector, name string) T {
 // [InvokeAll][E] and a map[string]E field [InvokeAllMap][E]; any other field
 // kind is an error. A service named `*` cannot be injected by tag.
 //
+// A dependency whose value is a nil interface sets its field to the zero
+// value. An invalid target (not a struct or a pointer chain to one, a
+// recursive pointer type, a service not assignable to its field, a `*` tag
+// on another field kind) returns an error matching [ErrStructInjection]; a
+// dependency that fails to resolve returns its own error instead.
+//
 // Play: https://go.dev/play/p/I3_Rznkprpj
 //
 // Example:
@@ -567,7 +573,10 @@ func MustInvokeNamed[T any](i Injector, name string) T {
 //	app, err := doger.InvokeStruct[App](injector)
 func InvokeStruct[T any](i Injector) (T, error) {
 	structName := inferServiceName[T]()
-	output := deepEmpty[T]() // if the struct is hidden behind a pointer, we need to init the struct value deep enough
+	output, err := deepEmpty[T]() // if the struct is hidden behind a pointer, we need to init the struct value deep enough
+	if err != nil {
+		return empty[T](), err
+	}
 	value := reflect.ValueOf(&output)
 
 	for value.Elem().Kind() == reflect.Pointer {
@@ -577,10 +586,10 @@ func InvokeStruct[T any](i Injector) (T, error) {
 	// Check if the empty value is a struct (before passing a pointer to reflect.ValueOf).
 	// It will be checked in invokeByTags, but the error message is different.
 	if value.Kind() != reflect.Pointer || value.Elem().Kind() != reflect.Struct {
-		return empty[T](), libErrorf("must be a struct or a pointer to a struct, but got `%s`", structName)
+		return empty[T](), structInjectionError("must be a struct or a pointer to a struct, but got `%s`", structName)
 	}
 
-	err := invokeByTags(i, structName, value, true)
+	err = invokeByTags(i, structName, value, true)
 	if err != nil {
 		return empty[T](), err
 	}
@@ -825,7 +834,8 @@ func MustInvokeAllMap[T any](i Injector) map[string]T {
 // error matches ErrServiceNotMatch. This holds for an injector a provider
 // stored and uses after it returned too: it still skips that provider's
 // service.
-// Use InvokeNamed to pin a specific service.
+// Use InvokeNamed to pin a specific service. A selected service whose value
+// is a nil interface gives the zero value of T and a nil error.
 //
 // Parameters:
 //   - i: The injector to search for the service

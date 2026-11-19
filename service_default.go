@@ -110,9 +110,8 @@ type serviceDefault[T any] struct {
 	scope *Scope // the scope holding the registration
 
 	mu          sync.Mutex   // serializes the decision
-	state       atomic.Int32 // a defaultState; target fields are set before it turns yielded
-	target      any          // the wrapper yielded to
-	targetScope *Scope       // the scope of target
+	state       atomic.Int32 // a defaultState; targetScope is set before it turns yielded
+	targetScope *Scope       // the scope yielded to, where the target is resolved by name
 }
 
 func newServiceDefault[T any](inner serviceWrapper[T], scope *Scope) *serviceDefault[T] {
@@ -134,8 +133,8 @@ func (s *serviceDefault[T]) decide() defaultState {
 		return state
 	}
 
-	if target, targetScope, ok := lookupNonDefaultAbove(s.scope, s.getName()); ok {
-		s.target, s.targetScope = target, targetScope
+	if _, targetScope, ok := lookupNonDefaultAbove(s.scope, s.getName()); ok {
+		s.targetScope = targetScope
 		s.state.Store(int32(defaultYielded))
 		return defaultYielded
 	}
@@ -198,14 +197,22 @@ func (s *serviceDefault[T]) getInstance(i Injector) (T, error) {
 	case defaultYielded:
 	}
 
-	instance, err := invokeWrapperInScope(i, s.targetScope, s.getName(), s.target)
+	// Resolve the target by name on every call, as an alias does, so an
+	// override of it in the target scope is seen.
+	name := s.getName()
+	target, ok := s.targetScope.serviceGet(name)
+	if !ok {
+		return empty[T](), serviceNotFound(s.targetScope, ErrServiceNotFound, []string{name})
+	}
+
+	instance, err := invokeWrapperInScope(i, s.targetScope, name, target)
 	if err != nil {
 		return empty[T](), err
 	}
 
 	typed, ok := instance.(T)
 	if !ok && instance != nil {
-		return empty[T](), serviceTypeMismatch(inferServiceName[T](), s.target.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert
+		return empty[T](), serviceTypeMismatch(inferServiceName[T](), target.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert
 	}
 
 	return typed, nil

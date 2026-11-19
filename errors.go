@@ -13,8 +13,9 @@ var (
 	// ErrServiceNotFound is matched by the error of an invocation, health
 	// check, ShutdownNamed call or dependency declaration that names a service
 	// no visible scope has registered, or one exported from a scope that was
-	// shut down. The message names the service and lists the services that
-	// are available.
+	// shut down. The message names the service and lists the available
+	// services sorted by name, at most 10, followed by "and N more" when
+	// more exist.
 	ErrServiceNotFound = errors.New("doger: could not find service")
 	// ErrServiceNotMatch is matched by the error of InvokeAs and MustInvokeAs
 	// when no visible service is assignable to the requested type.
@@ -59,6 +60,20 @@ var (
 	// the functions with an error result and the panic value of the others.
 	// No call falls back to a global container.
 	ErrNilInjector = errors.New("doger: nil injector")
+	// ErrProviderPanic is matched by the error of an invocation whose
+	// provider panicked, or whose dependency's provider panicked. The panic
+	// value follows it in the message; an error value is wrapped, so
+	// errors.Is and errors.As also match it, including the
+	// *runtime.PanicNilError of panic(nil).
+	ErrProviderPanic = errors.New("doger: provider panicked")
+	// ErrStructInjection is matched by the error of InvokeStruct and the
+	// panic value of MustInvokeStruct when the target cannot be injected:
+	// it is not a struct or a pointer chain to one, it is a recursive
+	// pointer type, a resolved service is not assignable to its field, or a
+	// `*` tag is on a field that is not a slice or map[string]. The message
+	// names the type or field. A dependency that fails to resolve does not
+	// match it.
+	ErrStructInjection = errors.New("doger: invalid struct injection target")
 )
 
 // libPrefix starts every message the library originates.
@@ -86,6 +101,7 @@ var libSentinels = []error{
 	ErrServiceAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
 	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted, ErrNilInjector,
+	ErrStructInjection, ErrProviderPanic,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
 	ErrExtensionCycle, ErrExtensionConflict,
 }
@@ -178,6 +194,29 @@ func libErrorf(format string, args ...any) error {
 	}
 
 	return &libError{fmt.Errorf(libPrefix+format, unprefixed...)}
+}
+
+// injectionTargetError is an invalid struct injection target: its message
+// is the one of err, and it matches both err and ErrStructInjection.
+type injectionTargetError struct {
+	err error
+}
+
+// Error returns the message of the wrapped error.
+func (e *injectionTargetError) Error() string {
+	return e.err.Error()
+}
+
+// Unwrap returns the wrapped error and ErrStructInjection.
+func (e *injectionTargetError) Unwrap() []error {
+	return []error{e.err, ErrStructInjection}
+}
+
+// structInjectionError formats an invalid struct injection target like
+// libErrorf: the error matches ErrStructInjection, and its message is the
+// formatted one.
+func structInjectionError(format string, args ...any) error {
+	return &injectionTargetError{libErrorf(format, args...)}
 }
 
 // ServiceError is the error of an invocation whose service build failed:

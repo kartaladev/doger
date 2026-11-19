@@ -364,7 +364,7 @@ func TestServiceLazy_getInstanceAny(t *testing.T) {
 		{name: "basic_type", service: newServiceLazy("foobar", provider1), want: 42},
 		{name: "struct", service: newServiceLazy("hello", provider2), want: test},
 		// provider panics, but panic is catched by getInstanceAny
-		{name: "provider_panics_error", service: newServiceLazy("plop", provider4), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
+		{name: "provider_panics_error", service: newServiceLazy("plop", provider4), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: libErrorf("%w: %w", ErrProviderPanic, fmt.Errorf("error"))}},
 		{name: "provider_returns_error", service: newServiceLazy("plop", provider5), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
 	}
 
@@ -429,7 +429,7 @@ func TestServiceLazy_getInstance(t *testing.T) {
 		{name: "basic_type", service: lazyTestServiceOf(newServiceLazy("foobar", provider1)), want: 42},
 		{name: "struct", service: lazyTestServiceOf(newServiceLazy("hello", provider2)), want: test},
 		// provider panics, but panic is catched by getInstance
-		{name: "provider_panics_error", service: lazyTestServiceOf(newServiceLazy("plop", provider4)), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
+		{name: "provider_panics_error", service: lazyTestServiceOf(newServiceLazy("plop", provider4)), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: libErrorf("%w: %w", ErrProviderPanic, fmt.Errorf("error"))}},
 		{name: "provider_returns_error", service: lazyTestServiceOf(newServiceLazy("plop", provider5)), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
 	}
 
@@ -493,7 +493,7 @@ func TestServiceLazy_build(t *testing.T) {
 		{name: "basic_type", service: lazyTestServiceOf(newServiceLazy("foobar", provider1))},
 		{name: "struct", service: lazyTestServiceOf(newServiceLazy("hello", provider2))},
 		// provider panics, but panic is catched by getInstance
-		{name: "provider_panics_error", service: lazyTestServiceOf(newServiceLazy("plop", provider4)), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
+		{name: "provider_panics_error", service: lazyTestServiceOf(newServiceLazy("plop", provider4)), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: libErrorf("%w: %w", ErrProviderPanic, fmt.Errorf("error"))}},
 		{name: "provider_returns_error", service: lazyTestServiceOf(newServiceLazy("plop", provider5)), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
 	}
 

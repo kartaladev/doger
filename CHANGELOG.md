@@ -21,7 +21,7 @@ Each entry gives the change and its migration.
 | `Flatten()` | `ExtendIntoRoot()` | Rename the call. |
 | `HealthReportOption` (struct) | `type HealthReportOption func(*healthReportOptions)` | None for callers of `MatchHealthTags`/`IgnoreContainerPhase`. A zero value no longer exists. |
 | `Stage` and `DependencySource` start at 0 | Constants start at 1; 0 is invalid, its `String()` is `"unknown"`, and marshalling or using it fails | Use the named constants. |
-| `var Runnable` | `func Runnable() Kind[Runner, struct{}]` | `Runnable.Handle(...)` becomes `Runnable().Handle(...)`. |
+| `var Runnable` | `func Runnable() Kind[Runner, struct{}]` | `Runnable.Handle(...)` becomes `Runnable().Handle(...)`, and `Runnable.With(m)` becomes `Runnable().With(m)`. |
 | `var MaxInvocationFrames` | `InjectorOpts.MaxInvocationFrames int` (0 means 100, negative turns recording off) | Set the option per container. |
 | `DAG` | Unexported | No public use existed. |
 | `var DefaultRootScope`, and a nil injector falling back to it | Removed; nil gives `ErrNilInjector` (error-returning APIs) or a panic matching it (others) | Create a container with `doger.New()` and pass it explicitly. |

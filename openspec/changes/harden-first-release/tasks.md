@@ -150,21 +150,21 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 21. Provider panic errors
 
-- [ ] 21.1 RED: update the `TestInvoke_ProviderPanic` rows and add `TestProviderPanic_NestedProvider` (scenarios "Provider panic values become invocation errors", "Panic in a nested provider"); verify `go test -race -run 'TestInvoke_ProviderPanic$|TestProviderPanic_' .` fails to compile naming only `ErrProviderPanic`, then on the message rows
-- [ ] 21.2 GREEN: add `ErrProviderPanic`; `handleProviderPanic` wraps it with an error panic value (`%w` twice) or formats other values with `%v`, and `ServiceError` adds the service name; keep `TestInvoke_ProviderPanicNil_GODEBUGOverride` green; verify the 21.1 tests pass and `make test` is green
-- [ ] 21.3 REFACTOR: none needed — the change is local to `handleProviderPanic`; verify `make test` and `make lint` pass
+- [x] 21.1 RED: update the `TestInvoke_ProviderPanic` rows and add `TestProviderPanic_NestedProvider` (scenarios "Provider panic values become invocation errors", "Panic in a nested provider"); verify `go test -race -run 'TestInvoke_ProviderPanic$|TestProviderPanic_' .` fails to compile naming only `ErrProviderPanic`, then on the message rows
+- [x] 21.2 GREEN: add `ErrProviderPanic`; `handleProviderPanic` wraps it with an error panic value (`%w` twice) or formats other values with `%v`, and `ServiceError` adds the service name; keep `TestInvoke_ProviderPanicNil_GODEBUGOverride` green; verify the 21.1 tests pass and `make test` is green
+- [x] 21.3 REFACTOR: none needed — the change is local to `handleProviderPanic`; verify `make test` and `make lint` pass
 
 ## 22. InvokeAs and struct injection with nil interfaces and invalid targets
 
-- [ ] 22.1 RED: regression tests `TestInvokeAs_NilInterfaceInstance`, `TestInvokeAs_NonNilInstance`, `TestStructInjection_NilInterfaceDependency`, `TestStructInjection_MustNilInterfaceDependency`, `TestStructInjection_InvalidTargets`, `TestStructInjection_MustRecursivePointerType` (child process for the stack overflow) and `TestStructInjection_DependencyFailureNotStructError`; verify `go test -race -run 'TestInvokeAs_N|TestStructInjection_' .` fails with the interface-conversion/reflect panics and the missing `ErrStructInjection`
-- [ ] 22.2 GREEN: `InvokeAs` uses `typed, _ := instance.(T)`, struct injection uses `memberValue(dependency, fieldValue.Type())`, add `ErrStructInjection` wrapping the invalid-target errors, and `deepEmptyMakeValue` tracks visited types returning an error naming the type; verify the 22.1 tests pass and `make test` is green
-- [ ] 22.3 REFACTOR: Change Function Declaration so `deepEmpty[T]` returns `(T, error)` propagated through `InvokeStruct`, and Extract Function `structInjectionError`; verify `make test` and `make lint` pass
+- [x] 22.1 RED: regression tests `TestInvokeAs_NilInterfaceInstance`, `TestInvokeAs_NonNilInstance`, `TestStructInjection_NilInterfaceDependency`, `TestStructInjection_MustNilInterfaceDependency`, `TestStructInjection_InvalidTargets`, `TestStructInjection_MustRecursivePointerType` (child process for the stack overflow) and `TestStructInjection_DependencyFailureNotStructError`; verify `go test -race -run 'TestInvokeAs_N|TestStructInjection_' .` fails with the interface-conversion/reflect panics and the missing `ErrStructInjection`
+- [x] 22.2 GREEN: `InvokeAs` uses `typed, _ := instance.(T)`, struct injection uses `memberValue(dependency, fieldValue.Type())`, add `ErrStructInjection` wrapping the invalid-target errors, and `deepEmptyMakeValue` tracks visited types returning an error naming the type; verify the 22.1 tests pass and `make test` is green
+- [x] 22.3 REFACTOR: Change Function Declaration so `deepEmpty[T]` returns `(T, error)` propagated through `InvokeStruct`, and Extract Function `structInjectionError`; verify `make test` and `make lint` pass
 
 ## 23. Not-found message cap
 
-- [ ] 23.1 RED: add `TestResolutionErrors_NotFoundCap` (rows 0/1/10/11/2000) and `TestResolutionErrors_NotFoundCapWithChain`; verify `go test -race -run TestResolutionErrors_NotFoundCap .` fails on the 11 and 2000 rows
-- [ ] 23.2 GREEN: keep the first 10 sorted names and append ` and N more` before `, path:` in `serviceNotFound`; verify the 23.1 tests pass and `make test` is green
-- [ ] 23.3 REFACTOR: Extract Function `formatServiceList(names, limit)`; verify `make test` and `make lint` pass
+- [x] 23.1 RED: add `TestResolutionErrors_NotFoundCap` (rows 0/1/10/11/2000) and `TestResolutionErrors_NotFoundCapWithChain`; verify `go test -race -run TestResolutionErrors_NotFoundCap .` fails on the 11 and 2000 rows
+- [x] 23.2 GREEN: keep the first 10 sorted names and append ` and N more` before `, path:` in `serviceNotFound`; verify the 23.1 tests pass and `make test` is green
+- [x] 23.3 REFACTOR: Extract Function `formatServiceList(names, limit)`; verify `make test` and `make lint` pass
 
 ## 24. Explanation is free of data races
 
@@ -193,9 +193,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 28. A yielded default follows its target by name
 
-- [ ] 28.1 RED: add `TestAsDefault_YieldedFollowsOverride` (5 rows), `TestAsDefault_YieldedAliasFollowsOverride` and `TestAsDefault_YieldedConcurrentOverride`, and add `TestAsDefault_NilInjector` (the former test of that name is now `TestAsDefault_ResolvesByType`) plus the `doger:`/`Alias` texts of existing default tests (default-registrations scenarios); verify the override rows fail (`expected app-dialer-2, actual app-dialer-1`)
-- [ ] 28.2 GREEN: each yielded resolution looks the name up in `targetScope` instead of the stored wrapper, returning `ErrServiceNotFound` when gone; verify the 28.1 tests pass under `-race` and `go test -race -run TestAsDefault .` and `make test` are green
-- [ ] 28.3 REFACTOR: Inline Variable to remove the stored `target` field, keeping `targetScope` for Explain; verify `make test` and `make lint` pass
+- [x] 28.1 RED: add `TestAsDefault_YieldedFollowsOverride` (5 rows), `TestAsDefault_YieldedAliasFollowsOverride` and `TestAsDefault_YieldedConcurrentOverride`, and add `TestAsDefault_NilInjector` (the former test of that name is now `TestAsDefault_ResolvesByType`) plus the `doger:`/`Alias` texts of existing default tests (default-registrations scenarios); verify the override rows fail (`expected app-dialer-2, actual app-dialer-1`)
+- [x] 28.2 GREEN: each yielded resolution looks the name up in `targetScope` instead of the stored wrapper, returning `ErrServiceNotFound` when gone; verify the 28.1 tests pass under `-race` and `go test -race -run TestAsDefault .` and `make test` are green
+- [x] 28.3 REFACTOR: Inline Variable to remove the stored `target` field, keeping `targetScope` for Explain; verify `make test` and `make lint` pass
 
 ## 29. Per-service hook signatures with context and elapsed
 
@@ -225,17 +225,17 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 33. Kinds need an explicit root; Runnable is a function; Stage zero is invalid
 
-- [ ] 33.1 RED: add `TestKind_NilRootRejected` (the former `TestKind_NilRootUsesDefault` is now `TestKind_HandlerOnRoot`), a Stage(0) row in `TestKind_InvalidValues`, `TestRunnable_FuncReturnsBuiltIn` (replacing `TestRunnable_ReassignedVariable`), `TestStage_Text` and `TestStage_UnmarshalText`, and call `Runnable().Handle` in `TestRunnable_ReplaceHandler`/`TestKind_CloneCopiesHandlers` (component-kinds scenarios); verify `go test -race -run 'TestKind_|TestRunnable_|TestStage_' .` fails to compile on `Runnable()`/`MarshalText` or on the Stage(0) row
-- [ ] 33.2 GREEN: `Handle` panics with an `ErrNilInjector`-wrapping error on a nil/typed-nil root, Stage constants start at `iota + 1` with `String`/`MarshalText`/`UnmarshalText` (`before-start`/`after-start`), and `var Runnable` becomes `func Runnable() Kind[Runner, struct{}]`; verify the 33.1 tests pass and `make test` is green
-- [ ] 33.3 REFACTOR: Inline Variable (`runnableKind` used by `Runnable()`) and Extract Function `validStage(stage)` shared by `Handle` and `MarshalText`; verify `make test` and `make lint` pass
-- [ ] 33.4 Docs: godoc of `Runnable()`, `Stage` and `Handle`, `ExampleKind_Handle` and `ExampleRunnable`, the component-kinds docs and the migration row (`Runnable.Handle` → `Runnable().Handle`); verify `go test -run 'ExampleKind_Handle|ExampleRunnable' .` passes
+- [x] 33.1 RED: add `TestKind_NilRootRejected` (the former `TestKind_NilRootUsesDefault` is now `TestKind_HandlerOnRoot`), a Stage(0) row in `TestKind_InvalidValues`, `TestRunnable_FuncReturnsBuiltIn` (replacing `TestRunnable_ReassignedVariable`), `TestStage_Text` and `TestStage_UnmarshalText`, and call `Runnable().Handle` in `TestRunnable_ReplaceHandler`/`TestKind_CloneCopiesHandlers` (component-kinds scenarios); verify `go test -race -run 'TestKind_|TestRunnable_|TestStage_' .` fails to compile on `Runnable()`/`MarshalText` or on the Stage(0) row
+- [x] 33.2 GREEN: `Handle` panics with an `ErrNilInjector`-wrapping error on a nil/typed-nil root, Stage constants start at `iota + 1` with `String`/`MarshalText`/`UnmarshalText` (`before-start`/`after-start`), and `var Runnable` becomes `func Runnable() Kind[Runner, struct{}]`; verify the 33.1 tests pass and `make test` is green
+- [x] 33.3 REFACTOR: Inline Variable (`runnableKind` used by `Runnable()`) and Extract Function `validStage(stage)` shared by `Handle` and `MarshalText`; verify `make test` and `make lint` pass
+- [x] 33.4 Docs: godoc of `Runnable()`, `Stage` and `Handle`, `ExampleKind_Handle` and `ExampleRunnable`, the component-kinds docs and the migration row (`Runnable.Handle` → `Runnable().Handle`); verify `go test -run 'ExampleKind_Handle|ExampleRunnable' .` passes
 
 ## 34. DependencySource zero is invalid; DeclareDependency rejects nil
 
-- [ ] 34.1 RED: add nil and typed-nil rows to `TestDeclareDependency`, "unknown"/"" rows to `TestDependencySource_UnmarshalText` and `TestDependencySource_MarshalText` (scenarios "Declaring edges dynamically", "Explained output round-trips through JSON", "Encoding dependency sources"); verify `go test -race -run 'TestDeclareDependency|TestDependencySource_' .` fails on the new rows
-- [ ] 34.2 GREEN: DependencySource constants start at `iota + 1` (zero: `String()` "unknown", `MarshalText` error `doger: invalid dependency source N`) and `DeclareDependency` returns `ErrNilInjector` for nil/typed-nil; verify the 34.1 tests pass, `TestExplain_EdgeSourceCompat` stays green and `make test` is green
-- [ ] 34.3 REFACTOR: Replace Loop with a lookup table for the source texts; verify `make test` and `make lint` pass
-- [ ] 34.4 Docs: godoc of `DependencySource` and `DeclareDependency`; verify `go doc doger.DependencySource` shows the invalid zero value
+- [x] 34.1 RED: add nil and typed-nil rows to `TestDeclareDependency`, "unknown"/"" rows to `TestDependencySource_UnmarshalText` and `TestDependencySource_MarshalText` (scenarios "Declaring edges dynamically", "Explained output round-trips through JSON", "Encoding dependency sources"); verify `go test -race -run 'TestDeclareDependency|TestDependencySource_' .` fails on the new rows
+- [x] 34.2 GREEN: DependencySource constants start at `iota + 1` (zero: `String()` "unknown", `MarshalText` error `doger: invalid dependency source N`) and `DeclareDependency` returns `ErrNilInjector` for nil/typed-nil; verify the 34.1 tests pass, `TestExplain_EdgeSourceCompat` stays green and `make test` is green
+- [x] 34.3 REFACTOR: Replace Loop with a lookup table for the source texts; verify `make test` and `make lint` pass
+- [x] 34.4 Docs: godoc of `DependencySource` and `DeclareDependency`; verify `go doc doger.DependencySource` shows the invalid zero value
 
 ## 35. Extensions: ExtendIntoRoot, explicit root, Logger decline record
 
@@ -372,7 +372,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 - [ ] 53.6 Cover the uncovered health branches (service left while callers queued, take-over by a fresh check, queue ordering, `keepOnly` pruning, `deliverTransitions` re-panic, scheduler double-start guard) as named subtests in `health_run_test.go`/`health_monitor_test.go`; verify `go test -race -coverprofile=c.out . && go tool cover -func=c.out` shows those blocks covered
 - [ ] 53.7 Cover the virtual-scope pass-through methods called from inside a provider in `virtual_scope_test.go` and the broken alias/export chains of `aliasResolvesTo`; verify the coverage report shows `virtual_scope.go` pass-throughs and `aliasResolvesTo` covered
 - [ ] 53.8 Add `TestShutdownOnSignals_Default` (SIGUSR1 through a test-only signal set) and give `ExampleRootScope_ShutdownOnSignals` a runnable `// Output:`; verify `go test -race -run ShutdownOnSignals .` passes
-- [ ] 53.9 Harden the `tests` package: goleak `TestMain`, a `testWithTimeout` with a 5s floor reporting through `t` instead of `os.Exit`, and real report/error assertions in `TestParallelShutdown`, `TestConcurrentHealthCheckDuringShutdown`, `TestConcurrentBlockingOperations` and `TestRaceConditionShutdownInvocation`; verify `go test -race -count=20 -shuffle=on ./tests` passes
+- [x] 53.9 Harden the `tests` package: goleak `TestMain`, a `testWithTimeout` with a 5s floor reporting through `t` instead of `os.Exit`, and real report/error assertions in `TestParallelShutdown`, `TestConcurrentHealthCheckDuringShutdown`, `TestConcurrentBlockingOperations` and `TestRaceConditionShutdownInvocation`; verify `go test -race -count=20 -shuffle=on ./tests` passes
 - [ ] 53.10 Replace the `time.Sleep` synchronisation in `scheduler/gocron/scheduler_test.go` with channel handshakes or a fake clock; verify `go test -race -count=50 -shuffle=on ./...` in `scheduler/gocron` passes
 - [ ] 53.11 Tighten bare `Error` assertions on hot paths (invoke, shutdown, start, health) to `ErrorIs`/`ErrorAs` with the expected sentinel; verify `make test` passes
 

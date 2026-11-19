@@ -166,6 +166,11 @@ func TestKind_InvalidValues(t *testing.T) {
 			message: "doger: kind not created with NewKind",
 		},
 		{
+			name:    "zero_stage",
+			call:    func(root *RootScope) { NewKind[Job, Spec]("k").Handle(root, Stage(0), h) },
+			message: "doger: invalid stage 0 for kind `k`",
+		},
+		{
 			name:    "invalid_stage",
 			call:    func(root *RootScope) { NewKind[Job, Spec]("k").Handle(root, Stage(7), h) },
 			message: "doger: invalid stage 7 for kind `k`",
@@ -273,6 +278,37 @@ func TestKind_HandlerOnRoot(t *testing.T) {
 
 	require.NoError(t, root.Start())
 	assert.Equal(t, []string{"job"}, rec.names())
+}
+
+func TestKind_NilRootRejected(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		root *RootScope
+	}{
+		{name: "nil", root: nil},
+		{name: "typed nil *RootScope", root: (*RootScope)(nil)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			k := NewKind[Job, Spec]("k")
+			rec := &componentRecorder[Job, Spec]{}
+
+			err := panicError(t, func() { k.Handle(tt.root, StageBeforeStart, rec.handler) })
+			is.ErrorIs(err, ErrNilInjector)
+
+			// No container received the handler: a new one has only the
+			// default Runnable handler.
+			other := New()
+			is.Len(other.kinds, 1)
+			is.Equal(runnableKind.id, other.kinds[0].id)
+		})
+	}
 }
 
 func TestKind_NoHandler(t *testing.T) {
@@ -550,7 +586,7 @@ func TestRunnable_ReplaceHandler(t *testing.T) {
 
 	var wg sync.WaitGroup
 	t.Cleanup(wg.Wait)
-	Runnable.Handle(root, StageAfterStart, func(_ context.Context, c Component[Runner, struct{}]) error {
+	Runnable().Handle(root, StageAfterStart, func(_ context.Context, c Component[Runner, struct{}]) error {
 		wg.Go(func() {
 			defer close(finished)
 			<-release
@@ -603,7 +639,7 @@ func TestRunnable_FirstSlot(t *testing.T) {
 				return nil
 			})
 			if tt.replace {
-				Runnable.Handle(root, StageAfterStart, func(_ context.Context, c Component[Runner, struct{}]) error {
+				Runnable().Handle(root, StageAfterStart, func(_ context.Context, c Component[Runner, struct{}]) error {
 					events.record("replaced " + c.Name)
 					return nil
 				})
@@ -615,20 +651,24 @@ func TestRunnable_FirstSlot(t *testing.T) {
 	}
 }
 
-// TestRunnable_ReassignedVariable is not parallel: it reassigns Runnable.
-func TestRunnable_ReassignedVariable(t *testing.T) {
+func TestRunnable_FuncReturnsBuiltIn(t *testing.T) {
+	t.Parallel()
 	testWithTimeout(t, time.Second)
+	is := assert.New(t)
 
-	previous := Runnable
-	Runnable = NewKind[Runner, struct{}]("other")
-	t.Cleanup(func() { Runnable = previous })
+	k1 := Runnable()
+	k2 := Runnable()
+	is.Equal(k1, k2)
+	is.True(k1 == k2, "Runnable() returns the same comparable value on every call") //nolint:testifylint // the spec pins == itself
+	is.Equal("runnable", k1.Name())
 
 	root := New()
-	events := &callRecorder{}
-	provideRunner(root, events, "job", nil, AsRunnable())
+	ProvideNamed(root, "job", func(Injector) (*runRecorder, error) { return &runRecorder{name: "job", rec: &callRecorder{}}, nil }, AsRunnable())
+	rec := &componentRecorder[Runner, struct{}]{}
+	k1.Handle(root, StageAfterStart, rec.handler)
 
 	require.NoError(t, root.Start())
-	assert.Equal(t, []string{"run job"}, events.list())
+	is.Equal([]string{"job"}, rec.names())
 }
 
 func TestKind_CloneCopiesHandlers(t *testing.T) {
@@ -656,7 +696,7 @@ func TestKind_CloneCopiesHandlers(t *testing.T) {
 				events.record("k " + c.Name)
 				return nil
 			})
-			Runnable.Handle(root, StageAfterStart, func(_ context.Context, c Component[Runner, struct{}]) error {
+			Runnable().Handle(root, StageAfterStart, func(_ context.Context, c Component[Runner, struct{}]) error {
 				events.record("custom " + c.Name)
 				return nil
 			})
@@ -864,4 +904,77 @@ func TestKind_HandledGuard(t *testing.T) {
 		_, handled := tracked(root, wrapper)
 		is.False(handled, "shut-down j re-added to handled")
 	})
+}
+
+func TestStage_Text(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		stage      Stage
+		text       string
+		marshal    string
+		marshalErr string
+	}{
+		{name: "before start", stage: StageBeforeStart, text: "before-start", marshal: "before-start"},
+		{name: "after start", stage: StageAfterStart, text: "after-start", marshal: "after-start"},
+		{name: "zero", stage: Stage(0), text: "unknown", marshalErr: "doger: invalid stage 0"},
+		{name: "past the last", stage: Stage(7), text: "unknown", marshalErr: "doger: invalid stage 7"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			is.Equal(tt.text, tt.stage.String())
+
+			marshalled, err := tt.stage.MarshalText()
+			if tt.marshalErr != "" {
+				is.ErrorContains(err, tt.marshalErr)
+				is.Nil(marshalled)
+				return
+			}
+			require.NoError(t, err)
+			is.Equal(tt.marshal, string(marshalled))
+
+			var decoded Stage
+			require.NoError(t, decoded.UnmarshalText(marshalled))
+			is.Equal(tt.stage, decoded)
+		})
+	}
+}
+
+func TestStage_UnmarshalText(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		text     string
+		expected Stage
+		err      string
+	}{
+		{name: "before-start", text: "before-start", expected: StageBeforeStart},
+		{name: "after-start", text: "after-start", expected: StageAfterStart},
+		{name: "unknown", text: "unknown", err: "doger: unknown stage"},
+		{name: "empty", text: "", err: "doger: unknown stage"},
+		{name: "case changed", text: "Before-Start", err: "doger: unknown stage"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			var stage Stage
+			err := stage.UnmarshalText([]byte(tt.text))
+			if tt.err != "" {
+				is.ErrorContains(err, tt.err)
+				is.Equal(Stage(0), stage, "a failed decode leaves the zero value")
+				return
+			}
+			is.NoError(err)
+			is.Equal(tt.expected, stage)
+		})
+	}
 }

@@ -26,19 +26,23 @@ func TestUtilsDeepEmpty(t *testing.T) {
 	t.Parallel()
 	is := assert.New(t)
 
-	value1 := deepEmpty[int]()
+	value1, err1 := deepEmpty[int]()
+	is.NoError(err1)
 	is.Empty(value1)
 
-	value2 := deepEmpty[*int]()
+	value2, err2 := deepEmpty[*int]()
+	is.NoError(err2)
 	is.NotNil(value2)
 	is.Empty(*value2)
 
-	value3 := deepEmpty[**int]()
+	value3, err3 := deepEmpty[**int]()
+	is.NoError(err3)
 	is.NotNil(value3)
 	is.NotNil(*value3)
 	is.Empty(**value3)
 
-	value4 := deepEmpty[***int]()
+	value4, err4 := deepEmpty[***int]()
+	is.NoError(err4)
 	is.NotNil(value4)
 	is.NotNil(*value4)
 	is.NotNil(**value4)
