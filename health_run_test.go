@@ -1813,3 +1813,58 @@ func TestHealthCheck_GoexitAllWaiters(t *testing.T) {
 		i.Shutdown()
 	})
 }
+
+// TestHealthCheck_QueuedDeadlineBoundary pins that a check whose per-service
+// bound was deferred until it left the queue, and that returns exactly when
+// that bound elapses, reports a timeout (the "at the deadline" guard of
+// callResult). The fake clock fires the bound and wakes the check at the
+// same instant in no fixed order, so the guard decides only some runs: with
+// the guard weakened to clock.Now().After(deadline) (mutant M15), a few
+// percent of the runs return nil, so the mutant is not equivalent.
+func TestHealthCheck_QueuedDeadlineBoundary(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 10*time.Second)
+
+	const runs = 200
+
+	var unexpected int
+	var firstErr error
+	synctest.Test(t, func(t *testing.T) {
+		for range runs {
+			fc := newFakeClock()
+			i := NewWithOpts(&InjectorOpts{
+				Clock:                  fc,
+				HealthCheckParallelism: 1,
+				HealthCheckTimeout:     10 * time.Millisecond,
+				HealthReportCacheTTL:   -1,
+			})
+			hog := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "hog", hog)
+			first := make(chan map[string]error, 1)
+			go func() { first <- i.HealthCheck() }()
+			synctest.Wait()
+
+			// "db" waits behind "hog" for the only slot
+			ProvideNamedValue(i, "db", &healthCheckTestOnClock{clock: fc, duration: 10 * time.Millisecond})
+			second := make(chan map[string]error, 1)
+			go func() { second <- i.HealthCheck() }()
+			synctest.Wait()
+
+			close(hog.release) // "db" takes the slot: its bound starts now
+			synctest.Wait()
+			fc.Advance(10 * time.Millisecond) // "db" returns exactly at its bound
+			err := (<-second)["db"]
+			<-first
+
+			if err == nil || err.Error() != healthCheckTestDeadlineMessage {
+				unexpected++
+				if firstErr == nil {
+					firstErr = fmt.Errorf("got %v", err) //nolint:errorlint
+				}
+			}
+			i.Shutdown()
+		}
+	})
+
+	assert.Zero(t, unexpected, "runs not timing out at the deferred bound (first: %v)", firstErr)
+}

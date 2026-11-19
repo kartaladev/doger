@@ -2553,3 +2553,44 @@ func TestHealthReport_MarshalJSONEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestHealthReport_TimeoutNotOverwrittenByLateResult(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+		must := require.New(t)
+
+		fc := newFakeClock()
+		i := NewWithOpts(&InjectorOpts{
+			Clock:                    fc,
+			HealthCheckTimeout:       50 * time.Millisecond,
+			HealthCheckSingleTimeout: -1, // the single-service call holds the check
+			HealthReportCacheTTL:     time.Hour,
+		})
+		db := newHealthRunTestBlocking(nil)
+		ProvideNamedValue(i, "db", db)
+
+		named := make(chan error, 1)
+		go func() { named <- HealthCheckNamed(i, "db") }()
+		synctest.Wait()
+
+		reports := make(chan HealthReport, 1)
+		go func() { reports <- i.HealthReport() }()
+		synctest.Wait()
+		fc.Advance(50 * time.Millisecond)
+		timedOut := healthReportTestEntry(t, <-reports, "db")
+		must.ErrorIs(timedOut.Err, ErrHealthCheckTimeout, "the read timed out")
+
+		// the check returns nil after the read recorded its timeout
+		close(db.release)
+		must.NoError(<-named, "the unbounded caller gets what the check returned")
+		synctest.Wait()
+
+		entry := healthReportTestEntry(t, i.HealthReport(), "db")
+		is.Equal(HealthUnhealthy, entry.State, "the late result does not overwrite the recorded timeout")
+		is.ErrorIs(entry.Err, ErrHealthCheckTimeout)
+		is.Equal(int32(1), db.calls.Load(), "calls of the check")
+	})
+}
