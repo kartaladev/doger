@@ -11,20 +11,45 @@ import (
 	"github.com/kartaladev/doger/tests/fixtures"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// reportedServices returns the "scope/service" names of report.Services.
+func reportedServices(report *doger.ShutdownReport) []string {
+	names := make([]string, 0, len(report.Services))
+	for _, service := range report.Services {
+		names = append(names, service.ScopeName+"/"+service.Service)
+	}
+
+	return names
+}
 
 func TestParallelShutdown(t *testing.T) {
 	testWithTimeout(t, 300*time.Millisecond)
 	is := assert.New(t)
+	must := require.New(t)
 
 	root, driver, passenger := fixtures.GetPackage()
-	is.NotPanics(func() {
+	var report *doger.ShutdownReport
+	must.NotPanics(func() {
 		_ = doger.MustInvoke[*fixtures.Driver](driver)
 		_ = doger.MustInvokeNamed[*fixtures.Passenger](passenger, "passenger-1")
 		_ = doger.MustInvokeNamed[*fixtures.Passenger](passenger, "passenger-2")
 		_ = doger.MustInvokeNamed[*fixtures.Passenger](passenger, "passenger-3")
-		_ = root.Shutdown()
+		report = root.Shutdown()
 	})
+
+	must.NotNil(report)
+	is.True(report.Succeed)
+	is.Empty(report.Errors)
+	// every registered service of every scope is shut down once
+	is.ElementsMatch([]string{
+		"driver/" + doger.NameOf[*fixtures.Driver](),
+		"passenger/passenger-1", "passenger/passenger-2", "passenger/passenger-3",
+		"[root]/" + doger.NameOf[*fixtures.Engine](),
+		"[root]/seat-1", "[root]/seat-2", "[root]/seat-3", "[root]/seat-4",
+		"[root]/wheel-1", "[root]/wheel-2", "[root]/wheel-3", "[root]/wheel-4",
+	}, reportedServices(report))
 }
 
 // TestConcurrentServiceAliasOperations tests concurrent service alias creation and usage
@@ -260,11 +285,27 @@ func TestConcurrentHealthCheckDuringShutdown(t *testing.T) {
 	// Shutdown should complete successfully
 	is.True(report.Succeed)
 	is.Empty(report.Errors)
+	is.Equal([]string{"[root]/slow-health-service"}, reportedServices(report))
 
-	// Health checks should either succeed or fail gracefully during shutdown
+	// Today a check racing Shutdown either finished first (nil), was
+	// cancelled by Shutdown while in flight (ErrHealthCheckTimeout wrapping
+	// context.Canceled), or started once the service was removed (no
+	// entry). Groups 13-20 of harden-first-release may change what a check
+	// after Shutdown returns (ErrShutdown).
 	for i := range numHealthChecks {
 		is.NotNil(healthResults[i])
+		is.LessOrEqual(len(healthResults[i]), 1, "only the one service is checked")
+		for name, err := range healthResults[i] {
+			is.Equal("slow-health-service", name)
+			if err != nil {
+				is.ErrorIs(err, doger.ErrHealthCheckTimeout)
+				is.ErrorIs(err, context.Canceled)
+			}
+		}
 	}
+
+	// once Shutdown returned, the service is gone
+	is.Empty(root.HealthCheck())
 }
 
 // TestConcurrentServiceAliasReplacement tests concurrent replacement of aliased services
@@ -641,15 +682,33 @@ func TestConcurrentBlockingOperations(t *testing.T) {
 
 	wg.Wait()
 
-	// All shutdown operations should complete
-	// Some may have erroreportsrs due to blocking/timeout, some may succeed if shutdown completes quickly
+	// One call wins and shuts the service down: its Shutdown returns the
+	// context's error once the 50ms deadline passes. The others wait for
+	// the winner within the same context and get either a copy of its
+	// report or, when the deadline ends their wait first, a report whose
+	// only error is on the root and wraps the deadline.
+	winners := 0
 	for i := range numGoroutines {
-		// Each shutdown call should return (either success or timeout)
-		// The result depends on timing - first call might succeed, others might timeout
-		// We just ensure all calls completed
-		is.NotNil(reports[i])
-		is.Less(len(reports[i].Services), 2)
+		if !is.NotNil(reports[i]) {
+			continue
+		}
+		is.False(reports[i].Succeed)
+		is.Len(reports[i].Errors, 1)
+		for service, err := range reports[i].Errors {
+			is.ErrorIs(err, context.DeadlineExceeded)
+			switch service.Service {
+			case "blocking-shutdown":
+				winners++
+				is.Equal([]string{"[root]/blocking-shutdown"}, reportedServices(reports[i]))
+			case "":
+				is.ErrorContains(err, "waiting for root shutdown")
+				is.Empty(reports[i].Services)
+			default:
+				is.Failf("unexpected service in the report", "%+v", service)
+			}
+		}
 	}
+	is.GreaterOrEqual(winners, 1, "the winner's report names the blocking service")
 }
 
 // TestConcurrentMemoryPressure tests concurrent operations under memory pressure simulation
