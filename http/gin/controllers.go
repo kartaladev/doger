@@ -2,6 +2,7 @@ package dogergin
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/doger"
@@ -55,8 +56,9 @@ func Use(router *gin.RouterGroup, injector doger.Injector) {
 	router.Handle("GET", "/scope", func(c *gin.Context) {
 		scopeID := c.Query("scope_id")
 		if scopeID == "" {
-			url := fmt.Sprintf("%s/scope?scope_id=%s", basePathDo, injector.ID())
-			c.Redirect(302, url)
+			target := fmt.Sprintf("%s/scope?scope_id=%s", basePathDo, injector.ID())
+			dogerhttp.WriteHeaders(c.Writer.Header())
+			c.Redirect(http.StatusFound, target)
 			return
 		}
 
@@ -79,12 +81,8 @@ func Use(router *gin.RouterGroup, injector doger.Injector) {
 	})
 }
 
+// response writes data as the page, or a generic 500 when it failed to
+// render: the error text never reaches the client.
 func response(c *gin.Context, data string, err error) {
-	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	if err != nil {
-		c.String(500, err.Error())
-	} else {
-		c.String(200, data)
-	}
+	dogerhttp.WritePage(c.Writer, data, err)
 }

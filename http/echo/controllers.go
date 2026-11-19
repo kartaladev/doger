@@ -2,6 +2,7 @@ package dogerecho
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
@@ -47,29 +48,19 @@ import (
 func Use(router *echo.Group, basePath string, injector doger.Injector) {
 	router.GET("", func(c echo.Context) error {
 		output, err := dogerhttp.IndexHTML(basePath)
-		if err != nil {
-			return err
-		}
-
-		response(c, output)
-		return nil
+		return response(c, output, err)
 	})
 
 	router.GET("/scope", func(c echo.Context) error {
 		scopeID := c.QueryParam("scope_id")
 		if scopeID == "" {
-			url := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
-			c.Redirect(302, url)
-			return nil
+			target := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
+			dogerhttp.WriteHeaders(c.Response().Header())
+			return c.Redirect(http.StatusFound, target)
 		}
 
 		output, err := dogerhttp.ScopeTreeHTML(basePath, injector, scopeID)
-		if err != nil {
-			return err
-		}
-
-		response(c, output)
-		return nil
+		return response(c, output, err)
 	})
 
 	router.GET("/service", func(c echo.Context) error {
@@ -78,25 +69,18 @@ func Use(router *echo.Group, basePath string, injector doger.Injector) {
 
 		if scopeID == "" || serviceName == "" {
 			output, err := dogerhttp.ServiceListHTML(basePath, injector)
-			if err != nil {
-				return err
-			}
-
-			response(c, output)
-			return nil
+			return response(c, output, err)
 		}
 
 		output, err := dogerhttp.ServiceHTML(basePath, injector, scopeID, serviceName)
-		if err != nil {
-			return err
-		}
-
-		response(c, output)
-		return nil
+		return response(c, output, err)
 	})
 }
 
-func response(c echo.Context, data string) {
-	// c.Response().Header().Set("Content-Type", "text/html; charset=utf-8")
-	c.HTML(200, data)
+// response writes data as the page, or a generic 500 when it failed to
+// render: the error text never reaches the client, nor Echo's error handler.
+func response(c echo.Context, data string, err error) error {
+	dogerhttp.WritePage(c.Response(), data, err)
+
+	return nil
 }

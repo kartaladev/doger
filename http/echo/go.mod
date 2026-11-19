@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
 	github.com/labstack/echo/v4 v4.16.2
+	github.com/stretchr/testify v1.12.1
 )
 
 require (
@@ -13,7 +14,6 @@ require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/samber/go-type-to-string v1.8.0 // indirect
-	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect

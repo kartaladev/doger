@@ -52,19 +52,23 @@ import (
 // about your application's DI graph. Protect these routes with authentication
 // (for example, Basic Auth) and/or network restrictions (IP allowlist, VPN, etc.).
 // Wrap this handler with your auth/middleware before mounting it.
+//
+// The handler serves GET and HEAD only; any other method gets 405 Method Not
+// Allowed. Every response carries the headers of [dogerhttp.WriteHeaders],
+// and a page that fails to render gets a generic 500 that reveals no detail.
 func Use(basePath string, injector doger.Injector) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		output, err := dogerhttp.IndexHTML(basePath)
 		response(w, []byte(output), err)
 	})
 
-	mux.HandleFunc("/scope", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /scope", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		if scopeID == "" {
-			url := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
-			http.Redirect(w, r, url, 302)
+			target := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
+			http.Redirect(w, r, target, http.StatusFound)
 			return
 		}
 
@@ -72,7 +76,7 @@ func Use(basePath string, injector doger.Injector) http.Handler {
 		response(w, []byte(output), err)
 	})
 
-	mux.HandleFunc("/service", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /service", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		serviceName := r.URL.Query().Get("service_name")
 
@@ -86,21 +90,21 @@ func Use(basePath string, injector doger.Injector) http.Handler {
 		response(w, []byte(output), err)
 	})
 
-	return http.StripPrefix(basePath, mux)
+	return http.StripPrefix(basePath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dogerhttp.WriteHeaders(w.Header())
+
+		if r.URL.Path == "" {
+			// The base path itself is the home page. StripPrefix gave r its
+			// own URL, so this does not change the caller's request.
+			r.URL.Path = "/"
+		}
+
+		mux.ServeHTTP(w, r)
+	}))
 }
 
+// response writes output as the page, or a generic 500 when it failed to
+// render: the error text never reaches the client.
 func response(w http.ResponseWriter, output []byte, err error) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	if err != nil {
-		// bearer:disable go_lang_information_leakage
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
-	_, err = w.Write(output)
-	if err != nil {
-		// bearer:disable go_lang_information_leakage
-		http.Error(w, err.Error(), 500)
-	}
+	dogerhttp.WritePage(w, string(output), err)
 }

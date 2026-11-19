@@ -56,8 +56,9 @@ func Use(router *chi.Mux, basePath string, injector doger.Injector) {
 	router.Get(basePath+"/scope", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		if scopeID == "" {
-			url := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
-			http.Redirect(w, r, url, 302)
+			target := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
+			dogerhttp.WriteHeaders(w.Header())
+			http.Redirect(w, r, target, http.StatusFound)
 			return
 		}
 
@@ -80,13 +81,8 @@ func Use(router *chi.Mux, basePath string, injector doger.Injector) {
 	})
 }
 
+// response writes data as the page, or a generic 500 when it failed to
+// render: the error text never reaches the client.
 func response(w http.ResponseWriter, data string, err error) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
-	} else {
-		w.WriteHeader(200)
-		w.Write([]byte(data))
-	}
+	dogerhttp.WritePage(w, data, err)
 }

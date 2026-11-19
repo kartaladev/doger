@@ -1,13 +1,16 @@
 package dogerfiber
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/kartaladev/doger"
 	"github.com/kartaladev/doger/http/internal/webuitest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/valyala/fasthttp"
 )
 
 // appDoer returns a Doer that serves each request with app.
@@ -50,4 +53,38 @@ func TestWebUI_LinksResolve(t *testing.T) {
 func TestWebUI_NoReflection(t *testing.T) {
 	t.Parallel()
 	webuitest.NoReflection(t, mount)
+}
+
+func TestWebUI_DefensiveHeaders(t *testing.T) {
+	t.Parallel()
+	webuitest.DefensiveHeaders(t, mount)
+}
+
+func TestWebUI_NonGETRejected(t *testing.T) {
+	t.Parallel()
+	webuitest.NonGETRejected(t, mount)
+}
+
+func TestWebUI_ReadOnly(t *testing.T) {
+	t.Parallel()
+	webuitest.ReadOnly(t, mount)
+}
+
+func TestWebUI_Fallbacks(t *testing.T) {
+	t.Parallel()
+	webuitest.Fallbacks(t, mount)
+}
+
+func TestWebUI_RenderFailureGeneric500(t *testing.T) {
+	t.Parallel()
+
+	app := fiber.New()
+	c := app.AcquireCtx(&fasthttp.RequestCtx{})
+	defer app.ReleaseCtx(c)
+
+	require.NoError(t, response(c, "", errors.New(webuitest.RenderFailure)))
+
+	assert.Equal(t, http.StatusInternalServerError, c.Response().StatusCode())
+	assert.NotContains(t, string(c.Response().Body()), webuitest.RenderFailurePath)
+	assert.Equal(t, webuitest.NoSniff, string(c.Response().Header.Peek("X-Content-Type-Options")))
 }

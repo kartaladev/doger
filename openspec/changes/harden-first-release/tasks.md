@@ -306,9 +306,9 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 44. Web UI headers, read-only routes and error bodies
 
-- [ ] 44.1 RED: add `TestWebUI_DefensiveHeaders`, `TestWebUI_MiddlewareAddsHeaders`, `TestWebUI_NonGETRejected`, `TestWebUI_RenderFailureGeneric500`, `TestWebUI_ReadOnly` and `TestWebUI_Fallbacks` per adapter (web-ui header/read-only/fallback scenarios); verify each adapter fails on missing headers, std POST returning 200 and chi/std leaking error text
-- [ ] 44.2 GREEN: a shared `dogerhttp.WriteHeaders` helper called on every response and redirect, GET/HEAD-only patterns in std and a generic 500 body; verify the 44.1 tests pass in every module
-- [ ] 44.3 REFACTOR: Extract Function for the per-adapter `response` into the shared helper where the framework allows, and Rename Variable `url`→`target`; verify the per-module tests and lint pass
+- [x] 44.1 RED: add `TestWebUI_DefensiveHeaders`, `TestWebUI_MiddlewareAddsHeaders`, `TestWebUI_NonGETRejected`, `TestWebUI_RenderFailureGeneric500`, `TestWebUI_ReadOnly` and `TestWebUI_Fallbacks` per adapter (web-ui header/read-only/fallback scenarios); verify each adapter fails on missing headers, std POST returning 200 and chi/std leaking error text
+- [x] 44.2 GREEN: a shared `dogerhttp.WriteHeaders` helper called on every response and redirect, GET/HEAD-only patterns in std and a generic 500 body; verify the 44.1 tests pass in every module
+- [x] 44.3 REFACTOR: Extract Function for the per-adapter `response` into the shared helper where the framework allows, and Rename Variable `url`→`target`; verify the per-module tests and lint pass
 
 ## 45. Web UI renders bounded dependency trees
 

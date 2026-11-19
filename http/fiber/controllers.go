@@ -2,6 +2,7 @@ package dogerfiber
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/kartaladev/doger"
@@ -47,29 +48,19 @@ import (
 func Use(router fiber.Router, basePath string, injector doger.Injector) {
 	router.Get("", func(c *fiber.Ctx) error {
 		output, err := dogerhttp.IndexHTML(basePath)
-		if err != nil {
-			return err
-		}
-
-		response(c, output)
-		return nil
+		return response(c, output, err)
 	})
 
 	router.Get("/scope", func(c *fiber.Ctx) error {
 		scopeID := c.Query("scope_id")
 		if scopeID == "" {
-			url := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
-			c.Redirect(url, 302)
-			return nil
+			target := fmt.Sprintf("%s/scope?scope_id=%s", basePath, injector.ID())
+			writeHeaders(c)
+			return c.Redirect(target, http.StatusFound)
 		}
 
 		output, err := dogerhttp.ScopeTreeHTML(basePath, injector, scopeID)
-		if err != nil {
-			return err
-		}
-
-		response(c, output)
-		return nil
+		return response(c, output, err)
 	})
 
 	router.Get("/service", func(c *fiber.Ctx) error {
@@ -78,25 +69,33 @@ func Use(router fiber.Router, basePath string, injector doger.Injector) {
 
 		if scopeID == "" || serviceName == "" {
 			output, err := dogerhttp.ServiceListHTML(basePath, injector)
-			if err != nil {
-				return err
-			}
-
-			response(c, output)
-			return nil
+			return response(c, output, err)
 		}
 
 		output, err := dogerhttp.ServiceHTML(basePath, injector, scopeID, serviceName)
-		if err != nil {
-			return err
-		}
-
-		response(c, output)
-		return nil
+		return response(c, output, err)
 	})
 }
 
-func response(c *fiber.Ctx, data string) {
-	c.Response().Header.Set("Content-Type", "text/html; charset=utf-8")
-	c.Status(200).SendString(data)
+// writeHeaders sets the headers of dogerhttp.WriteHeaders on the response
+// of c.
+func writeHeaders(c *fiber.Ctx) {
+	h := http.Header{}
+	dogerhttp.WriteHeaders(h)
+
+	for key := range h {
+		c.Set(key, h.Get(key))
+	}
+}
+
+// response writes data as the page, or a generic 500 when it failed to
+// render: the error text never reaches the client, nor Fiber's error handler.
+func response(c *fiber.Ctx, data string, err error) error {
+	writeHeaders(c)
+
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).SendString(http.StatusText(http.StatusInternalServerError))
+	}
+
+	return c.Status(http.StatusOK).SendString(data)
 }
