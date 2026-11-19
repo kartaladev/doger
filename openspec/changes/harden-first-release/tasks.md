@@ -21,7 +21,7 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 - [x] 3.1 RED: add `TestResolutionErrors_NilInjectorReturnsError`, `TestResolutionErrors_NilInjectorPanics`, `TestContainerOptions_NilTouchesNoContainer` and `TestContainerOptions_Isolated` (scenarios "Error-returning entry points with a nil injector", "Entry points without an error result panic on a nil injector", "A rejected nil call touches no container", "Containers are isolated"), using today's names for APIs renamed later; verify `go test -race -run 'TestResolutionErrors_NilInjector|TestContainerOptions_(NilTouchesNoContainer|Isolated)' .` fails to compile naming only `ErrNilInjector`
 - [x] 3.2 GREEN: add `ErrNilInjector`; replace `getInjectorOrDefault` with `getInjector(i) (Injector, error)` that detects nil and typed-nil `*RootScope`/`*Scope`; error-returning APIs return it, the others panic with it; delete `DefaultRootScope` and migrate tests that used it to explicit roots; verify the 3.1 tests pass and `make test` is green
 - [x] 3.3 REFACTOR: Inline Function at callers of the removed helper and Extract Function `mustInjector(i)` for panicking entry points; verify `make test`, `make lint` and `go build ./...` in every `go.work` module pass
-- [x] 3.4 Docs: remove "nil means DefaultRootScope" from godoc (collection.go, dependency.go, di.go, extension.go, runnable.go) and add the migration row; verify `grep -rn DefaultRootScope --include=*.go --include=*.md . | grep -v -e CHANGELOG -e migrating -e openspec` prints nothing
+- [x] 3.4 Docs: remove "nil means DefaultRootScope" from godoc (collection.go, dependency.go, di.go, extension.go, runnable.go) and add the migration row; verify `grep -rnw DefaultRootScope --include=*.go --include=*.md --exclude-dir=.claude . | grep -v -e CHANGELOG -e migrating -e openspec` prints nothing
 
 ## 4. Renames: Alias and WithExportName
 
@@ -193,7 +193,7 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 28. A yielded default follows its target by name
 
-- [ ] 28.1 RED: add `TestAsDefault_YieldedFollowsOverride` (5 rows), `TestAsDefault_YieldedAliasFollowsOverride` and `TestAsDefault_YieldedConcurrentOverride`, and rewrite `TestAsDefault_NilInjector` plus the `doger:`/`Alias` texts of existing default tests (default-registrations scenarios); verify the override rows fail (`expected app-dialer-2, actual app-dialer-1`)
+- [ ] 28.1 RED: add `TestAsDefault_YieldedFollowsOverride` (5 rows), `TestAsDefault_YieldedAliasFollowsOverride` and `TestAsDefault_YieldedConcurrentOverride`, and add `TestAsDefault_NilInjector` (the former test of that name is now `TestAsDefault_ResolvesByType`) plus the `doger:`/`Alias` texts of existing default tests (default-registrations scenarios); verify the override rows fail (`expected app-dialer-2, actual app-dialer-1`)
 - [ ] 28.2 GREEN: each yielded resolution looks the name up in `targetScope` instead of the stored wrapper, returning `ErrServiceNotFound` when gone; verify the 28.1 tests pass under `-race` and `go test -race -run TestAsDefault .` and `make test` are green
 - [ ] 28.3 REFACTOR: Inline Variable to remove the stored `target` field, keeping `targetScope` for Explain; verify `make test` and `make lint` pass
 
@@ -225,7 +225,7 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 33. Kinds need an explicit root; Runnable is a function; Stage zero is invalid
 
-- [ ] 33.1 RED: add `TestKind_NilRootRejected` (replacing `TestKind_NilRootUsesDefault`), a Stage(0) row in `TestKind_InvalidValues`, `TestRunnable_FuncReturnsBuiltIn` (replacing `TestRunnable_ReassignedVariable`), `TestStage_Text` and `TestStage_UnmarshalText`, and call `Runnable().Handle` in `TestRunnable_ReplaceHandler`/`TestKind_CloneCopiesHandlers` (component-kinds scenarios); verify `go test -race -run 'TestKind_|TestRunnable_|TestStage_' .` fails to compile on `Runnable()`/`MarshalText` or on the Stage(0) row
+- [ ] 33.1 RED: add `TestKind_NilRootRejected` (the former `TestKind_NilRootUsesDefault` is now `TestKind_HandlerOnRoot`), a Stage(0) row in `TestKind_InvalidValues`, `TestRunnable_FuncReturnsBuiltIn` (replacing `TestRunnable_ReassignedVariable`), `TestStage_Text` and `TestStage_UnmarshalText`, and call `Runnable().Handle` in `TestRunnable_ReplaceHandler`/`TestKind_CloneCopiesHandlers` (component-kinds scenarios); verify `go test -race -run 'TestKind_|TestRunnable_|TestStage_' .` fails to compile on `Runnable()`/`MarshalText` or on the Stage(0) row
 - [ ] 33.2 GREEN: `Handle` panics with an `ErrNilInjector`-wrapping error on a nil/typed-nil root, Stage constants start at `iota + 1` with `String`/`MarshalText`/`UnmarshalText` (`before-start`/`after-start`), and `var Runnable` becomes `func Runnable() Kind[Runner, struct{}]`; verify the 33.1 tests pass and `make test` is green
 - [ ] 33.3 REFACTOR: Inline Variable (`runnableKind` used by `Runnable()`) and Extract Function `validStage(stage)` shared by `Handle` and `MarshalText`; verify `make test` and `make lint` pass
 - [ ] 33.4 Docs: godoc of `Runnable()`, `Stage` and `Handle`, `ExampleKind_Handle` and `ExampleRunnable`, the component-kinds docs and the migration row (`Runnable.Handle` → `Runnable().Handle`); verify `go test -run 'ExampleKind_Handle|ExampleRunnable' .` passes
@@ -239,7 +239,7 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 35. Extensions: ExtendIntoRoot, explicit root, Logger decline record
 
-- [ ] 35.1 RED: add `TestExtend_NilRootRejected` (replacing `TestExtend_NilRoot`), replace `Flatten()` with `ExtendIntoRoot()` in the placement/repeat/no-rollback/disabled/after-require/health tests, assert one Info record in `TestExtend_Disabled`, and add `AsStarter()` to Starter fixtures of `TestExtend_Phases`/`TestExtend_Lifecycle` (extensions scenarios); verify `go test -race -run 'TestExtend_|TestRequire_' .` fails to compile naming only `ExtendIntoRoot`
+- [ ] 35.1 RED: add `TestExtend_NilRootRejected` (the former `TestExtend_NilRoot` is now `TestExtend_UnderRoot`), replace `Flatten()` with `ExtendIntoRoot()` in the placement/repeat/no-rollback/disabled/after-require/health tests, assert one Info record in `TestExtend_Disabled`, and add `AsStarter()` to Starter fixtures of `TestExtend_Phases`/`TestExtend_Lifecycle` (extensions scenarios); verify `go test -race -run 'TestExtend_|TestRequire_' .` fails to compile naming only `ExtendIntoRoot`
 - [ ] 35.2 GREEN: gopls Rename `Flatten`→`ExtendIntoRoot`, `Extend` returns `ErrNilInjector` for nil/typed-nil root, and the decline is logged as one Info record; verify the 35.1 tests pass and `make test` is green
 - [ ] 35.3 REFACTOR: Rename Variable for internals named "flatten" visible in errors or logs; verify `make test` and `make lint` pass
 - [ ] 35.4 Docs: update the extension guide, `ExtendIntoRoot` godoc and example and the migration row (`Flatten` → `ExtendIntoRoot`; nil root); verify `go test -run ExampleExtend .` passes

@@ -700,7 +700,7 @@ func AliasNamed[Initial any, Target any](i Injector, initial string, alias strin
 		return err
 	}
 
-	// first, we check if Initial can be cast to Alias
+	// first, we check if Initial can be cast to Target
 	if !genericCanCastToGeneric[Initial, Target]() {
 		return libErrorf("`%s` does not implement `%s`", NameOf[Initial](), NameOf[Target]())
 	}
@@ -1091,7 +1091,7 @@ func TransientNamed[T any](serviceName string, p Provider[T], opts ...ProvideOpt
 //
 // Parameters:
 //   - Initial: The original type to bind from
-//   - Alias: The type to bind to (must be implemented by Initial)
+//   - Target: The type to bind to (must be implemented by Initial)
 //
 // Returns a function that creates the type alias when executed.
 // Panics if the binding cannot be created. Like [Alias], the alias never shuts
@@ -1105,9 +1105,9 @@ func TransientNamed[T any](serviceName string, p Provider[T], opts ...ProvideOpt
 //	var Package = doger.Package(
 //		doger.Bind[*Database, DatabaseInterface]()
 //	)
-func Bind[Initial any, Alias any]() func(Injector) {
+func Bind[Initial any, Target any]() func(Injector) {
 	return func(injector Injector) {
-		MustAlias[Initial, Alias](injector)
+		MustAlias[Initial, Target](injector)
 	}
 }
 
@@ -1119,7 +1119,7 @@ func Bind[Initial any, Alias any]() func(Injector) {
 //   - initial: The name of the original service
 //   - alias: The name for the alias service
 //   - Initial: The original type to bind from
-//   - Alias: The type to bind to (must be implemented by Initial)
+//   - Target: The type to bind to (must be implemented by Initial)
 //
 // Returns a function that creates the named type alias when executed.
 // Panics if the binding cannot be created. Like [AliasNamed], the alias never
@@ -1133,8 +1133,8 @@ func Bind[Initial any, Alias any]() func(Injector) {
 //	var Package = doger.Package(
 //		doger.BindNamed[*Database, DatabaseInterface]("main-db", "db-interface")
 //	)
-func BindNamed[Initial any, Alias any](initial string, alias string) func(Injector) {
+func BindNamed[Initial any, Target any](initial string, alias string) func(Injector) {
 	return func(injector Injector) {
-		MustAliasNamed[Initial, Alias](injector, initial, alias)
+		MustAliasNamed[Initial, Target](injector, initial, alias)
 	}
 }

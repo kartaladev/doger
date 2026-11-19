@@ -4,6 +4,8 @@ package doger
 // [InvokeAll], it resolves its members again on every read, so services
 // registered after it was created are included. Create it with
 // [InvokeCollection]. A Collection is safe to copy and to read concurrently.
+// The zero Collection is bound to no container: its All and Map return an
+// error matching [ErrNilInjector].
 type Collection[T any] struct {
 	scope  *Scope // members resolve from it; nil in a zero Collection
 	holder string // the service whose provider created the collection, or ""
@@ -30,6 +32,7 @@ func InvokeCollection[T any](i Injector) Collection[T] {
 // no build chain and records no dependency. The reader is excluded by name,
 // as [InvokeAs] skips its invoker: a reader in a child scope that shadows a
 // member of the holder's scope with its own name excludes that member too.
+// On a zero Collection it returns nil and an error matching [ErrNilInjector].
 func (c Collection[T]) All(r Injector) ([]T, error) {
 	source, err := c.source(r)
 	if err != nil {
@@ -40,7 +43,8 @@ func (c Collection[T]) All(r Injector) ([]T, error) {
 }
 
 // Map resolves the members now, keyed by service name, with the rules of
-// [InvokeAllMap] and the reader's injector r of [Collection.All].
+// [InvokeAllMap] and the reader's injector r of [Collection.All]. On a zero
+// Collection it returns nil and an error matching [ErrNilInjector].
 func (c Collection[T]) Map(r Injector) (map[string]T, error) {
 	source, err := c.source(r)
 	if err != nil {

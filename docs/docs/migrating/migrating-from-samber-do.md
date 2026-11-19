@@ -92,7 +92,7 @@ package main
 
 In `samber/do`, a health check whose context had ended returned a random result: sometimes the timeout error, sometimes the check's own result, and sometimes a bare `context.Canceled` or `context.DeadlineExceeded`. doger decides it the same way every time:
 
-- A service with a health check whose context is done when its result is observed returns the timeout error, whatever the check returned. The error matches `ErrHealthCheckTimeout` **and** the context error with `errors.Is`. Its message is unchanged, for example `DI: health check timeout: context canceled`.
+- A service with a health check whose context is done when its result is observed returns the timeout error, whatever the check returned. The error matches `ErrHealthCheckTimeout` **and** the context error with `errors.Is`. Its message carries the `doger: ` prefix, for example `doger: health check timeout: context canceled`.
 - A service without a health check (a value without a `HealthCheck` method, a lazy service not invoked yet, a transient service) always reports `nil`, even on an ended context.
 
 If you compared a health-check error with `==` against `context.Canceled` or `context.DeadlineExceeded`, use `errors.Is` instead:
@@ -119,7 +119,7 @@ doger adds a trailing `...doger.ProvideOption` parameter to the registration fun
 ## What stays the same {#what-stays-the-same}
 
 - The struct injection tag key is still `do` (`do:""`), and you can still override it with `InjectorOpts.StructTagKey`.
-- The messages of `ErrServiceNotFound`, `ErrServiceNotMatch`, `ErrCircularDependency` and `ErrHealthCheckTimeout` keep their `DI: ` prefix, and still match with `errors.Is`.
+- `ErrServiceNotFound`, `ErrServiceNotMatch`, `ErrCircularDependency` and `ErrHealthCheckTimeout` still match with `errors.Is`. Their messages, like every library message, now start with `doger: ` instead of `DI: `, so match errors with `errors.Is`/`errors.As`, not by text.
 - Every other exported identifier, signature, option and default, apart from the additions above.
 
 doger also adds one option, `InjectorOpts.Clock`. It defaults to the real clock, so you do not need to set it. See [Clock](../container/options.md#clock).

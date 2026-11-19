@@ -261,7 +261,7 @@ func TestKind_ReplaceHandler(t *testing.T) {
 	assert.Equal(t, []string{"start server", "second"}, events.list())
 }
 
-func TestKind_NilRootUsesDefault(t *testing.T) {
+func TestKind_HandlerOnRoot(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, time.Second)
 

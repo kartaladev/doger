@@ -130,7 +130,7 @@ func TestExtend_Context(t *testing.T) {
 	}
 }
 
-func TestExtend_NilRoot(t *testing.T) {
+func TestExtend_UnderRoot(t *testing.T) {
 	t.Parallel()
 
 	root := New()

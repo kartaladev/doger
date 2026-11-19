@@ -188,19 +188,6 @@ func TestInvokeAll_EagerMembers(t *testing.T) {
 	assert.ElementsMatch(t, []string{"static", "console"}, handlerNames(handlers))
 }
 
-func TestInvokeAll_NilInjector(t *testing.T) {
-	t.Parallel()
-	testWithTimeout(t, time.Second)
-
-	root := New()
-	provideHandler(root, "console", newConsole)
-
-	handlers, err := InvokeAll[EventHandler](root)
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{"console"}, handlerNames(handlers))
-}
-
 func TestInvokeAll_TypedNilMember(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, time.Second)

@@ -123,9 +123,9 @@ const (
 // covers (see MatchHealthTags) and have no effect on HealthCheck() or the
 // single-service functions, nor on a service that is not a health checker.
 //
-// Registration panics, before the service is stored, for an empty tag ("DI:
-// service `name` has an empty health tag") or a transient registration ("DI:
-// transient service `name` cannot be health-checked").
+// Registration panics, before the service is stored, for an empty tag
+// ("doger: service `name` has an empty health tag") or a transient
+// registration ("doger: transient service `name` cannot be health-checked").
 func WithHealthTags(tags ...string) ProvideOption {
 	return func(o *serviceOptions) {
 		o.healthTagsSet = true

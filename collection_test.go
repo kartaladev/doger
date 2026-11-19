@@ -416,8 +416,9 @@ func TestCollection_ZeroValueReadsFail(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := tt.read()
+			got, err := tt.read()
 
+			assert.Nil(t, got)
 			assert.ErrorIs(t, err, ErrNilInjector)
 		})
 	}

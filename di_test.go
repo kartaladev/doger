@@ -1076,7 +1076,7 @@ func TestAliasNamed(t *testing.T) {
 	is.NoError(AliasNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker"))
 }
 
-func TestAliasNamed_NilInjector(t *testing.T) {
+func TestAliasNamed_UsableThroughEveryPath(t *testing.T) {
 	tests := []struct {
 		name string
 		use  func(t *testing.T, root *RootScope)

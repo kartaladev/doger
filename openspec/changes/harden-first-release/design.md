@@ -439,7 +439,7 @@ Hot paths and the tests that cover them:
 | Source frame of each registration form | source_tracking_test.go: TestSourceTracking_RegistrationForms (/provide_value, /provide_named_value, /override_value, /override_named_value, /eager, /eager_named, /alias, /nil_value) | table |
 | Registration through New records the New call site | source_tracking_test.go: TestSourceTracking_NewCallSite | unit |
 | Default resolves when nothing replaces it | service_default_test.go: TestAsDefault_ResolvesWithoutReplacement (existing) | table |
-| A nil injector registration is rejected | service_default_test.go: TestAsDefault_NilInjector (rewritten) | unit |
+| A nil injector registration is rejected | service_default_test.go: TestAsDefault_NilInjector (new; the former test of that name is TestAsDefault_ResolvesByType) | unit |
 | Placement decides whether a default yields | service_default_test.go: TestAsDefault_YieldsByPlacement (existing) | table |
 | A grandchild default yields to the root | service_default_test.go: TestAsDefault_GrandchildYieldsToRoot (existing) | unit |
 | Registration order does not matter | service_default_test.go: TestAsDefault_OrderIndependent (existing) | table |
@@ -572,7 +572,7 @@ Hot paths and the tests that cover them:
 | Replacing a handler on the clone leaves the source unchanged | kind_test.go: TestKind_CloneReplaceIsolated | table |
 | Handler stage relative to Starters | kind_test.go: TestKind_Stage | table |
 | Replacing a handler | kind_test.go: TestKind_ReplaceHandler | unit |
-| Nil root is rejected | kind_test.go: TestKind_NilRootRejected (replaces TestKind_NilRootUsesDefault) | table, panic |
+| Nil root is rejected | kind_test.go: TestKind_NilRootRejected (new; the former TestKind_NilRootUsesDefault is TestKind_HandlerOnRoot) | table, panic |
 | Kind without a handler | kind_test.go: TestKind_NoHandler | unit |
 | Runners run after Starters | kind_test.go: TestRunnable_RunsAfterStarters | unit |
 | Runner failure | kind_test.go: TestRunnable_Failure | unit |
@@ -606,7 +606,7 @@ Hot paths and the tests that cover them:
 | Only flattened extensions leave the root health check unchanged | extension_test.go: TestExtend_FlattenedHealthCheck | unit |
 | Default private layout with an export | extension_test.go: TestExtend_PrivateLayout | table |
 | The context describes the installation | extension_test.go: TestExtend_Context | table |
-| A nil root is rejected | extension_test.go: TestExtend_NilRootRejected (replaces TestExtend_NilRoot) | table |
+| A nil root is rejected | extension_test.go: TestExtend_NilRootRejected (new; the former TestExtend_NilRoot is TestExtend_UnderRoot) | table |
 | Clone, override and alias | options_test.go: TestProvideOptions_CloneOverrideAlias | table |
 | Hostile names are escaped on every page | http/{std,gin,echo,fiber,chi}/web_ui_test.go: TestWebUI_HostileNamesEscaped/<page> | httptest |
 | Page functions escape names without an adapter | http/pages_test.go: TestPages_EscapeNames/<function> | unit |

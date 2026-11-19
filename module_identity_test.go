@@ -206,16 +206,58 @@ var oldQualifierRe = regexp.MustCompile(`\bdo\.[A-Z]`)
 func TestModuleIdentity_NoOldPackageQualifierInStrings(t *testing.T) {
 	t.Parallel()
 
+	found := oldQualifierStrings(t, ".")
+
+	assert.Empty(t, found, "string literals still use the old package qualifier do.")
+}
+
+func TestModuleIdentity_OldQualifierScanSkipsCheckouts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// split so that this file holds no literal with the old qualifier
+	planted := "package p\n\nvar s = \"do" + ".Provide\"\n"
+	write := func(path, content string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(t, os.WriteFile(full, []byte(content), 0o600))
+	}
+	write("own.go", planted)                                 // part of the module: reported
+	write(".claude/worktrees/x/.git", "gitdir: elsewhere\n") // an agent checkout
+	write(".claude/worktrees/x/p.go", planted)
+	write(".claude/notes/p.go", planted)       // anything under .claude
+	write("vendored/.git/HEAD", "ref: main\n") // a nested repository
+	write("vendored/p.go", planted)
+
+	found := oldQualifierStrings(t, root)
+
+	require.Len(t, found, 1, found)
+	assert.Contains(t, found[0], "own.go")
+}
+
+// oldQualifierStrings returns the Go string literals under root that use
+// the old package qualifier "do.". It skips .git, node_modules, testdata,
+// .claude, and every nested directory holding a .git entry (another
+// checkout).
+func oldQualifierStrings(t *testing.T, root string) []string {
+	t.Helper()
+
 	var found []string
 	fset := token.NewFileSet()
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "testdata":
+			case ".git", "node_modules", "testdata", ".claude":
 				return filepath.SkipDir
+			}
+			if path != root {
+				if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}
@@ -242,7 +284,7 @@ func TestModuleIdentity_NoOldPackageQualifierInStrings(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Empty(t, found, "string literals still use the old package qualifier do.")
+	return found
 }
 
 type compatDoTagged struct {

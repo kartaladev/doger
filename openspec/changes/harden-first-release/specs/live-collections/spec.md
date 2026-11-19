@@ -40,6 +40,18 @@ Examples:
   | no service implementing EventHandler                         | an empty, non-nil slice and a nil error                   |
 ```
 
+#### Scenario: A zero Collection is bound to no container
+```gherkin
+Given var c doger.Collection[EventHandler], never returned by InvokeCollection
+When the consumer calls <read>
+Then the result is nil and an error matching doger.ErrNilInjector
+
+Examples:
+  | read         |
+  | c.All(nil)   |
+  | c.Map(nil)   |
+```
+
 #### Scenario: Concurrent reads are race-free
 ```gherkin
 Given a root scope with lazy "console" implementing "EventHandler" whose provider counts its calls, and c := InvokeCollection[EventHandler](root)
@@ -50,7 +62,7 @@ And the "console" provider was called exactly 1 time
 
 <!-- cases: 1 default: re-resolution on read -->
 <!-- cases: 2 overrides: ordering overrides apply as for InvokeAll; a snapshot is InvokeAll -->
-<!-- cases: 3 zero values: no member yields an empty non-nil slice; a nil i panics with a value matching ErrNilInjector, as InvokeCollection does (resolution-errors) -->
+<!-- cases: 3 zero values: no member yields an empty non-nil slice; a nil i panics with a value matching ErrNilInjector, as InvokeCollection does (resolution-errors); a zero Collection's All and Map return an error matching ErrNilInjector -->
 <!-- cases: N/A 4 boundaries: covered by collection-invocation -->
 <!-- cases: 5 errors: member failure row -->
 <!-- cases: 6 duplicates: alias exclusion as for InvokeAll; the holder has its own requirement -->

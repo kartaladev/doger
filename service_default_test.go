@@ -115,7 +115,7 @@ func TestAsDefault_ResolvesWithoutReplacement(t *testing.T) {
 	}
 }
 
-func TestAsDefault_NilInjector(t *testing.T) {
+func TestAsDefault_ResolvesByType(t *testing.T) {
 	t.Parallel()
 
 	root := New()

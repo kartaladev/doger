@@ -1,6 +1,6 @@
 ---
 title: Container options
-description: Configure a doger injector — default options, the global container, package initialization, custom hooks, and health check timeouts.
+description: Configure a doger injector — default options, package initialization, custom hooks, and health check timeouts.
 sidebar_position: 2
 ---
 

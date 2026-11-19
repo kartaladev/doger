@@ -195,9 +195,10 @@ func propertyPrefix(name, instance string) string {
 // misses, and false: in the root, in an ordinary child scope, and in the
 // providers of a flattened extension (see [Flatten]), which run in the root
 // and so cannot be told apart from the application's. A flattened extension
-// reads its configuration in its Extend instead.
+// reads its configuration in its Extend instead. A nil i, or a typed-nil
+// *RootScope or *Scope, panics with an error matching [ErrNilInjector].
 func ExtensionProperties(i Injector) (Properties, bool) {
-	scope := injectorScope(i)
+	scope := injectorScope(mustInjector(i))
 	if scope == nil {
 		return Properties{}, false
 	}
