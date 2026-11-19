@@ -187,9 +187,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 27. Registration source is the consumer's call site
 
-- [ ] 27.1 RED: add `TestSourceTracking_RegistrationForms` and `TestSourceTracking_NewCallSite`, and move `TestSourceTracking_ProviderFrame` from `di_explain_frame_test.go` expecting the test file and line (service-source-tracking scenarios); verify they fail with `service_eager.go:39` / `service_alias.go`
-- [ ] 27.2 GREEN: the provider frame of value and alias registrations skips non-test frames of the root `doger` package (invocation frames unchanged); verify the 27.1 tests pass, the alias invocation-frame test stays green and `make test` is green
-- [ ] 27.3 REFACTOR: Replace Loop with one `runtime.Callers` pass into a fixed array in `stacktrace` (D16/D17) keeping the classifier; verify `make test`, `make lint` and `go test ./stacktrace` pass
+- [x] 27.1 RED: add `TestSourceTracking_RegistrationForms` and `TestSourceTracking_NewCallSite`, and move `TestSourceTracking_ProviderFrame` from `di_explain_frame_test.go` expecting the test file and line (service-source-tracking scenarios); verify they fail with `service_eager.go:39` / `service_alias.go`
+- [x] 27.2 GREEN: the provider frame of value and alias registrations skips non-test frames of the root `doger` package (invocation frames unchanged); verify the 27.1 tests pass, the alias invocation-frame test stays green and `make test` is green
+- [x] 27.3 REFACTOR: Replace Loop with one `runtime.Callers` pass into a fixed array in `stacktrace` (D16/D17) keeping the classifier; verify `make test`, `make lint` and `go test ./stacktrace` pass
 
 ## 28. A yielded default follows its target by name
 

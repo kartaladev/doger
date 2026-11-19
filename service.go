@@ -176,6 +176,11 @@ type serviceWrapperAliasTarget interface {
 	aliasTarget() (Injector, string)
 }
 
+// rootPkgPath is the import path of this package: the provider frame of a
+// value or alias registration skips its non-test frames, so it names the
+// consumer's call site.
+var rootPkgPath = reflect.TypeFor[Scope]().PkgPath()
+
 type serviceWrapperBuildTime interface {
 	getBuildTime() (time.Duration, bool)
 }
