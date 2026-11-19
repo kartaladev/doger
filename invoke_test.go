@@ -80,7 +80,7 @@ func TestInvokeAnyByName(t *testing.T) {
 	})
 	svc, err = invokeAnyByName(i, "provider-error")
 	is.Error(err)
-	is.Equal(assert.AnError, err)
+	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-error", Err: assert.AnError}, err)
 	is.Empty(svc)
 
 	// Test provider panic with string
@@ -89,7 +89,7 @@ func TestInvokeAnyByName(t *testing.T) {
 	})
 	svc, err = invokeAnyByName(i, "provider-panic-string")
 	is.Error(err)
-	is.EqualError(err, "doger: test panic")
+	is.EqualError(err, `doger: service "provider-panic-string" in scope "[root]": test panic`)
 	is.Empty(svc)
 
 	// Test provider panic with error
@@ -98,7 +98,7 @@ func TestInvokeAnyByName(t *testing.T) {
 	})
 	svc, err = invokeAnyByName(i, "provider-panic-error")
 	is.Error(err)
-	is.Equal(assert.AnError, err)
+	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-panic-error", Err: assert.AnError}, err)
 	is.Empty(svc)
 
 	// Test nested scope resolution
@@ -212,7 +212,7 @@ func TestInvokeByName(t *testing.T) {
 	})
 	svc, err = invokeByName[string](i, "provider-error")
 	is.Error(err)
-	is.Equal(assert.AnError, err)
+	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-error", Err: assert.AnError}, err)
 	is.Empty(svc)
 
 	// Test provider panic with string
@@ -221,7 +221,7 @@ func TestInvokeByName(t *testing.T) {
 	})
 	svc, err = invokeByName[string](i, "provider-panic-string")
 	is.Error(err)
-	is.EqualError(err, "doger: test panic")
+	is.EqualError(err, `doger: service "provider-panic-string" in scope "[root]": test panic`)
 	is.Empty(svc)
 
 	// Test provider panic with error
@@ -230,7 +230,7 @@ func TestInvokeByName(t *testing.T) {
 	})
 	svc, err = invokeByName[string](i, "provider-panic-error")
 	is.Error(err)
-	is.Equal(assert.AnError, err)
+	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-panic-error", Err: assert.AnError}, err)
 	is.Empty(svc)
 
 	// Test nested scope resolution
@@ -645,7 +645,7 @@ func TestInvokeByTags_ImplicitAliasing_NoFallbackOnOtherErrors(t *testing.T) {
 	s = foobar{}
 	err = invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
 	is.Error(err)
-	is.Equal("boom", err.Error())
+	is.Equal(`doger: service "bad" in scope "[root]": boom`, err.Error())
 	is.Nil(s.Dep)
 }
 
@@ -886,12 +886,12 @@ func TestInvoke_ProviderPanic(t *testing.T) {
 		isNil   bool
 		isBoom  bool
 	}{
-		{name: "lazy_nil", kind: "lazy", value: nil, message: "runtime error: panic called with nil argument", isNil: true},
-		{name: "transient_nil", kind: "transient", value: nil, message: "runtime error: panic called with nil argument", isNil: true},
-		{name: "lazy_error", kind: "lazy", value: errBoom, message: "boom", isBoom: true},
-		{name: "transient_error", kind: "transient", value: errBoom, message: "boom", isBoom: true},
-		{name: "lazy_string", kind: "lazy", value: "s", message: "doger: s"},
-		{name: "lazy_int", kind: "lazy", value: 42, message: "doger: 42"},
+		{name: "lazy_nil", kind: "lazy", value: nil, message: `doger: service "int" in scope "[root]": runtime error: panic called with nil argument`, isNil: true},
+		{name: "transient_nil", kind: "transient", value: nil, message: `doger: service "svc" in scope "[root]": runtime error: panic called with nil argument`, isNil: true},
+		{name: "lazy_error", kind: "lazy", value: errBoom, message: `doger: service "int" in scope "[root]": boom`, isBoom: true},
+		{name: "transient_error", kind: "transient", value: errBoom, message: `doger: service "svc" in scope "[root]": boom`, isBoom: true},
+		{name: "lazy_string", kind: "lazy", value: "s", message: `doger: service "int" in scope "[root]": s`},
+		{name: "lazy_int", kind: "lazy", value: 42, message: `doger: service "int" in scope "[root]": 42`},
 	}
 
 	for _, tt := range tests {

@@ -125,12 +125,12 @@ func (s *serviceLazy[T]) build(i Injector) (err error) {
 	start := clock.Now()
 
 	if err := resolveDeclaredDependencies(i, s.opts); err != nil {
-		return err
+		return wrapBuildError(i, s.name, err)
 	}
 
 	instance, err := handleProviderPanic(s.provider, i)
 	if err != nil {
-		return err
+		return wrapBuildError(i, s.name, err)
 	}
 
 	s.instance = instance
@@ -162,6 +162,22 @@ func injectorScope(i Injector) *Scope {
 	default:
 		return nil
 	}
+}
+
+// wrapBuildError returns the error of a build of service name that failed
+// with err, through the injector scope the wrapper received.
+func wrapBuildError(scope Injector, name string, err error) error {
+	return &ServiceError{Scope: injectorScopeName(scope), Service: name, Err: err}
+}
+
+// injectorScopeName returns the name of the *Scope behind an injector a
+// wrapper receives, or "" when there is none.
+func injectorScopeName(i Injector) string {
+	if scope := injectorScope(i); scope != nil {
+		return scope.Name()
+	}
+
+	return ""
 }
 
 // injectorClock returns the clock of the injector's root scope, or the real

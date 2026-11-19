@@ -19,6 +19,15 @@ var (
 	// ErrServiceNotMatch is matched by the error of InvokeAs and MustInvokeAs
 	// when no visible service is assignable to the requested type.
 	ErrServiceNotMatch = errors.New("doger: could not find service satisfying interface")
+	// ErrServiceTypeMismatch is matched by the error of an invocation that
+	// finds the requested name but whose registered type is not the
+	// requested one. The message names both types.
+	ErrServiceTypeMismatch = errors.New("doger: service found, but type mismatch")
+	// ErrServiceAlreadyDeclared is matched by the error of a registration
+	// whose name the scope already registers: the panic value of the
+	// registration functions without an error result, and the error the
+	// error-returning ones return. The existing service stays registered.
+	ErrServiceAlreadyDeclared = errors.New("doger: service has already been declared")
 	// ErrCircularDependency is matched by the error of an invocation or
 	// dependency declaration that would close a cycle between services, and
 	// by the error of Start when the dependencies it orders form a cycle. The
@@ -68,7 +77,8 @@ func (e *libError) Unwrap() error {
 
 // libSentinels are the exported sentinels, all library errors.
 var libSentinels = []error{
-	ErrServiceNotFound, ErrServiceNotMatch, ErrCircularDependency,
+	ErrServiceNotFound, ErrServiceNotMatch, ErrServiceTypeMismatch,
+	ErrServiceAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
 	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
@@ -79,7 +89,7 @@ var libSentinels = []error{
 // libErrorf result, or a library error type whose message it formats.
 func isLibMade(err error) bool {
 	switch e := err.(type) {
-	case *libError, *ExtensionError:
+	case *libError, *ExtensionError, *ServiceError:
 		return true
 	case *StartError:
 		return !e.unprefixed
@@ -163,6 +173,60 @@ func libErrorf(format string, args ...any) error {
 	}
 
 	return &libError{fmt.Errorf(libPrefix+format, unprefixed...)}
+}
+
+// ServiceError is the error of an invocation whose service build failed:
+// its provider returned an error or panicked, or a dependency it resolves
+// failed. Each service whose build failed adds one layer, so a missing
+// dependency "b" of "a" is a ServiceError for "a" wrapping a ServiceError
+// for "b" wrapping the not-found error. A requested name that is not
+// registered at all is a plain not-found error, not a ServiceError.
+//
+// Use errors.As to find the outermost failing service; errors.Is reaches
+// the cause through Unwrap.
+type ServiceError struct {
+	Scope   string // name of the scope the service is registered in
+	Service string // name of the service
+	Err     error  // cause of the failure
+}
+
+// Error returns `doger: service "<Service>" in scope "<Scope>": <cause>`,
+// with the library prefix once. A nil Err reads as <nil>.
+func (e *ServiceError) Error() string {
+	cause := "<nil>"
+	if e.Err != nil {
+		cause = unprefixedText(e.Err)
+	}
+
+	return fmt.Sprintf(libPrefix+"service %q in scope %q: %s", e.Service, e.Scope, cause)
+}
+
+// Unwrap returns Err.
+func (e *ServiceError) Unwrap() error {
+	return e.Err
+}
+
+// sentinelMatch is a library message that matches sentinel with errors.Is
+// and errors.As without showing the sentinel's own text.
+type sentinelMatch struct {
+	message  string
+	sentinel error
+}
+
+// Error returns the message.
+func (e sentinelMatch) Error() string {
+	return e.message
+}
+
+// Unwrap returns the sentinel.
+func (e sentinelMatch) Unwrap() error {
+	return e.sentinel
+}
+
+// libErrorMatching formats a library error like libErrorf, matching
+// sentinel without showing its text.
+func libErrorMatching(sentinel error, format string, args ...any) error {
+	return &libError{sentinelMatch{message: libErrorf(format, args...).Error(), sentinel: sentinel}}
 }
 
 // StartOp names the step of Start that failed for a service.

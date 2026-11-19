@@ -108,7 +108,7 @@ func (s *serviceEager[T]) resolveDependsOn(i Injector) error {
 
 	if !s.depsResolved {
 		if err := resolveDeclaredDependencies(i, s.opts); err != nil {
-			return err
+			return wrapBuildError(i, s.name, err)
 		}
 		s.depsResolved = true
 	}

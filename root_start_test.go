@@ -1227,7 +1227,7 @@ func TestStartError_Fields(t *testing.T) {
 				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return nil, errBuild })
 			},
 			service: "b", op: StartOpBuild, cause: errBuild,
-			message: "doger: failed to build service `b` in scope `[root]`: build failed",
+			message: "doger: failed to build service `b` in scope `[root]`: doger: service \"b\" in scope \"[root]\": build failed",
 		},
 		{
 			name: "Start returns errBoom",
@@ -1253,7 +1253,7 @@ func TestStartError_Fields(t *testing.T) {
 				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return &startWithErr{}, nil }, DependsOnNamed("missing"))
 			},
 			service: "b", op: StartOpBuild, cause: ErrServiceNotFound,
-			message: "doger: failed to build service `b` in scope `[root]`: doger: could not find service `missing`, available services: `b`, path: `b` -> `missing`",
+			message: "doger: failed to build service `b` in scope `[root]`: doger: service \"b\" in scope \"[root]\": could not find service `missing`, available services: `b`, path: `b` -> `missing`",
 		},
 	}
 

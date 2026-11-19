@@ -897,7 +897,7 @@ func serviceNotFound(injector Injector, err error, chain []string) error {
 // but its type does not match the expected type. This typically occurs when a service
 // is registered with one type but invoked with a different type.
 func serviceTypeMismatch(invoking string, registered string) error {
-	return libErrorf("service found, but type mismatch: invoking `%s` but registered `%s`", invoking, registered)
+	return libErrorf("%w: invoking `%s` but registered `%s`", ErrServiceTypeMismatch, invoking, registered)
 }
 
 // getServiceNames formats a list of ServiceDescription names for error reporting.
@@ -936,7 +936,7 @@ func handleProviderPanic[T any](provider Provider[T], i Injector) (svc T, err er
 			if e, ok := r.(error); ok {
 				err = e
 			} else {
-				err = fmt.Errorf("doger: %v", r)
+				err = libErrorf("%v", r)
 			}
 		}
 	}()

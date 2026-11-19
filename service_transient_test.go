@@ -338,8 +338,8 @@ func TestServiceTransient_getInstanceAny(t *testing.T) {
 		{name: "basic_type", service: newServiceTransient("foobar", provider1), want: 42},
 		{name: "struct", service: newServiceTransient("hello", provider2), want: test},
 		// provider panics, but panic is catched by getInstanceAny
-		{name: "provider_panics_error", service: newServiceTransient("plop", provider4), wantErr: fmt.Errorf("error")},
-		{name: "provider_returns_error", service: newServiceTransient("plop", provider5), wantErr: fmt.Errorf("error")},
+		{name: "provider_panics_error", service: newServiceTransient("plop", provider4), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
+		{name: "provider_returns_error", service: newServiceTransient("plop", provider5), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
 	}
 
 	for _, tt := range tests {
@@ -403,8 +403,8 @@ func TestServiceTransient_getInstance(t *testing.T) {
 		{name: "basic_type", service: transientTestServiceOf(newServiceTransient("foobar", provider1)), want: 42},
 		{name: "struct", service: transientTestServiceOf(newServiceTransient("hello", provider2)), want: test},
 		// provider panics, but panic is catched by getInstance
-		{name: "provider_panics_error", service: transientTestServiceOf(newServiceTransient("plop", provider4)), wantErr: fmt.Errorf("error")},
-		{name: "provider_returns_error", service: transientTestServiceOf(newServiceTransient("plop", provider5)), wantErr: fmt.Errorf("error")},
+		{name: "provider_panics_error", service: transientTestServiceOf(newServiceTransient("plop", provider4)), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
+		{name: "provider_returns_error", service: transientTestServiceOf(newServiceTransient("plop", provider5)), wantErr: &ServiceError{Scope: "[root]", Service: "plop", Err: fmt.Errorf("error")}},
 	}
 
 	for _, tt := range tests {

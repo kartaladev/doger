@@ -3,6 +3,7 @@ package doger
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/build"
@@ -351,8 +352,6 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 
 	// Rows of the scenario "Messages that used to double the prefix" that
 	// later groups add once their symbols exist:
-	//   - circular dependency through lazy services: group 2 (*ServiceError)
-	//   - provider error of a lazy service: group 2 (*ServiceError)
 	//   - consumer-led start abort outcome: group 30
 	tests := []struct {
 		name    string
@@ -390,6 +389,31 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 				return panicMessage(t, func() { root.Scope("tenant") })
 			},
 			want: "doger: scope `tenant` has already been declared",
+		},
+		{
+			name: "circular_dependency_through_lazy_services",
+			message: func(t *testing.T) string {
+				root := New()
+				ProvideNamed(root, "a", func(i Injector) (int, error) { return InvokeNamed[int](i, "b") })
+				ProvideNamed(root, "b", func(i Injector) (int, error) { return InvokeNamed[int](i, "a") })
+				_, err := InvokeNamed[int](root, "a")
+				require.ErrorIs(t, err, ErrCircularDependency)
+
+				return err.Error()
+			},
+			want: "doger: service \"a\" in scope \"[root]\": service \"b\" in scope \"[root]\": circular dependency detected: `a` -> `b` -> `a`",
+		},
+		{
+			name: "lazy_provider_error",
+			message: func(t *testing.T) string {
+				root := New()
+				ProvideNamed(root, "a", func(Injector) (int, error) { return 0, errors.New("boom") })
+				_, err := InvokeNamed[int](root, "a")
+				require.Error(t, err)
+
+				return err.Error()
+			},
+			want: "doger: service \"a\" in scope \"[root]\": boom",
 		},
 		{
 			name: "start_rejects_dependency_cycle",
@@ -443,7 +467,7 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 
 				return err.Error()
 			},
-			want: "doger: could not invoke collection member `m`: could not find service `missing`, available services: `m`, path: `m` -> `missing`",
+			want: "doger: could not invoke collection member `m`: service \"m\" in scope \"[root]\": could not find service `missing`, available services: `m`, path: `m` -> `missing`",
 		},
 		{
 			name: "extend_after_shutdown",
@@ -537,6 +561,8 @@ func TestModuleIdentity_AllSentinelsPrefixed(t *testing.T) {
 			sentinels: map[string]error{
 				"ErrServiceNotFound":           ErrServiceNotFound,
 				"ErrServiceNotMatch":           ErrServiceNotMatch,
+				"ErrServiceTypeMismatch":       ErrServiceTypeMismatch,
+				"ErrServiceAlreadyDeclared":    ErrServiceAlreadyDeclared,
 				"ErrCircularDependency":        ErrCircularDependency,
 				"ErrHealthCheckTimeout":        ErrHealthCheckTimeout,
 				"ErrHealthCheckPanic":          ErrHealthCheckPanic,

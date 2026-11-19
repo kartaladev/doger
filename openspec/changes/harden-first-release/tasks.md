@@ -11,10 +11,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 2. Resolution error taxonomy
 
-- [ ] 2.1 RED: add `TestResolutionErrors_TypeMismatch`, `TestResolutionErrors_MustTypeMismatchPanics`, `TestResolutionErrors_ServiceErrorWrapping`, `TestResolutionErrors_ServiceErrorScope`, `TestResolutionErrors_DuplicateRegistration` and `TestResolutionErrors_OverrideNoError` (resolution-errors scenarios); verify `go test -race -run TestResolutionErrors_ .` fails to compile naming only `ErrServiceTypeMismatch`, `ErrServiceAlreadyDeclared` and `ServiceError`
-- [ ] 2.2 GREEN: add `ErrServiceTypeMismatch`, `ErrServiceAlreadyDeclared` and `*ServiceError` (`Error`/`Unwrap`); wrap in-build provider and dependency failures once per service boundary (a missing top-level name stays a plain not-found error); make duplicate-registration and type-mismatch errors wrap their sentinels; verify the 2.1 tests pass and `make test` is green
-- [ ] 2.3 REFACTOR: Extract Function `wrapBuildError(scope, name, err)` shared by the lazy, transient and eager-dependency paths; verify `make test` and `make lint` pass
-- [ ] 2.4 Docs: add `ExampleServiceError` (errors.As for the failing service, errors.Is for the cause); verify `go test -run ExampleServiceError .` passes
+- [x] 2.1 RED: add `TestResolutionErrors_TypeMismatch`, `TestResolutionErrors_MustTypeMismatchPanics`, `TestResolutionErrors_ServiceErrorWrapping`, `TestResolutionErrors_ServiceErrorScope`, `TestResolutionErrors_DuplicateRegistration` and `TestResolutionErrors_OverrideNoError` (resolution-errors scenarios); verify `go test -race -run TestResolutionErrors_ .` fails to compile naming only `ErrServiceTypeMismatch`, `ErrServiceAlreadyDeclared` and `ServiceError`
+- [x] 2.2 GREEN: add `ErrServiceTypeMismatch`, `ErrServiceAlreadyDeclared` and `*ServiceError` (`Error`/`Unwrap`); wrap in-build provider and dependency failures once per service boundary (a missing top-level name stays a plain not-found error); make duplicate-registration and type-mismatch errors wrap their sentinels; verify the 2.1 tests pass and `make test` is green
+- [x] 2.3 REFACTOR: Extract Function `wrapBuildError(scope, name, err)` shared by the lazy, transient and eager-dependency paths; verify `make test` and `make lint` pass
+- [x] 2.4 Docs: add `ExampleServiceError` (errors.As for the failing service, errors.Is for the cause); verify `go test -run ExampleServiceError .` passes
 
 ## 3. Nil injector rejected and no package-level container
 

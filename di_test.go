@@ -146,7 +146,7 @@ func TestProvide(t *testing.T) {
 	instance3, err3 := Invoke[test](i)
 	is.Error(err3)
 	is.Empty(instance3)
-	is.EqualError(err3, "error")
+	is.EqualError(err3, `doger: service "github.com/kartaladev/doger.test" in scope "[root]": error`)
 }
 
 func TestProvideNamed(t *testing.T) {
@@ -214,7 +214,7 @@ func TestProvideNamed(t *testing.T) {
 	instance3, err3 := InvokeNamed[test](i, "foobar")
 	is.Error(err3)
 	is.Empty(instance3)
-	is.EqualError(err3, "error")
+	is.EqualError(err3, `doger: service "foobar" in scope "[root]": error`)
 }
 
 func TestProvideValue(t *testing.T) {
@@ -420,7 +420,7 @@ func TestProvideTransient(t *testing.T) {
 	instance3, err3 := Invoke[test](i)
 	is.Error(err3)
 	is.Empty(instance3)
-	is.EqualError(err3, "error")
+	is.EqualError(err3, `doger: service "github.com/kartaladev/doger.test" in scope "[root]": error`)
 }
 
 func TestProvideNamedTransient(t *testing.T) {
@@ -490,7 +490,7 @@ func TestProvideNamedTransient(t *testing.T) {
 	instance3, err3 := InvokeNamed[test](i, "foobar")
 	is.Error(err3)
 	is.Empty(instance3)
-	is.EqualError(err3, "error")
+	is.EqualError(err3, `doger: service "foobar" in scope "[root]": error`)
 }
 
 func TestProvide_race(t *testing.T) {

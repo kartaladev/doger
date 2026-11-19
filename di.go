@@ -294,7 +294,7 @@ func nonDefaultExists(scope *Scope, name string) bool {
 
 // duplicateServiceError is the error of a registration whose name is taken.
 func duplicateServiceError(name string) error {
-	return libErrorf("service `%s` has already been declared", name)
+	return libErrorMatching(ErrServiceAlreadyDeclared, "service `%s` has already been declared", name)
 }
 
 // wrapIfDefault returns the wrapper to store for service in scope: decorated

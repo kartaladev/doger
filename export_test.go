@@ -121,10 +121,11 @@ func TestExport_Invalid(t *testing.T) {
 	clientName := NameOf[*exClient]()
 	otherName := NameOf[*exOther]()
 	tests := []struct {
-		name    string
-		export  func(root *RootScope, redis *Scope) error
-		message string
-		absent  []string // names the root must not hold
+		name     string
+		export   func(root *RootScope, redis *Scope) error
+		message  string
+		sentinel error    // matched with errors.Is when not nil
+		absent   []string // names the root must not hold
 	}{
 		{
 			name:    "nil_scope",
@@ -157,9 +158,10 @@ func TestExport_Invalid(t *testing.T) {
 			absent:  []string{""},
 		},
 		{
-			name:    "duplicate",
-			export:  func(_ *RootScope, redis *Scope) error { return Export[*exClient](redis, ExportAs(otherName)) },
-			message: fmt.Sprintf("doger: service `%s` has already been declared", otherName),
+			name:     "duplicate",
+			export:   func(_ *RootScope, redis *Scope) error { return Export[*exClient](redis, ExportAs(otherName)) },
+			message:  fmt.Sprintf("doger: service `%s` has already been declared", otherName),
+			sentinel: ErrServiceAlreadyDeclared,
 		},
 	}
 
@@ -176,6 +178,9 @@ func TestExport_Invalid(t *testing.T) {
 			err := tt.export(root, redis)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.message)
+			if tt.sentinel != nil {
+				assert.ErrorIs(t, err, tt.sentinel)
+			}
 
 			for _, name := range tt.absent {
 				assert.False(t, root.serviceExist(name), name)

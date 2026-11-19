@@ -55,12 +55,12 @@ func (s *serviceTransient[T]) getInstanceAny(i Injector) (any, error) {
 
 func (s *serviceTransient[T]) getInstance(i Injector) (T, error) {
 	if err := resolveDeclaredDependencies(i, s.opts); err != nil {
-		return empty[T](), err
+		return empty[T](), wrapBuildError(i, s.name, err)
 	}
 
 	instance, err := handleProviderPanic(s.provider, i)
 	if err != nil {
-		return empty[T](), err
+		return empty[T](), wrapBuildError(i, s.name, err)
 	}
 
 	onAfterBuild(i, s.name, instance)
