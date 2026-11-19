@@ -267,7 +267,7 @@ Each item gets a benchmark in `bench/` that runs before and after, with results 
 - **Lint.** `.golangci.yml` enables `gosec`, `errorlint` and `noctx`, with each suppression justified inline.
 - **Also released and checked.** The release also tags `clock/clockwork/<semver>`. Three scripts back the `release-integrity` scenarios: `scripts/check-workflows.sh` (pinning, permissions, matrix, provenance, dependabot, policy files; `--self-test`), `scripts/release-dry-run.sh <semver>` (mirrors release post-processing into a file proxy and builds a clean `GOWORK=off` consumer) and `scripts/test-make-targets.sh` (plants failures per module).
 - **Accepted advisories.** SECURITY.md records echo's GO-2026-6875 and GO-2026-6872 as accepted (no upstream fix; the vulnerable symbols are not called).
-- **Raised permissions.** Only the `doc.yml` deploy job and `dependabot-automerge` raise permissions above `contents: read`.
+- **Raised permissions.** Only these jobs raise permissions above `contents: read`: the `doc.yml` deploy job (`pages: write`, `id-token: write`), the `security.yml` `codeql` and `trivy-codeql` jobs (`security-events: write`, to upload to code scanning), the `release.yml` release job (`contents: write`) and the `dependabot-automerge` job (`contents: write`, `pull-requests: write`).
 
 ### D19. Starter convention in scenarios
 A "Starter" in any scenario of any spec is registered with `AsStarter()`, unless the scenario explicitly enables `EnableStarterAutoDetection`. Existing test fixtures that rely on type-based detection are updated to opt in.

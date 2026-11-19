@@ -3,6 +3,8 @@ go 1.27
 use (
 	.
 
+	./clock/clockwork
+
 	./examples/dag
 	./examples/eager-loading
 	./examples/event-driven

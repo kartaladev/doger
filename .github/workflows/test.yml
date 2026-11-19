@@ -6,38 +6,88 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        go:
-          - "1.27"
-          - "stable"
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ["1.27.x", "stable"]
+    defaults:
+      run:
+        # the make targets loop over the modules with bash, on Windows too
+        shell: bash
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Set up Go
-      uses: actions/setup-go@v7
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         go-version: ${{ matrix.go }}
+        cache-dependency-path: '**/go.sum'
+
+    - name: Install make (Windows)
+      if: runner.os == 'Windows'
+      run: command -v make || choco install make --no-progress -y
 
     - name: Build
       run: make build
 
+    # go test -race in every go.work module (root, adapters, examples)
     - name: Test
-      run: make test
+      run: make test-all
 
     - name: Test coverage
       run: make coverage
-      if: matrix.go == 'stable'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
 
     - name: Codecov
-      uses: codecov/codecov-action@v7
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         flags: unittests
         verbose: true
-      if: matrix.go == 'stable'
+      if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+
+  # the release post-processing (scripts/release-steps.sh, shared with
+  # release.yml) on a copy, published to a local file proxy and consumed by
+  # clean GOWORK=off modules; plus the workflow and policy checks
+  release-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Set up Go
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+      with:
+        go-version-file: go.work
+        cache-dependency-path: '**/go.sum'
+
+    - name: Check workflows and policy files
+      run: |
+          scripts/check-workflows.sh --self-test
+          scripts/check-workflows.sh
+
+    - name: Reject invalid versions
+      run: |
+          for v in v2.0.0 0.1.0 ""; do
+            if scripts/release-dry-run.sh "$v"; then
+              echo "::error::the release dry run accepted the invalid version '$v'"
+              exit 1
+            fi
+          done
+
+    - name: Release dry run
+      run: scripts/release-dry-run.sh v0.99.0
+
+    - name: Release dry run of a pre-release
+      run: scripts/release-dry-run.sh v1.0.0-rc.1

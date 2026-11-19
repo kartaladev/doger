@@ -1,0 +1,12 @@
+# Keep LF line endings on every OS. With core.autocrlf=true (the Windows
+# default), a CRLF checkout breaks the bash scripts ("set -o pipefail":
+# invalid option name) and with them make test-all on windows-latest.
+# scripts/check-workflows.sh (policy) checks these rules.
+*.sh        text eol=lf
+Makefile    text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.go        text eol=lf
+go.mod      text eol=lf
+go.sum      text eol=lf
+go.work     text eol=lf

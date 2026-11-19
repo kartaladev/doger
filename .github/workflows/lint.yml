@@ -9,6 +9,9 @@ on:
     - cron: '0 3 * * 1'
   workflow_dispatch: # Allow manual trigger
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: lint
@@ -17,14 +20,23 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.work
+          cache-dependency-path: '**/go.sum'
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          # built with Go 1.27; bump together with Go releases
+          # built with Go 1.27; bump together with Go releases and keep equal
+          # to GOLANGCI_LINT_VERSION in the Makefile (checked by
+          # scripts/check-workflows.sh)
           version: v2.15.0
-          args: --timeout 120s --max-same-issues 50 --config=.golangci.yml
+          install-only: true
+
+      # every go.work module, with the repository's .golangci.yml
+      - name: golangci-lint
+        run: make lint-all

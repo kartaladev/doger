@@ -58,7 +58,7 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 9. Scaffold the clockwork adapter module
 
-- [ ] 9.1 Create module `clock/clockwork` (`go.mod` `github.com/kartaladev/doger/clock/clockwork`, package `dogerclockwork`, requiring root and `jonboulle/clockwork` with a local `replace`), add `./clock/clockwork` to `go.work` and a `doc.go` package comment; verify `go build ./...` inside `clock/clockwork` and `go work sync` succeed
+- [x] 9.1 Create module `clock/clockwork` (`go.mod` `github.com/kartaladev/doger/clock/clockwork`, package `dogerclockwork`, requiring root and `jonboulle/clockwork` with a local `replace`), add `./clock/clockwork` to `go.work` and a `doc.go` package comment; verify `go build ./...` inside `clock/clockwork` and `go work sync` succeed
 
 ## 10. Doger-owned Clock
 
@@ -332,9 +332,9 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 48. Make targets for every workspace module
 
-- [ ] 48.1 Add `make modules`, `test-all`, `lint-all` and `vuln` looping over `go list -m -f '{{.Dir}}'`, continuing past failures and naming the failing module; verify `make modules` lists every `go.work` entry and `make test-all` exits 0
-- [ ] 48.2 Add `scripts/test-make-targets.sh` that plants a failing test and a lint issue in a temp copy of each module and expects a non-zero exit naming it (scenarios "A failure in any module fails make test-all", "An issue in any module fails make lint-all"); verify the script passes
-- [ ] 48.3 Pin tool versions in `make tools` (golangci-lint, govulncheck, benchstat; no `@latest`) and drop `go get -t -u`; verify `grep -c '@latest' Makefile` prints 0
+- [x] 48.1 Add `make modules`, `test-all`, `lint-all` and `vuln` looping over `go list -m -f '{{.Dir}}'`, continuing past failures and naming the failing module; verify `make modules` lists every `go.work` entry and `make test-all` exits 0
+- [x] 48.2 Add `scripts/test-make-targets.sh` that plants a failing test and a lint issue in a temp copy of each module and expects a non-zero exit naming it (scenarios "A failure in any module fails make test-all", "An issue in any module fails make lint-all"); verify the script passes
+- [x] 48.3 Pin tool versions in `make tools` (golangci-lint, govulncheck, benchstat; no `@latest`) and drop `go get -t -u`; verify `grep -c '@latest' Makefile` prints 0
 
 ## 49. Lint configuration and adapter lint fixes
 
@@ -343,24 +343,24 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 50. Vulnerability gate and dependency floors
 
-- [ ] 50.1 Re-enable the govulncheck job in `security.yml` running `make vuln` and confirm it fails on fiber's brotli v1.1.0 (scenario "A reachable vulnerability fails the gate"); verify the job log or local `make vuln` names GO-2026-6888
-- [ ] 50.2 Bump `github.com/andybalholm/brotli` ≥ v1.2.7 in `http/fiber` and its example, and `golang.org/x/net` ≥ v0.62.0 in `http/echo` and `http/gin` (scenario "Released dependency floors"); verify `make vuln` exits 0 and `make test-all` is green
-- [ ] 50.3 Add SECURITY.md with a private reporting channel and "Accepted advisories" listing GO-2026-6875/GO-2026-6872 (scenario "An accepted vulnerability without a fix is recorded"); verify the policy section of `scripts/check-workflows.sh` passes
+- [x] 50.1 Re-enable the govulncheck job in `security.yml` running `make vuln` and confirm it fails on fiber's brotli v1.1.0 (scenario "A reachable vulnerability fails the gate"); verify the job log or local `make vuln` names GO-2026-6888
+- [x] 50.2 Bump `github.com/andybalholm/brotli` ≥ v1.2.7 in `http/fiber` and its example, and `golang.org/x/net` ≥ v0.62.0 in `http/echo` and `http/gin` (scenario "Released dependency floors"); verify `make vuln` exits 0 and `make test-all` is green
+- [x] 50.3 Add SECURITY.md with a private reporting channel and "Accepted advisories" listing GO-2026-6875/GO-2026-6872 (scenario "An accepted vulnerability without a fix is recorded"); verify the policy section of `scripts/check-workflows.sh` passes
 
 ## 51. Workflow supply chain
 
-- [ ] 51.1 Add `scripts/check-workflows.sh` (SHA-pinned `uses`, top-level `permissions: contents: read` and allowed raises, test.yml matrix, release.yml provenance, dependabot condition and directories, go.mod floors, policy files, `--self-test`); verify it fails on the current tree (RED baseline)
-- [ ] 51.2 Pin every action in `.github/workflows/*` to a 40-char SHA with a `# vX.Y.Z` comment and add top-level `permissions: contents: read` with per-job raises only in `doc.yml` deploy and dependabot-automerge (scenarios "Workflow pinning and permissions are checked", "A tag-pinned action fails the check"); verify the pinning and permissions sections of the script pass
+- [x] 51.1 Add `scripts/check-workflows.sh` (SHA-pinned `uses`, top-level `permissions: contents: read` and allowed raises, test.yml matrix, release.yml provenance, dependabot condition and directories, go.mod floors, policy files, `--self-test`); verify it fails on the current tree (RED baseline)
+- [x] 51.2 Pin every action in `.github/workflows/*` to a 40-char SHA with a `# vX.Y.Z` comment and add top-level `permissions: contents: read` with per-job raises only in the `doc.yml` deploy job, the `security.yml` `codeql` and `trivy-codeql` jobs, the `release.yml` release job and dependabot-automerge (scenarios "Workflow pinning and permissions are checked", "A tag-pinned action fails the check"); verify the pinning and permissions sections of the script pass
 - [ ] 51.3 `test.yml` runs `make test-all` on ubuntu, macos and windows with Go 1.27.x and stable, and `lint.yml` runs `make lint-all` (scenarios "CI runs the module loop on three operating systems", "A clean tree passes make test-all", "make modules lists every workspace module"); verify the matrix check passes and CI is green on all 3 OSes
-- [ ] 51.4 Restrict dependabot auto-merge to `dependabot[bot]` authors and semver patch/minor updates, and add `/scheduler/**` and `/clock/**` gomod entries (scenarios "Auto-merge decision", "Every module directory is covered"); verify the dependabot checks of the script pass
+- [x] 51.4 Restrict dependabot auto-merge to `dependabot[bot]` authors and semver patch/minor updates, and add `/scheduler/**` and `/clock/**` gomod entries (scenarios "Auto-merge decision", "Every module directory is covered"); verify the dependabot checks of the script pass
 - [ ] 51.5 Set Bearer's `log-level` in `bearer.yml` to its default and delete `vercel.json`; verify the policy check passes and the security workflow runs
 
 ## 52. Release provenance and dry run
 
-- [ ] 52.1 Add `scripts/release-dry-run.sh <semver>` mirroring release.yml post-processing into a file proxy and checking that a clean `GOWORK=off` consumer gets and builds every released module with the root pinned, no `replace` and no test-only requirements; verify it fails on the current tree because `scheduler/gocron` still requires testify and goleak (RED)
+- [x] 52.1 Add `scripts/release-dry-run.sh <semver>` mirroring release.yml post-processing into a file proxy and checking that a clean `GOWORK=off` consumer gets and builds every released module with the root pinned, no `replace` and no test-only requirements; verify it fails on the current tree because `scheduler/gocron` still requires testify and goleak (RED)
 - [ ] 52.2 Change release.yml: job `if: github.ref == 'refs/heads/main'` and `environment: release`, `go mod tidy` in every released module before pinning, `go build`/`go vet` after pinning, `make vuln` before tagging, tag `clock/clockwork`, and `generate_release_notes: true` (scenarios "The release workflow enforces provenance", "A dispatch from another branch is refused", "Test-only requirements are stripped", "Runtime requirements are kept", "Released adapters pin the root release"); verify `scripts/release-dry-run.sh v0.99.0` and the release section of `scripts/check-workflows.sh` pass
 - [ ] 52.3 Add a CI job `release-dry-run` in `test.yml` running `scripts/release-dry-run.sh v0.99.0`, its invalid-version rows and `scripts/check-workflows.sh` (scenarios "A clean consumer builds every released module", "The dry run rejects an invalid version"); verify the job is green
-- [ ] 52.4 Add CHANGELOG.md with an "Unreleased" section listing every BREAKING row of design.md D10/D9 with its migration, and `.github/CODEOWNERS` (scenario "Policy files are present"); verify the policy section of `scripts/check-workflows.sh` passes
+- [x] 52.4 Add CHANGELOG.md with an "Unreleased" section listing every BREAKING row of design.md D10/D9 with its migration, and `.github/CODEOWNERS` (scenario "Policy files are present"); verify the policy section of `scripts/check-workflows.sh` passes
 
 ## 53. Close the audit's test-suite gaps (existing behavior, tests only)
 
