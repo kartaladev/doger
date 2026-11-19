@@ -19,7 +19,7 @@ Each entry gives the change and its migration.
 | `As`, `AsNamed`, `MustAs`, `MustAsNamed` | `Alias`, `AliasNamed`, `MustAlias`, `MustAliasNamed` | Rename the calls. `Bind`/`BindNamed` are unchanged. |
 | `ExportAs(name)` | `WithExportName(name)` | Rename the call. |
 | `Flatten()` | `ExtendIntoRoot()` | Rename the call. |
-| `HealthReportOption` (struct) | `type HealthReportOption func(*healthReportOptions)` | None for callers of `MatchHealthTags`/`IgnoreContainerPhase`. A zero value no longer exists. |
+| `HealthReportOption` (struct) | A function type (`func` over an unexported query); a nil option is ignored | None for callers of `MatchHealthTags`/`IgnoreContainerPhase`; consumers can compose options in their own helpers. The struct literal `HealthReportOption{}` no longer compiles: use `nil` or no option. |
 | `Stage` and `DependencySource` start at 0 | Constants start at 1; 0 is invalid, its `String()` is `"unknown"`, and marshalling or using it fails | Use the named constants. |
 | `var Runnable` | `func Runnable() Kind[Runner, struct{}]` | `Runnable.Handle(...)` becomes `Runnable().Handle(...)`. |
 | `var MaxInvocationFrames` | `InjectorOpts.MaxInvocationFrames int` (0 means 100, negative turns recording off) | Set the option per container. |

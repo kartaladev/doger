@@ -185,11 +185,11 @@ func (s *RootScope) HealthReportWithContext(ctx context.Context, opts ...HealthR
 }
 
 // HealthReportOption selects what a HealthReport read covers. Values come
-// only from the constructors of this package, such as [MatchHealthTags]; the
-// zero value is ignored.
-type HealthReportOption struct {
-	apply func(query *reportQuery)
-}
+// from the constructors of this package, such as [MatchHealthTags] and
+// [IgnoreContainerPhase], and a consumer composes them in its own helpers,
+// such as func liveness() HealthReportOption { return
+// MatchHealthTags(HealthTagLiveness) }. A nil option is ignored.
+type HealthReportOption func(query *reportQuery)
 
 // reportQuery is what a report read covers: targets, the services listed;
 // prune, set when they list the whole container; tags, the tags matched,
@@ -205,8 +205,8 @@ type reportQuery struct {
 func newReportQuery(targets []healthTarget, prune bool, opts []HealthReportOption) reportQuery {
 	query := reportQuery{targets: targets, prune: prune, tags: map[string]struct{}{}}
 	for _, opt := range opts {
-		if opt.apply != nil {
-			opt.apply(&query)
+		if opt != nil {
+			opt(&query)
 		}
 	}
 
@@ -241,7 +241,7 @@ func (q reportQuery) matches(opts *serviceOptions) bool {
 // State is then the overall state of the covered services in every phase
 // but PhaseClosed, whose report stays empty and HealthUnknown.
 func IgnoreContainerPhase() HealthReportOption {
-	return HealthReportOption{apply: func(query *reportQuery) { query.ignorePhase = true }}
+	return func(query *reportQuery) { query.ignorePhase = true }
 }
 
 // MatchHealthTags limits a report, its overall state and the checks it runs
@@ -250,11 +250,11 @@ func IgnoreContainerPhase() HealthReportOption {
 // checker. A tag no service carries covers none, and such a report is
 // HealthHealthy: use the HealthTag constants to avoid a mistyped tag.
 func MatchHealthTags(tags ...string) HealthReportOption {
-	return HealthReportOption{apply: func(query *reportQuery) {
+	return func(query *reportQuery) {
 		for _, tag := range tags {
 			query.tags[tag] = struct{}{}
 		}
-	}}
+	}
 }
 
 // containerCheckers lists the services of every scope of the container,

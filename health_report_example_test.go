@@ -160,3 +160,24 @@ func ExampleRootScope_AddServiceHealthChangedHook() {
 	// db: healthy -> unhealthy (connection refused)
 	// no change
 }
+
+// liveness is a consumer's own report option, composed from the library's.
+func liveness() HealthReportOption { return MatchHealthTags(HealthTagLiveness) }
+
+func ExampleHealthReportOption() {
+	injector := New()
+	ProvideNamedValue(injector, "db", &healthReportExampleDatabase{})
+	ProvideNamedValue(injector, "proc", &healthReportExampleDatabase{}, WithHealthTags(HealthTagLiveness))
+
+	for _, opts := range [][]HealthReportOption{nil, {liveness()}, {nil, liveness(), IgnoreContainerPhase()}} {
+		report := injector.HealthReport(opts...)
+		for _, entry := range report.Services {
+			fmt.Print(entry.Service.Service, " ")
+		}
+		fmt.Println(report.State)
+	}
+	// Output:
+	// db proc healthy
+	// proc healthy
+	// proc healthy
+}

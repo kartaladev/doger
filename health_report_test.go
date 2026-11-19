@@ -1800,7 +1800,7 @@ func TestHealthReport_MatchTags(t *testing.T) {
 		{name: "repeated", opts: []HealthReportOption{MatchHealthTags("cache"), MatchHealthTags(HealthTagLiveness)}, listed: []string{"cache", "proc"}, state: HealthHealthy},
 		{name: "no_tag", opts: []HealthReportOption{MatchHealthTags()}, listed: []string{"cache", "db", "proc"}, state: HealthUnhealthy},
 		{name: "unknown_tag", opts: []HealthReportOption{MatchHealthTags("unknown-tag")}, listed: []string{}, state: HealthHealthy},
-		{name: "zero_value", opts: []HealthReportOption{{}}, listed: []string{"cache", "db", "proc"}, state: HealthUnhealthy},
+		{name: "nil_option", opts: []HealthReportOption{nil}, listed: []string{"cache", "db", "proc"}, state: HealthUnhealthy},
 	}
 
 	for _, tt := range tests {
@@ -1824,6 +1824,43 @@ func TestHealthReport_MatchTags(t *testing.T) {
 			}
 			is.Equal(tt.listed, listed)
 			is.Equal(tt.state, report.State)
+		})
+	}
+}
+
+// healthReportTestLiveness is a consumer helper composing a report option.
+func healthReportTestLiveness() HealthReportOption { return MatchHealthTags(HealthTagLiveness) }
+
+func TestHealthReportOption_Compose(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		opts   []HealthReportOption
+		listed []string
+	}{
+		{name: "liveness", opts: []HealthReportOption{healthReportTestLiveness()}, listed: []string{"proc"}},
+		{name: "liveness_ignore_phase", opts: []HealthReportOption{healthReportTestLiveness(), IgnoreContainerPhase()}, listed: []string{"proc"}},
+		{name: "nil_then_liveness", opts: []HealthReportOption{nil, healthReportTestLiveness()}, listed: []string{"proc"}},
+		{name: "empty_slice", opts: []HealthReportOption{}, listed: []string{"db", "proc"}},
+		{name: "typed_nil", opts: []HealthReportOption{HealthReportOption(nil)}, listed: []string{"db", "proc"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			i := New()
+			ProvideNamedValue(i, "db", &healthReportTestSwitch{})
+			ProvideNamedValue(i, "proc", &healthReportTestSwitch{}, WithHealthTags(HealthTagLiveness))
+
+			report := i.HealthReport(tt.opts...)
+
+			listed := make([]string, 0, len(report.Services))
+			for _, entry := range report.Services {
+				listed = append(listed, entry.Service.Service)
+			}
+			assert.Equal(t, tt.listed, listed)
 		})
 	}
 }

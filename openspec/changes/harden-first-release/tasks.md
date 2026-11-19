@@ -286,10 +286,10 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 41. HealthReportOption is a functional option
 
-- [ ] 41.1 RED: add `TestHealthReportOption_Compose` (rows include a nil option) and update the nil row of `TestHealthReport_MatchTags` (scenarios "Report options are functions a consumer can compose", "Filtered reports"); verify it fails to compile on `HealthReportOption(nil)` against the struct type
-- [ ] 41.2 GREEN: `type HealthReportOption func(*reportQuery)` and skip nil options; verify `TestHealthReport_MatchTags*` and the new test pass and `make test` is green
-- [ ] 41.3 REFACTOR: none needed — a mechanical type change; verify `make test` and `make lint` pass
-- [ ] 41.4 Docs: add `ExampleHealthReportOption` (a consumer composes `liveness()`); verify `go test -run ExampleHealthReportOption .` passes
+- [x] 41.1 RED: add `TestHealthReportOption_Compose` (rows include a nil option) and update the nil row of `TestHealthReport_MatchTags` (scenarios "Report options are functions a consumer can compose", "Filtered reports"); verify it fails to compile on `HealthReportOption(nil)` against the struct type
+- [x] 41.2 GREEN: `type HealthReportOption func(*reportQuery)` and skip nil options; verify `TestHealthReport_MatchTags*` and the new test pass and `make test` is green
+- [x] 41.3 REFACTOR: none needed — a mechanical type change; verify `make test` and `make lint` pass
+- [x] 41.4 Docs: add `ExampleHealthReportOption` (a consumer composes `liveness()`); verify `go test -run ExampleHealthReportOption .` passes
 
 ## 42. Health enums and reports serialize for monitoring
 
