@@ -123,7 +123,7 @@ And "s" had its Shutdown called 1 time, with a context whose Err() is nil
 ## ADDED Requirements
 
 ### Requirement: Shutdown returns when its context ends
-`ShutdownWithContext` on a root or child scope SHALL return once its context ends, even while a service's `Shutdown` still runs. Each such service SHALL be reported with a `*ServiceError` whose `Err` matches `ctx.Err()`. Its `Shutdown` SHALL keep running in the background, and its `HookAfterShutdown` hooks SHALL run when it returns. With a context that never ends, the call SHALL wait for every service.
+`ShutdownWithContext` on a root or child scope SHALL return once its context ends, even while a service's `Shutdown` still runs. Each such service SHALL be reported with a `*ServiceError` whose `Err` matches `ctx.Err()`. Its `Shutdown` SHALL keep running in the background, and its `HookAfterShutdown` hooks SHALL run when it returns; a panic it raises after the call returned SHALL be logged at Error level (container-shutdown). Each service SHALL appear once in the report, and an abandoned service SHALL never be shut down again by a later layer. With a context that never ends, the call SHALL wait for every service.
 
 #### Scenario: A hung Shutdown does not hold the call past its deadline
 ```gherkin
@@ -175,7 +175,7 @@ Examples:
 <!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - the call used to block until every Shutdown returned, past its deadline -->
 
 ### Requirement: Shutdown does not wait past its context for a build in progress
-When a scope shuts down while a provider of one of its services is still running, `ShutdownWithContext` SHALL stop waiting for that build once its context ends and report the service with a `*ServiceError` whose `Err` matches `ctx.Err()`. When the provider returns later, its instance SHALL NOT be handed out: the invoker SHALL get an error matching `ErrShutdown`, and a Shutdowner instance SHALL be shut down exactly once.
+When a scope shuts down while a provider of one of its services is still running, `ShutdownWithContext` SHALL stop waiting for that build once its context ends and report the service with a `*ServiceError` whose `Err` matches `ctx.Err()`. When the provider returns later, its instance SHALL NOT be handed out: the invoker SHALL get an error matching `ErrShutdown`, and a Shutdowner instance SHALL be shut down exactly once. The shutdown that found the build in flight SHALL shut that late instance down itself, with the shutdown's context: with a context that has not ended, before the call returns, reporting its error or panic (matching `ErrShutdownPanic`) under the service, and before the services it depends on shut down.
 
 #### Scenario: A stuck provider does not hold a bounded shutdown
 ```gherkin
@@ -204,7 +204,23 @@ When the consumer calls root.ShutdownWithContext(context.Background())
 Then the call returns after 1s
 And the report succeeds
 And G receives either the instance or an error matching ErrShutdown
-And the instance had its Shutdown called 1 time
+And the instance had its Shutdown called 1 time, before the call returned
+```
+
+#### Scenario: The late instance is shut down by the shutdown, in dependency order
+```gherkin
+Given a root scope inside synctest.Test with lazy "db" implementing Shutdown() error that logs "db"
+And a lazy "conn" whose provider invokes "db", then blocks until the test closes channel release, and whose instance's Shutdown() sleeps 100ms, logs "conn" and <outcome>
+And goroutine G invokes "conn" and is blocked in the provider
+When the consumer calls root.ShutdownWithContext(context.Background()) and the test then closes release
+Then when the call returns, the log is "conn", "db"
+And the report has an error for "conn" <matching>
+And G receives an error matching ErrShutdown
+
+Examples:
+  | outcome                                  | matching                                              |
+  | returns errors.New("conn close failed")  | containing "conn close failed"                        |
+  | panics with "conn boom"                  | matching ErrShutdownPanic and containing "conn boom"  |
 ```
 
 <!-- cases: 1 default: context.Background() waits for the build (second scenario) -->
