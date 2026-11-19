@@ -450,6 +450,13 @@ type InjectorOpts struct {
 	HookServiceHealthChanged   []func(scope *Scope, serviceName string, previous, current ServiceHealth)
 	HookContainerHealthChanged []func(root *RootScope, previous, current HealthState)
 
+	// MaxInvocationFrames caps the distinct call sites (invocation frames)
+	// each service of the container records, for debugging: a service
+	// records the call site of each of its first MaxInvocationFrames
+	// invocations. A positive value is the cap, a negative value turns
+	// recording off, and 0 means 100. Child scopes use the root's value.
+	MaxInvocationFrames int
+
 	// StructTagKey specifies the tag key used for struct field injection.
 	// Default: "do" (see DefaultStructTagKey constant).
 	// This allows customization of the struct tag format for injection.

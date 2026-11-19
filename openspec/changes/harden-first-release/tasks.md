@@ -45,9 +45,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 7. Invocation frames are capped per container
 
-- [ ] 7.1 RED: add `TestContainerOptions_MaxInvocationFrames` (6 rows) and `TestContainerOptions_FramesPerContainer` (scenarios "Frame cap per option value", "Two containers keep their own caps"); verify `go test -race -run 'TestContainerOptions_(MaxInvocationFrames|FramesPerContainer)' .` fails to compile naming only `InjectorOpts.MaxInvocationFrames`
-- [ ] 7.2 GREEN: add `InjectorOpts.MaxInvocationFrames int` (0→100, negative off), read it per container in lazy/eager/alias/export wrappers and remove the package variable; verify the 7.1 tests pass under `-race` and `make test` is green
-- [ ] 7.3 REFACTOR: Extract Function `recordInvocationFrame(cap)` shared by the four wrappers; verify `make test` and `make lint` pass
+- [x] 7.1 RED: add `TestContainerOptions_MaxInvocationFrames` (6 rows) and `TestContainerOptions_FramesPerContainer` (scenarios "Frame cap per option value", "Two containers keep their own caps"); verify `go test -race -run 'TestContainerOptions_(MaxInvocationFrames|FramesPerContainer)' .` fails to compile naming only `InjectorOpts.MaxInvocationFrames`
+- [x] 7.2 GREEN: add `InjectorOpts.MaxInvocationFrames int` (0→100, negative off), read it per container in lazy/eager/alias/export wrappers and remove the package variable; verify the 7.1 tests pass under `-race` and `make test` is green
+- [x] 7.3 REFACTOR: Extract Function `recordInvocationFrame(cap)` shared by the four wrappers; verify `make test` and `make lint` pass
 
 ## 8. Levelled logging with slog
 

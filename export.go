@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"sync"
-	"sync/atomic"
 
 	"github.com/kartaladev/doger/stacktrace"
 	typetostring "github.com/samber/go-type-to-string"
@@ -243,15 +241,13 @@ func readerSeesSource(reader *Scope, export any) bool {
 // shut down child fails to resolve.
 type serviceExport[T any] struct {
 	regIndex   uint64 // registration order, unique per root container
-	mu         sync.RWMutex
 	name       string // the published name
 	owner      *Scope // the scope holding the export
 	childName  string // the direct child of owner the export resolves from
 	sourceName string // the name of the source in that child
 
-	providerFrame           stacktrace.Frame
-	invokationFrames        map[stacktrace.Frame]struct{}
-	invokationFramesCounter uint32
+	providerFrame stacktrace.Frame
+	invocationFrames
 }
 
 func newServiceExport[T any](name string, owner *Scope, childName, sourceName string) *serviceExport[T] {
@@ -264,7 +260,7 @@ func newServiceExport[T any](name string, owner *Scope, childName, sourceName st
 		sourceName: sourceName,
 
 		providerFrame:    providerFrame,
-		invokationFrames: map[stacktrace.Frame]struct{}{},
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
@@ -316,14 +312,9 @@ func (s *serviceExport[T]) getInstanceAny(i Injector) (any, error) {
 }
 
 func (s *serviceExport[T]) getInstance(i Injector) (T, error) {
-	if atomic.AddUint32(&s.invokationFramesCounter, 1) < MaxInvocationFrames {
-		frame, ok := stacktrace.NewFrameFromCaller()
-		if ok {
-			s.mu.Lock()
-			s.invokationFrames[frame] = struct{}{}
-			s.mu.Unlock()
-		}
-	}
+	// a closure here, not stacktrace.NewFrameFromCaller itself: the frame
+	// recorded is then in this file, as before (invocation-frame rule, D16)
+	s.recordInvocationFrame(invocationFrameCap(i), func() (stacktrace.Frame, bool) { return stacktrace.NewFrameFromCaller() }) //nolint:gocritic // see above
 
 	child, source, ok := s.lookupSource()
 	if !ok {
@@ -380,19 +371,12 @@ func (s *serviceExport[T]) clone(newOwner Injector) any {
 		sourceName: s.sourceName,
 
 		providerFrame:    s.providerFrame,
-		invokationFrames: map[stacktrace.Frame]struct{}{},
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
 func (s *serviceExport[T]) source() (stacktrace.Frame, []stacktrace.Frame) {
-	s.mu.RLock()
-	invokationFrames := make([]stacktrace.Frame, 0, len(s.invokationFrames))
-	for frame := range s.invokationFrames {
-		invokationFrames = append(invokationFrames, frame)
-	}
-	s.mu.RUnlock()
-
-	return s.providerFrame, invokationFrames
+	return s.providerFrame, s.invocationFrameList()
 }
 
 func (s *serviceExport[T]) getRegistrationIndex() uint64 { return s.regIndex }

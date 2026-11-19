@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	"github.com/kartaladev/doger/stacktrace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,8 +92,8 @@ func optsSnapshot(opts *InjectorOpts) map[string]any {
 func TestContainerOptions_CallerOptsUnchanged(t *testing.T) {
 	t.Parallel()
 
-	// MaxInvocationFrames and the 10s HealthCheckTimeout default arrive in
-	// later groups; Logf is today's name of Logger.
+	// The 10s HealthCheckTimeout default arrives in a later group; Logf is
+	// today's name of Logger.
 	tests := []struct {
 		name      string
 		opts      func() *InjectorOpts
@@ -116,6 +117,15 @@ func TestContainerOptions_CallerOptsUnchanged(t *testing.T) {
 			effective: func(t *testing.T, root *RootScope, _ *InjectorOpts) {
 				t.Helper()
 				assert.Empty(t, root.HealthCheckWithContext(t.Context()))
+			},
+		},
+		{
+			name:      "max_invocation_frames_zero",
+			opts:      func() *InjectorOpts { return &InjectorOpts{MaxInvocationFrames: 0} },
+			construct: func(opts *InjectorOpts) *RootScope { return NewWithOpts(opts) },
+			effective: func(t *testing.T, root *RootScope, _ *InjectorOpts) {
+				t.Helper()
+				assert.Equal(t, 100, invocationFrameCap(root))
 			},
 		},
 		{
@@ -416,4 +426,77 @@ func TestContainerOptions_AddHookAppliesNext(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"svc"}, recorded)
+}
+
+// siteFrame returns a frame function giving a distinct call site per n, as
+// stacktrace.NewFrameFromCaller would for n different callers.
+func siteFrame(n int) func() (stacktrace.Frame, bool) {
+	return func() (stacktrace.Frame, bool) {
+		return stacktrace.Frame{File: "site.go", Line: n + 1}, true
+	}
+}
+
+// invokeFromSites records the invocation of the lazy "svc" of root from
+// sites distinct call sites, through the per-container cap the wrappers use,
+// and returns how many frames "svc" recorded.
+func invokeFromSites(t *testing.T, root *RootScope, sites int) int {
+	t.Helper()
+
+	wrapper, ok := root.self.serviceGet("svc")
+	require.True(t, ok)
+	lazy, ok := wrapper.(*serviceLazy[int])
+	require.True(t, ok)
+	for n := range sites {
+		lazy.recordInvocationFrame(invocationFrameCap(root), siteFrame(n))
+	}
+	_, frames := lazy.source()
+
+	return len(frames)
+}
+
+func TestContainerOptions_MaxInvocationFrames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		option   int
+		sites    int
+		recorded int
+	}{
+		{name: "default_above_cap", option: 0, sites: 150, recorded: 100},
+		{name: "default_below_cap", option: 0, sites: 99, recorded: 99},
+		{name: "cap_one", option: 1, sites: 3, recorded: 1},
+		{name: "cap_reached", option: 5, sites: 5, recorded: 5},
+		{name: "cap_exceeded", option: 5, sites: 6, recorded: 5},
+		{name: "negative_off", option: -1, sites: 10, recorded: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := NewWithOpts(&InjectorOpts{MaxInvocationFrames: tt.option})
+			ProvideNamed(root, "svc", func(Injector) (int, error) { return 1, nil })
+
+			assert.Equal(t, tt.recorded, invokeFromSites(t, root, tt.sites))
+		})
+	}
+}
+
+func TestContainerOptions_FramesPerContainer(t *testing.T) {
+	t.Parallel()
+
+	a := NewWithOpts(&InjectorOpts{MaxInvocationFrames: 2})
+	b := NewWithOpts(&InjectorOpts{MaxInvocationFrames: 0})
+	ProvideNamed(a, "svc", func(Injector) (int, error) { return 1, nil })
+	ProvideNamed(b, "svc", func(Injector) (int, error) { return 1, nil })
+
+	var recordedA, recordedB int
+	var wg sync.WaitGroup
+	wg.Go(func() { recordedA = invokeFromSites(t, a, 5) })
+	wg.Go(func() { recordedB = invokeFromSites(t, b, 5) })
+	wg.Wait()
+
+	assert.Equal(t, 2, recordedA)
+	assert.Equal(t, 5, recordedB)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"reflect"
 	"sync"
-	"sync/atomic"
 
 	"github.com/kartaladev/doger/stacktrace"
 )
@@ -25,9 +24,8 @@ type serviceAlias[Initial any, Alias any] struct {
 	scope      Injector
 	targetName string // string representation of the Initial type
 
-	providerFrame           stacktrace.Frame
-	invokationFrames        map[stacktrace.Frame]struct{} // map garanties uniqueness
-	invokationFramesCounter uint32
+	providerFrame stacktrace.Frame
+	invocationFrames
 }
 
 func newServiceAlias[Initial any, Alias any](
@@ -44,9 +42,8 @@ func newServiceAlias[Initial any, Alias any](
 		scope:      scope,
 		targetName: targetName,
 
-		providerFrame:           providerFrame,
-		invokationFrames:        map[stacktrace.Frame]struct{}{},
-		invokationFramesCounter: 0,
+		providerFrame:    providerFrame,
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
@@ -77,17 +74,9 @@ func (s *serviceAlias[Initial, Alias]) getInstanceAny(i Injector) (any, error) {
 }
 
 func (s *serviceAlias[Initial, Alias]) getInstance(i Injector) (Alias, error) {
-	// Collect up to 100 invokation frames.
-	// In the future, we can implement a LFU list, to evict the oldest
-	// frames and keep the most recent ones, but it would be much more costly.
-	if atomic.AddUint32(&s.invokationFramesCounter, 1) < MaxInvocationFrames {
-		frame, ok := stacktrace.NewFrameFromCaller()
-		if ok {
-			s.mu.Lock()
-			s.invokationFrames[frame] = struct{}{}
-			s.mu.Unlock()
-		}
-	}
+	// a closure here, not stacktrace.NewFrameFromCaller itself: the frame
+	// recorded is then in this file, as before (invocation-frame rule, D16)
+	s.recordInvocationFrame(invocationFrameCap(i), func() (stacktrace.Frame, bool) { return stacktrace.NewFrameFromCaller() }) //nolint:gocritic // see above
 
 	// Use the virtual scope received as parameter to ensure proper circular dependency detection.
 	// The injector passed here should be a virtual scope that contains the current invocation chain
@@ -162,21 +151,13 @@ func (s *serviceAlias[Initial, Alias]) clone(newScope Injector) any {
 		scope:      newScope,
 		targetName: s.targetName,
 
-		providerFrame:           s.providerFrame,
-		invokationFrames:        map[stacktrace.Frame]struct{}{},
-		invokationFramesCounter: 0,
+		providerFrame:    s.providerFrame,
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
 func (s *serviceAlias[Initial, Alias]) source() (stacktrace.Frame, []stacktrace.Frame) {
-	s.mu.RLock()
-	invokationFrames := make([]stacktrace.Frame, 0, len(s.invokationFrames))
-	for frame := range s.invokationFrames {
-		invokationFrames = append(invokationFrames, frame)
-	}
-	s.mu.RUnlock()
-
-	return s.providerFrame, invokationFrames
+	return s.providerFrame, s.invocationFrameList()
 }
 
 func (s *serviceAlias[Initial, Alias]) getRegistrationIndex() uint64 {

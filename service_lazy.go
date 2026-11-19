@@ -35,9 +35,8 @@ type serviceLazy[T any] struct {
 	buildTime time.Duration
 	provider  Provider[T]
 
-	providerFrame           stacktrace.Frame
-	invokationFrames        map[stacktrace.Frame]struct{} // map garanties uniqueness
-	invokationFramesCounter uint32
+	providerFrame stacktrace.Frame
+	invocationFrames
 }
 
 func newServiceLazy[T any](name string, provider Provider[T]) *serviceLazy[T] {
@@ -52,9 +51,8 @@ func newServiceLazy[T any](name string, provider Provider[T]) *serviceLazy[T] {
 		buildTime: 0,
 		provider:  provider,
 
-		providerFrame:           providerFrame,
-		invokationFrames:        map[stacktrace.Frame]struct{}{},
-		invokationFramesCounter: 0,
+		providerFrame:    providerFrame,
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
@@ -79,17 +77,9 @@ func (s *serviceLazy[T]) getInstanceAny(i Injector) (any, error) {
 }
 
 func (s *serviceLazy[T]) getInstance(i Injector) (T, error) {
-	// Collect up to 100 invokation frames.
-	// In the future, we can implement a LFU list, to evict the oldest
-	// frames and keep the most recent ones, but it would be much more costly.
-	if atomic.AddUint32(&s.invokationFramesCounter, 1) < MaxInvocationFrames {
-		frame, ok := stacktrace.NewFrameFromCaller()
-		if ok {
-			s.mu.Lock()
-			s.invokationFrames[frame] = struct{}{}
-			s.mu.Unlock()
-		}
-	}
+	// a closure here, not stacktrace.NewFrameFromCaller itself: the frame
+	// recorded is then in this file, as before (invocation-frame rule, D16)
+	s.recordInvocationFrame(invocationFrameCap(i), func() (stacktrace.Frame, bool) { return stacktrace.NewFrameFromCaller() }) //nolint:gocritic // see above
 
 	instance, built, err := s.instanceOrBuild(i)
 	if err != nil {
@@ -311,21 +301,13 @@ func (s *serviceLazy[T]) clone(newScope Injector) any {
 		provider:  s.provider,
 		buildTime: 0,
 
-		providerFrame:           s.providerFrame,
-		invokationFrames:        map[stacktrace.Frame]struct{}{},
-		invokationFramesCounter: 0,
+		providerFrame:    s.providerFrame,
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
 func (s *serviceLazy[T]) source() (stacktrace.Frame, []stacktrace.Frame) {
-	s.mu.RLock()
-	invokationFrames := make([]stacktrace.Frame, 0, len(s.invokationFrames))
-	for frame := range s.invokationFrames {
-		invokationFrames = append(invokationFrames, frame)
-	}
-	s.mu.RUnlock()
-
-	return s.providerFrame, invokationFrames
+	return s.providerFrame, s.invocationFrameList()
 }
 
 func (s *serviceLazy[T]) getBuildTime() (time.Duration, bool) {

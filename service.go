@@ -3,15 +3,76 @@ package doger
 import (
 	"context"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kartaladev/doger/stacktrace"
 	typetostring "github.com/samber/go-type-to-string"
 )
 
-// MaxInvocationFrames defines the maximum number of stack frames to capture
-// when tracking service invocations for debugging and observability purposes.
-var MaxInvocationFrames uint32 = 100
+// defaultMaxInvocationFrames is the frame cap of InjectorOpts.MaxInvocationFrames 0.
+const defaultMaxInvocationFrames = 100
+
+// invocationFrames records the call sites a service was invoked from, each
+// once, for debugging and observability. A wrapper embeds it.
+type invocationFrames struct {
+	invokationFramesMu      sync.RWMutex
+	invokationFrames        map[stacktrace.Frame]struct{} // map garanties uniqueness
+	invokationFramesCounter uint32                        // invocations counted against the cap
+}
+
+// newInvocationFrames returns an empty record.
+func newInvocationFrames() invocationFrames {
+	return invocationFrames{invokationFrames: map[stacktrace.Frame]struct{}{}}
+}
+
+// recordInvocationFrame records the frame returned by frame for each of the
+// first limit invocations counted; a limit of 0 or less records nothing. frame is called only when the frame is recorded: capturing one
+// is costly.
+func (f *invocationFrames) recordInvocationFrame(limit int, frame func() (stacktrace.Frame, bool)) {
+	if limit <= 0 {
+		return
+	}
+	if uint64(atomic.AddUint32(&f.invokationFramesCounter, 1)) <= uint64(limit) {
+		if fr, ok := frame(); ok {
+			f.invokationFramesMu.Lock()
+			f.invokationFrames[fr] = struct{}{}
+			f.invokationFramesMu.Unlock()
+		}
+	}
+}
+
+// invocationFrameList returns the recorded frames, in no particular order.
+func (f *invocationFrames) invocationFrameList() []stacktrace.Frame {
+	f.invokationFramesMu.RLock()
+	defer f.invokationFramesMu.RUnlock()
+
+	frames := make([]stacktrace.Frame, 0, len(f.invokationFrames))
+	for frame := range f.invokationFrames {
+		frames = append(frames, frame)
+	}
+
+	return frames
+}
+
+// invocationFrameCap returns the frame cap of the container of i (see
+// InjectorOpts.MaxInvocationFrames), or the default one when i is nil, as
+// for a wrapper invoked directly.
+func invocationFrameCap(i Injector) int {
+	if i == nil {
+		return defaultMaxInvocationFrames
+	}
+
+	switch n := i.RootScope().opts.MaxInvocationFrames; {
+	case n == 0:
+		return defaultMaxInvocationFrames
+	case n < 0:
+		return 0
+	default:
+		return n
+	}
+}
 
 // ServiceType represents the different types of services that can be registered
 // in the dependency injection container. Each type has different lifecycle

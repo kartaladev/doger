@@ -23,10 +23,8 @@ type serviceEager[T any] struct {
 	typeName string
 	instance T
 
-	providerFrame           stacktrace.Frame
-	invokationFrames        map[stacktrace.Frame]struct{} // map garanties uniqueness
-	invokationFramesMu      sync.RWMutex
-	invokationFramesCounter uint32
+	providerFrame stacktrace.Frame
+	invocationFrames
 
 	// declared dependencies, resolved on the first successful invocation
 	depsMu       sync.Mutex
@@ -43,10 +41,8 @@ func newServiceEager[T any](name string, instance T) *serviceEager[T] {
 		typeName: inferServiceName[T](),
 		instance: instance,
 
-		providerFrame:           providerFrame,
-		invokationFrames:        map[stacktrace.Frame]struct{}{},
-		invokationFramesMu:      sync.RWMutex{},
-		invokationFramesCounter: 0,
+		providerFrame:    providerFrame,
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
@@ -71,17 +67,9 @@ func (s *serviceEager[T]) getInstanceAny(i Injector) (any, error) {
 }
 
 func (s *serviceEager[T]) getInstance(i Injector) (T, error) {
-	// Collect up to 100 invokation frames.
-	// In the future, we can implement a LFU list, to evict the oldest
-	// frames and keep the most recent ones, but it would be much more costly.
-	if atomic.AddUint32(&s.invokationFramesCounter, 1) < MaxInvocationFrames {
-		s.invokationFramesMu.Lock()
-		frame, ok := stacktrace.NewFrameFromCaller()
-		if ok {
-			s.invokationFrames[frame] = struct{}{}
-		}
-		s.invokationFramesMu.Unlock()
-	}
+	// a closure here, not stacktrace.NewFrameFromCaller itself: the frame
+	// recorded is then in this file, as before (invocation-frame rule, D16)
+	s.recordInvocationFrame(invocationFrameCap(i), func() (stacktrace.Frame, bool) { return stacktrace.NewFrameFromCaller() }) //nolint:gocritic // see above
 
 	if err := s.resolveDependsOn(i); err != nil {
 		return empty[T](), err
@@ -187,22 +175,13 @@ func (s *serviceEager[T]) clone(newScope Injector) any {
 		typeName: s.typeName,
 		instance: s.instance,
 
-		providerFrame:           s.providerFrame,
-		invokationFrames:        map[stacktrace.Frame]struct{}{},
-		invokationFramesMu:      sync.RWMutex{},
-		invokationFramesCounter: 0,
+		providerFrame:    s.providerFrame,
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
 func (s *serviceEager[T]) source() (stacktrace.Frame, []stacktrace.Frame) {
-	s.invokationFramesMu.RLock()
-	invokationFrames := make([]stacktrace.Frame, 0, len(s.invokationFrames))
-	for frame := range s.invokationFrames {
-		invokationFrames = append(invokationFrames, frame)
-	}
-	s.invokationFramesMu.RUnlock()
-
-	return s.providerFrame, invokationFrames
+	return s.providerFrame, s.invocationFrameList()
 }
 
 func (s *serviceEager[T]) getRegistrationIndex() uint64 {
