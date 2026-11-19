@@ -642,9 +642,13 @@ func TestLogging_HealthErrorDebugOnly(t *testing.T) {
 
 // loggingBlockingCheck is a health check that blocks until release is
 // closed.
-type loggingBlockingCheck struct{ release chan struct{} }
+type loggingBlockingCheck struct {
+	release chan struct{}
+	ran     atomic.Int32
+}
 
 func (c *loggingBlockingCheck) HealthCheck() error {
+	c.ran.Add(1)
 	<-c.release
 	return nil
 }
@@ -652,27 +656,44 @@ func (c *loggingBlockingCheck) HealthCheck() error {
 func TestLogging_HealthCheckStarted(t *testing.T) {
 	t.Parallel()
 
+	// blocking returns a check that blocks until release is called, and
+	// that release function.
+	blocking := func() (*loggingBlockingCheck, func()) {
+		check := &loggingBlockingCheck{release: make(chan struct{})}
+		return check, sync.OnceFunc(func() { close(check.release) })
+	}
+
 	tests := []struct {
-		name   string
-		action func(t *testing.T, root *RootScope, release func())
-		count  int
+		name string
+		// run registers and checks services on a root with logger, and
+		// returns the scope and service the records must name, and a
+		// service that must have none ("" for none).
+		run   func(t *testing.T, logger *slog.Logger) (scope, service, absent string)
+		count int
 	}{
 		{
 			name: "HealthCheckNamed",
-			action: func(t *testing.T, root *RootScope, release func()) {
+			run: func(t *testing.T, logger *slog.Logger) (string, string, string) {
 				t.Helper()
+				root := NewWithOpts(&InjectorOpts{Logger: logger})
+				check, release := blocking()
+				ProvideNamedValue(root, "db", check)
 				done := make(chan error, 1)
 				go func() { done <- HealthCheckNamed(root, "db") }()
 				synctest.Wait()
 				release()
 				assert.NoError(t, <-done)
+				return "[root]", "db", ""
 			},
 			count: 1,
 		},
 		{
 			name: "a second caller joins the check in flight",
-			action: func(t *testing.T, root *RootScope, release func()) {
+			run: func(t *testing.T, logger *slog.Logger) (string, string, string) {
 				t.Helper()
+				root := NewWithOpts(&InjectorOpts{Logger: logger})
+				check, release := blocking()
+				ProvideNamedValue(root, "db", check)
 				done := make(chan error, 2)
 				go func() { done <- HealthCheckNamed(root, "db") }()
 				synctest.Wait()
@@ -681,29 +702,100 @@ func TestLogging_HealthCheckStarted(t *testing.T) {
 				release()
 				assert.NoError(t, <-done)
 				assert.NoError(t, <-done)
+				return "[root]", "db", ""
 			},
 			count: 1,
 		},
 		{
 			name: "an already-cancelled context",
-			action: func(t *testing.T, root *RootScope, release func()) {
+			run: func(t *testing.T, logger *slog.Logger) (string, string, string) {
 				t.Helper()
+				root := NewWithOpts(&InjectorOpts{Logger: logger})
+				check, release := blocking()
+				defer release()
+				ProvideNamedValue(root, "db", check)
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				assert.Error(t, HealthCheckNamedWithContext(ctx, root, "db"))
-				release()
+				return "[root]", "db", ""
 			},
 			count: 0,
 		},
 		{
 			name: "root.HealthCheck",
-			action: func(t *testing.T, root *RootScope, release func()) {
+			run: func(t *testing.T, logger *slog.Logger) (string, string, string) {
 				t.Helper()
+				root := NewWithOpts(&InjectorOpts{Logger: logger})
+				check, release := blocking()
+				ProvideNamedValue(root, "db", check)
 				done := make(chan map[string]error, 1)
 				go func() { done <- root.HealthCheck() }()
 				synctest.Wait()
 				release()
 				assert.Equal(t, map[string]error{"db": nil}, <-done)
+				return "[root]", "db", ""
+			},
+			count: 1,
+		},
+		{
+			// with one slot, "b" waits behind "a"; the caller's context ends
+			// while it waits, so its check never runs
+			name: "queued_then_abandoned",
+			run: func(t *testing.T, logger *slog.Logger) (string, string, string) {
+				t.Helper()
+				root := NewWithOpts(&InjectorOpts{Logger: logger, HealthCheckParallelism: 1})
+				a, releaseA := blocking()
+				b, releaseB := blocking()
+				defer releaseB()
+				ProvideNamedValue(root, "a", a)
+				ProvideNamedValue(root, "b", b)
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan map[string]error, 1)
+				go func() { done <- root.HealthCheckWithContext(ctx) }()
+				synctest.Wait()
+				cancel()
+				synctest.Wait()
+				releaseA()
+				releaseB()
+				<-done
+				synctest.Wait()
+				// the slot goes to either service first; the other may run
+				// later, detached from the caller, or never: a record must
+				// exist for exactly the checks that ran
+				if a.ran.Load()+b.ran.Load() == 2 {
+					return "[root]", "", ""
+				}
+				require.Equal(t, int32(1), a.ran.Load()+b.ran.Load(), "one check ran")
+				if a.ran.Load() == 1 {
+					return "[root]", "a", "b"
+				}
+				return "[root]", "b", "a"
+			},
+			count: 1,
+		},
+		{
+			name: "scheduled round",
+			run: func(t *testing.T, logger *slog.Logger) (string, string, string) {
+				t.Helper()
+				scheduler := &healthReportExampleScheduler{}
+				root := NewWithOpts(&InjectorOpts{Logger: logger, HealthScheduler: scheduler})
+				ProvideNamedValue(root, "db", healthReportExampleCheck{})
+				require.NoError(t, root.Start())
+				scheduler.round(context.Background())
+				root.Shutdown()
+				return "[root]", "db", ""
+			},
+			count: 1,
+		},
+		{
+			name: "child scope",
+			run: func(t *testing.T, logger *slog.Logger) (string, string, string) {
+				t.Helper()
+				root := NewWithOpts(&InjectorOpts{Logger: logger})
+				tenant := root.Scope("tenant")
+				ProvideNamedValue(tenant, "db", healthReportExampleCheck{})
+				assert.NoError(t, HealthCheckNamed(tenant, "db"))
+				return "tenant", "db", ""
 			},
 			count: 1,
 		},
@@ -715,20 +807,28 @@ func TestLogging_HealthCheckStarted(t *testing.T) {
 
 			synctest.Test(t, func(t *testing.T) {
 				logger, recorder := newRecordingLogger(t, slog.LevelDebug)
-				root := NewWithOpts(&InjectorOpts{Logger: logger})
-				check := &loggingBlockingCheck{release: make(chan struct{})}
-				ProvideNamedValue(root, "db", check)
 
-				tt.action(t, root, func() { close(check.release) })
+				scope, service, absent := tt.run(t, logger)
 				synctest.Wait()
 
 				records := recorder.withMessage("health check started")
-				assert.Len(t, records, tt.count)
+				named := 0
 				for _, rec := range records {
 					assert.Equal(t, slog.LevelDebug, rec.level)
-					assert.Equal(t, "[root]", rec.attrs["scope"])
-					assert.Equal(t, "db", rec.attrs["service"])
+					if absent != "" {
+						assert.NotEqual(t, absent, rec.attrs["service"], "a check that never ran")
+					}
+					if rec.attrs["scope"] == scope && rec.attrs["service"] == service {
+						named++
+					}
 				}
+				if service == "" {
+					// every check ran: one record each
+					assert.Len(t, records, 2)
+					return
+				}
+				assert.Len(t, records, tt.count)
+				assert.Equal(t, tt.count, named, "records naming scope %q and service %q", scope, service)
 			})
 		})
 	}

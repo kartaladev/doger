@@ -519,7 +519,7 @@ func TestResolutionErrors_DuplicateScopeConcurrent(t *testing.T) {
 			switch err, _ := recovered.(error); {
 			case recovered == nil:
 				scopes.Add(1)
-			case errors.Is(err, ErrScopeAlreadyDeclared):
+			case errors.Is(err, ErrScopeAlreadyDeclared) && err.Error() == "doger: scope `tenant` has already been declared":
 				dupes.Add(1)
 			default:
 				unknown.Add(1)
@@ -530,7 +530,7 @@ func TestResolutionErrors_DuplicateScopeConcurrent(t *testing.T) {
 	wg.Wait()
 
 	is.Equal(int32(1), scopes.Load(), "one caller got the scope")
-	is.Equal(int32(callers-1), dupes.Load(), "the others recovered ErrScopeAlreadyDeclared")
+	is.Equal(int32(callers-1), dupes.Load(), "the others recovered ErrScopeAlreadyDeclared with its message")
 	is.Zero(unknown.Load())
 	is.Len(root.Children(), 1)
 }
