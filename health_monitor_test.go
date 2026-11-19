@@ -1510,3 +1510,95 @@ func TestHealthRound_GoexitKeepsRecording(t *testing.T) {
 		is.Equal(HealthHealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
 	})
 }
+
+func TestHealthMonitor_Guards(t *testing.T) {
+	t.Parallel()
+
+	t.Run("keep_only_pruning", func(t *testing.T) {
+		t.Parallel()
+		is := assert.New(t)
+
+		i := New()
+		db := &healthReportTestSwitch{}
+		ProvideNamedValue(i, "db", db)
+		is.Equal(HealthHealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
+
+		// a listing without "db" drops its record and membership
+		i.health.keepOnly(map[any]healthTarget{})
+		i.deliverTransitions()
+
+		i.health.mu.Lock()
+		_, recorded := i.health.records[i.self.services["db"]]
+		_, member := i.health.members[i.self.services["db"]]
+		i.health.mu.Unlock()
+		is.False(recorded, "record of db")
+		is.False(member, "membership of db")
+	})
+
+	t.Run("deliver_transitions_repanic", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			fc := newFakeClock()
+			i := NewWithOpts(&InjectorOpts{
+				Clock:              fc,
+				HealthCheckTimeout: 50 * time.Millisecond,
+				HookContainerPanic: func(_ *RootScope, point string, value any) {
+					panic(fmt.Sprintf("%s: %v", point, value))
+				},
+			})
+			var delivered atomic.Int32
+			i.AddServiceHealthChangedHook(func(*Scope, string, ServiceHealth, ServiceHealth) {
+				if delivered.Add(1) == 1 {
+					panic("boom")
+				}
+			})
+			db := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "db", db)
+
+			// the read records its timeout and delivers the transition
+			// itself: HookContainerPanic re-panics, out of the read
+			recovered := make(chan any, 1)
+			go func() {
+				defer func() { recovered <- recover() }()
+				i.HealthReport()
+			}()
+			synctest.Wait()
+			fc.Advance(50 * time.Millisecond)
+			is.Equal("healthchanged: boom", <-recovered)
+
+			// delivering was reset: the next transition is delivered
+			close(db.release)
+			synctest.Wait()
+			is.NoError(HealthCheckNamed(i, "db"))
+			synctest.Wait()
+			is.GreaterOrEqual(delivered.Load(), int32(2), "transitions delivered after the re-panic")
+			i.Shutdown()
+		})
+	})
+
+	t.Run("scheduler_double_start_guard", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+		is := assert.New(t)
+
+		// the root's own scope is shut down by a Started hook, which stops
+		// health scheduling for good: reaching Ready does not start it
+		scheduler := &manualScheduler{}
+		i := NewWithOpts(&InjectorOpts{
+			HealthScheduler: scheduler,
+			HookContainerStarted: []func(context.Context, *RootScope){
+				func(_ context.Context, root *RootScope) { root.self.Shutdown() },
+			},
+		})
+		require.NoError(t, i.Start())
+
+		is.Equal(PhaseReady, i.Phase())
+		is.Zero(scheduler.callCount(), "ScheduleHealthRounds calls")
+		is.False(i.HealthReport().Monitored)
+		i.Shutdown()
+	})
+}

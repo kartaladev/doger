@@ -1868,3 +1868,140 @@ func TestHealthCheck_QueuedDeadlineBoundary(t *testing.T) {
 
 	assert.Zero(t, unexpected, "runs not timing out at the deferred bound (first: %v)", firstErr)
 }
+
+// healthRunTestTwoCalls is a Healthchecker whose first call blocks until
+// first is closed and whose later calls block until second is closed.
+type healthRunTestTwoCalls struct {
+	calls         atomic.Int32
+	first, second chan struct{}
+}
+
+func newHealthRunTestTwoCalls() *healthRunTestTwoCalls {
+	return &healthRunTestTwoCalls{first: make(chan struct{}), second: make(chan struct{})}
+}
+
+func (c *healthRunTestTwoCalls) HealthCheck() error {
+	if c.calls.Add(1) == 1 {
+		<-c.first
+	} else {
+		<-c.second
+	}
+	return nil
+}
+
+// healthRunTestAbandon starts a single-service check of "db" with a context
+// it then cancels, leaving the check running but abandoned: a caller
+// arriving afterwards waits for it to return, then for a fresh check.
+func healthRunTestAbandon(t *testing.T, i *RootScope) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	go func() { first <- HealthCheckNamedWithContext(ctx, i, "db") }()
+	synctest.Wait()
+	cancel()
+	require.ErrorIs(t, <-first, context.Canceled, "the abandoned call")
+}
+
+func TestHealthCheck_QueuedBehindAbandonedCall(t *testing.T) {
+	t.Parallel()
+
+	t.Run("service_left_while_callers_queued", func(t *testing.T) {
+		t.Parallel()
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			i := New()
+			db := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "db", db)
+			healthRunTestAbandon(t, i)
+
+			queued := make(chan error, 1)
+			go func() { queued <- HealthCheckNamed(i, "db") }()
+			synctest.Wait()
+
+			// "db" leaves while the caller waits for the abandoned check
+			OverrideNamedValue(i, "db", &healthReportTestSwitch{})
+			close(db.release)
+
+			is.NoError(<-queued, "the queued caller gets the result of the check of the service that left")
+			is.Equal(int32(1), db.calls.Load(), "calls of the check")
+			i.Shutdown()
+		})
+	})
+
+	// The fresh check is built from whichever queued caller the map yields
+	// first: when it is the pooled HealthCheck() call, the single-service
+	// caller takes the fresh check over and runs it at once. Both orders
+	// run over the iterations.
+	t.Run("take_over_by_fresh_check", func(t *testing.T) {
+		t.Parallel()
+
+		const runs = 20
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			for range runs {
+				i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1})
+				db := newHealthRunTestBlocking(nil)
+				ProvideNamedValue(i, "db", db)
+				healthRunTestAbandon(t, i)
+
+				pooled := make(chan map[string]error, 1)
+				single := make(chan error, 1)
+				go func() { pooled <- i.HealthCheck() }()
+				go func() { single <- HealthCheckNamed(i, "db") }()
+				synctest.Wait()
+				close(db.release)
+
+				is.NoError((<-pooled)["db"])
+				is.NoError(<-single)
+				is.Equal(int32(2), db.calls.Load(), "the abandoned check and one fresh check")
+				i.Shutdown()
+			}
+		})
+	})
+
+	// The fresh check is pending since the earliest queued caller asked,
+	// whichever caller the map yields first.
+	t.Run("queue_ordering", func(t *testing.T) {
+		t.Parallel()
+
+		const runs = 20
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			for range runs {
+				fc := newFakeClockAt(healthReportTestEpoch)
+				i := NewWithOpts(&InjectorOpts{Clock: fc})
+				db := newHealthRunTestTwoCalls()
+				ProvideNamedValue(i, "db", db)
+				healthRunTestAbandon(t, i)
+
+				fc.Advance(time.Second)
+				earlier := make(chan map[string]error, 1)
+				go func() { earlier <- i.HealthCheck() }()
+				synctest.Wait()
+				fc.Advance(time.Second)
+				later := make(chan error, 1)
+				go func() { later <- HealthCheckNamed(i, "db") }()
+				synctest.Wait()
+
+				close(db.first) // the abandoned check returns: the fresh one starts
+				synctest.Wait()
+				ended, cancel := context.WithCancel(context.Background())
+				cancel()
+				entry := healthReportTestEntry(t, i.HealthReportWithContext(ended), "db")
+				is.Equal(healthReportTestEpoch.Add(time.Second), entry.PendingSince, "pending since the earliest queued caller asked")
+
+				close(db.second)
+				is.NoError((<-earlier)["db"])
+				is.NoError(<-later)
+				i.Shutdown()
+			}
+		})
+	})
+}
