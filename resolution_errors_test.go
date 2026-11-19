@@ -313,7 +313,7 @@ func TestResolutionErrors_NilInjectorPanics(t *testing.T) {
 		{name: "invoke_collection", call: func() { InvokeCollection[int](nil) }},
 		{name: "explain_injector", call: func() { ExplainInjector(nil) }},
 		{name: "package", call: func() { Package(Lazy[int](provider))(nil) }},
-		{name: "runnable_handle", call: func() { Runnable.Handle(nil, StageAfterStart, handler) }},
+		{name: "runnable_handle", call: func() { Runnable().Handle(nil, StageAfterStart, handler) }},
 		{name: "extension_properties", call: func() { _, _ = ExtensionProperties(nil) }},
 		{name: "extension_properties_typed_nil_scope", call: func() { _, _ = ExtensionProperties((*Scope)(nil)) }},
 		{name: "extension_properties_typed_nil_root", call: func() { _, _ = ExtensionProperties((*RootScope)(nil)) }},

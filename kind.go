@@ -20,15 +20,61 @@ type kindBinding struct {
 	deferred bool         // registered under an interface type: checked on the instance at Start
 }
 
-// Stage says when a kind handler runs during Start.
+// Stage says when a kind handler runs during Start. The constants start at
+// 1: the zero Stage is invalid, [Kind.Handle] panics on it and MarshalText
+// fails for it. A Stage reads and writes as the text "before-start" or
+// "after-start".
 type Stage int
 
 const (
 	// StageBeforeStart runs after every candidate is built, before any Starter starts.
-	StageBeforeStart Stage = iota
+	StageBeforeStart Stage = iota + 1
 	// StageAfterStart runs after every Starter has started.
 	StageAfterStart
 )
+
+// String returns "before-start", "after-start", or "unknown" for any other
+// value.
+func (s Stage) String() string {
+	switch s {
+	case StageBeforeStart:
+		return "before-start"
+	case StageAfterStart:
+		return "after-start"
+	default:
+		return "unknown"
+	}
+}
+
+// MarshalText encodes a valid stage by its String text and fails for any
+// other value.
+func (s Stage) MarshalText() ([]byte, error) {
+	if !validStage(s) {
+		return nil, libErrorf("invalid stage %d", s)
+	}
+
+	return []byte(s.String()), nil
+}
+
+// validStage reports whether stage is one of the Stage constants.
+func validStage(stage Stage) bool {
+	return stage == StageBeforeStart || stage == StageAfterStart
+}
+
+// UnmarshalText decodes "before-start" or "after-start"; any other text
+// fails and leaves s unchanged.
+func (s *Stage) UnmarshalText(text []byte) error {
+	switch string(text) {
+	case "before-start":
+		*s = StageBeforeStart
+	case "after-start":
+		*s = StageAfterStart
+	default:
+		return libErrorf("unknown stage %q", text)
+	}
+
+	return nil
+}
 
 // Kind is a typed component kind: services opted in with [Kind.With] are
 // passed, at Start, to the handler registered with [Kind.Handle]. T is the
@@ -101,11 +147,12 @@ func (k Kind[T, M]) With(meta M) ProvideOption {
 // [DeclareDependency]; edges declared during [StageBeforeStart] order the
 // Starters of the same Start. Do not call Shutdown from a handler.
 //
-// Handle panics on a zero Kind, an unknown stage, a nil handler or a nil
-// root (with [ErrNilInjector]).
+// The root is explicit: there is no default container. Handle panics on a
+// zero Kind, an invalid stage (Stage(0) included), a nil handler, or a nil
+// root, typed-nil included, with an error matching [ErrNilInjector].
 func (k Kind[T, M]) Handle(root *RootScope, stage Stage, handler func(context.Context, Component[T, M]) error) {
 	k.mustBeCreated()
-	if stage != StageBeforeStart && stage != StageAfterStart {
+	if !validStage(stage) {
 		panic(libErrorf("invalid stage %d for kind `%s`", stage, k.id.name))
 	}
 	if handler == nil {

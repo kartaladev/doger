@@ -59,26 +59,28 @@ Scheduled.Handle(root, doger.StageBeforeStart, func(ctx context.Context, c doger
 
 Edges declared with `DeclareDependency` during `StageBeforeStart` order the starters of the same `Start`; edges from both stages order shutdown.
 
+The constants start at 1, so the zero `Stage` is invalid. A `Stage` reads and writes as text: `String()` returns `before-start`, `after-start`, or `unknown` for any other value, `MarshalText` encodes only the two constants, and `UnmarshalText` decodes only those two texts.
+
 ### Rules {#rules}
 
 - A later `Handle` for the same kind **replaces** both the handler and the stage.
-- A `nil` root panics with an error matching `doger.ErrNilInjector`.
+- The root is explicit: a `nil` root, typed-nil included, panics with an error matching `doger.ErrNilInjector`. There is no default container.
 - Handlers of one stage run kind by kind, in the order kinds were first given a handler. Within a kind, components arrive in dependency order, then scope depth, then registration order.
 - The first handler error, or a recovered handler panic, stops `Start` with an error naming the kind and the service and wrapping the cause.
 - The handler receives the Start-time context, cancelled when `Start` returns or when `Shutdown` begins.
-- `Handle` panics on a zero `Kind` (not created with `NewKind`), an unknown stage, or a `nil` handler.
+- `Handle` panics on a zero `Kind` (not created with `NewKind`), an invalid stage (`Stage(0)` included), or a `nil` handler.
 - Clones copy the kind handlers, replaced `Runnable` handlers included, with their stages and order. Handling a kind on a clone replaces its handler on that clone only.
 
 ## The built-in Runnable kind {#runnable}
 
-doger ships one kind, built on the same mechanism: `doger.Runnable`, a `Kind[doger.Runner, struct{}]`.
+doger ships one kind, built on the same mechanism: `doger.Runnable()` returns it, a `Kind[doger.Runner, struct{}]`, the same value on every call.
 
 ```go
 type Runner interface {
 	Run(ctx context.Context) error
 }
 
-doger.Provide(injector, NewMigrator, doger.AsRunnable()) // shorthand for Runnable.With(struct{}{})
+doger.Provide(injector, NewMigrator, doger.AsRunnable()) // shorthand for Runnable().With(struct{}{})
 ```
 
 By default every container has a `StageAfterStart` handler for it: once every starter is up, it calls `Run` once per runner, in dependency then registration order, with the Start-time context, and stops at the first error.
@@ -98,16 +100,10 @@ A service opted in explicitly still runs once, and aliases are never run.
 ### Replacing the handler {#replace-runnable-handler}
 
 ```go
-doger.Runnable.Handle(root, doger.StageAfterStart, func(ctx context.Context, c doger.Component[doger.Runner, struct{}]) error {
+doger.Runnable().Handle(root, doger.StageAfterStart, func(ctx context.Context, c doger.Component[doger.Runner, struct{}]) error {
 	log.Println("running", c.Name)
 	return c.Instance.Run(ctx)
 })
 ```
 
 The replacement applies to that container only. A handler that spawns goroutines owns their lifetime.
-
-:::caution
-
-Do not reassign the `doger.Runnable` variable. `AsRunnable()` and the default handler keep using the original kind, so a reassigned variable would no longer match them.
-
-:::

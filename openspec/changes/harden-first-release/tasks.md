@@ -225,10 +225,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 33. Kinds need an explicit root; Runnable is a function; Stage zero is invalid
 
-- [ ] 33.1 RED: add `TestKind_NilRootRejected` (the former `TestKind_NilRootUsesDefault` is now `TestKind_HandlerOnRoot`), a Stage(0) row in `TestKind_InvalidValues`, `TestRunnable_FuncReturnsBuiltIn` (replacing `TestRunnable_ReassignedVariable`), `TestStage_Text` and `TestStage_UnmarshalText`, and call `Runnable().Handle` in `TestRunnable_ReplaceHandler`/`TestKind_CloneCopiesHandlers` (component-kinds scenarios); verify `go test -race -run 'TestKind_|TestRunnable_|TestStage_' .` fails to compile on `Runnable()`/`MarshalText` or on the Stage(0) row
-- [ ] 33.2 GREEN: `Handle` panics with an `ErrNilInjector`-wrapping error on a nil/typed-nil root, Stage constants start at `iota + 1` with `String`/`MarshalText`/`UnmarshalText` (`before-start`/`after-start`), and `var Runnable` becomes `func Runnable() Kind[Runner, struct{}]`; verify the 33.1 tests pass and `make test` is green
-- [ ] 33.3 REFACTOR: Inline Variable (`runnableKind` used by `Runnable()`) and Extract Function `validStage(stage)` shared by `Handle` and `MarshalText`; verify `make test` and `make lint` pass
-- [ ] 33.4 Docs: godoc of `Runnable()`, `Stage` and `Handle`, `ExampleKind_Handle` and `ExampleRunnable`, the component-kinds docs and the migration row (`Runnable.Handle` → `Runnable().Handle`); verify `go test -run 'ExampleKind_Handle|ExampleRunnable' .` passes
+- [x] 33.1 RED: add `TestKind_NilRootRejected` (the former `TestKind_NilRootUsesDefault` is now `TestKind_HandlerOnRoot`), a Stage(0) row in `TestKind_InvalidValues`, `TestRunnable_FuncReturnsBuiltIn` (replacing `TestRunnable_ReassignedVariable`), `TestStage_Text` and `TestStage_UnmarshalText`, and call `Runnable().Handle` in `TestRunnable_ReplaceHandler`/`TestKind_CloneCopiesHandlers` (component-kinds scenarios); verify `go test -race -run 'TestKind_|TestRunnable_|TestStage_' .` fails to compile on `Runnable()`/`MarshalText` or on the Stage(0) row
+- [x] 33.2 GREEN: `Handle` panics with an `ErrNilInjector`-wrapping error on a nil/typed-nil root, Stage constants start at `iota + 1` with `String`/`MarshalText`/`UnmarshalText` (`before-start`/`after-start`), and `var Runnable` becomes `func Runnable() Kind[Runner, struct{}]`; verify the 33.1 tests pass and `make test` is green
+- [x] 33.3 REFACTOR: Inline Variable (`runnableKind` used by `Runnable()`) and Extract Function `validStage(stage)` shared by `Handle` and `MarshalText`; verify `make test` and `make lint` pass
+- [x] 33.4 Docs: godoc of `Runnable()`, `Stage` and `Handle`, `ExampleKind_Handle` and `ExampleRunnable`, the component-kinds docs and the migration row (`Runnable.Handle` → `Runnable().Handle`); verify `go test -run 'ExampleKind_Handle|ExampleRunnable' .` passes
 
 ## 34. DependencySource zero is invalid; DeclareDependency rejects nil
 
