@@ -72,6 +72,9 @@ type Scope struct {
 	// for improved observability in unit tests.
 	orderedInvocation      map[string]int // Map tracking service invocation order (faster than slice)
 	orderedInvocationIndex int            // Counter for tracking invocation order
+	// invokedNames holds the keys of orderedInvocation, for the lock-free
+	// check of onServiceInvoke; it is written under mu with that map
+	invokedNames sync.Map
 
 	// closing tracks the shutdowns of this child scope; nil until the first
 	// one. Guarded by rootScope.lifecycleMu. It is a pointer so that the
@@ -241,6 +244,7 @@ func (s *Scope) removeLocked(name string) (service any, ok bool) {
 	s.countExport(service, -1)
 	s.typeMatches = nil
 	delete(s.orderedInvocation, name)
+	s.invokedNames.Delete(name)
 	s.RootScope().dag.removeService(s.id, s.name, name)
 
 	return service, true
@@ -1370,12 +1374,19 @@ func joinErrors(errs []error) error {
 // Parameters:
 //   - name: The name of the service that was invoked
 func (s *Scope) onServiceInvoke(name string) {
+	// every invocation after the first one only reads invokedNames, without
+	// a lock: the write lock is taken for the first invocation only
+	if _, invoked := s.invokedNames.Load(name); invoked {
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if _, ok := s.orderedInvocation[name]; !ok {
 		s.orderedInvocation[name] = s.orderedInvocationIndex
 		s.orderedInvocationIndex++
+		s.invokedNames.Store(name, struct{}{})
 	}
 }
 

@@ -104,6 +104,22 @@ func (s *serviceLazy[T]) getInstance(i Injector) (T, error) {
 // instanceOrBuild returns the instance, building it first if needed, and
 // whether this call built it.
 func (s *serviceLazy[T]) instanceOrBuild(i Injector) (instance T, built bool, err error) {
+	// a built (or shut down) service only needs the read lock: concurrent
+	// invocations of a built singleton do not serialize. Its outcome is the
+	// one the loop below would reach on its first turn, since a shutdown
+	// holds the write lock while it changes either field.
+	s.mu.RLock()
+	switch {
+	case s.terminal:
+		s.mu.RUnlock()
+		return empty[T](), false, shutDownServiceError(s.name)
+	case s.built:
+		instance := s.instance
+		s.mu.RUnlock()
+		return instance, false, nil
+	}
+	s.mu.RUnlock()
+
 	for {
 		s.mu.Lock()
 		switch {
