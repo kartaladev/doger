@@ -73,6 +73,7 @@ go get github.com/kartaladev/doger@latest
 
 ### ⚡ Quickstart
 
+<!-- snippet: quickstart -->
 ```go
 type DB struct{ dsn string }
 
@@ -89,12 +90,15 @@ func main() {
 	doger.Provide(root, func(i doger.Injector) (*Server, error) {
 		db, err := doger.Invoke[*DB](i)
 		return &Server{db: db}, err
-	}, doger.AsStarter()) // started by root.Start, after what it invokes
+	}, doger.AsStarter()) // root.Start starts it after the services it invokes
 
-	if err := root.StartWithContext(context.Background()); err != nil {
+	if err := root.Start(); err != nil {
 		log.Fatal(err)
 	}
-	_ = root.Shutdown() // shuts services down in reverse dependency order
+	// shuts services down in reverse dependency order
+	if err := root.Shutdown().Err(); err != nil {
+		log.Fatal(err)
+	}
 }
 ```
 
@@ -110,6 +114,7 @@ Besides the Go std lib, this library depends only on [`samber/go-type-to-string`
 go get github.com/kartaladev/doger/scheduler/gocron@latest
 ```
 
+<!-- snippet: gocron -->
 ```go
 scheduler, err := dogergocron.New() // a round at once, then every 30s
 if err != nil {

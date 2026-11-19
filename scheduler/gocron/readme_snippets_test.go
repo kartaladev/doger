@@ -8,16 +8,18 @@ import (
 )
 
 // readmeScheduledHealth is the scheduled health snippet of the root
-// README.md, compiled; the last line is not in the README.
+// README.md, compiled: the text between the readme markers is the README
+// block (see TestReadme_SnippetsCompiled in the root module).
 func readmeScheduledHealth() error {
+	// readme:gocron
 	scheduler, err := dogergocron.New() // a round at once, then every 30s
 	if err != nil {
 		return err
 	}
 	injector := doger.NewWithOpts(&doger.InjectorOpts{HealthScheduler: scheduler})
-	injector.Shutdown()
+	// readme:end
 
-	return nil
+	return injector.Shutdown().Err()
 }
 
 func TestReadme_ScheduledHealth(t *testing.T) {
