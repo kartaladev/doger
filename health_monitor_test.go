@@ -477,12 +477,12 @@ func TestHealthRound_PanicKeepsRecording(t *testing.T) {
 		scheduler.runRound()
 		entry := healthReportTestEntry(t, i.HealthReport(), "db")
 		is.Equal(HealthUnhealthy, entry.State)
-		is.EqualError(entry.Err, "DI: health check panic: boom")
+		is.EqualError(entry.Err, "doger: health check panic: boom")
 
 		scheduler.runRound()
 		is.Equal(HealthHealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
 		is.Eventually(func() bool { return len(recorder.serviceCalls()) == 2 }, time.Second, time.Millisecond)
-		is.Equal([]healthHookCall{{HealthUnknown, HealthUnhealthy, "DI: health check panic: boom"}, {HealthUnhealthy, HealthHealthy, ""}}, recorder.serviceCalls())
+		is.Equal([]healthHookCall{{HealthUnknown, HealthUnhealthy, "doger: health check panic: boom"}, {HealthUnhealthy, HealthHealthy, ""}}, recorder.serviceCalls())
 	})
 }
 
@@ -735,7 +735,7 @@ func TestHealthScheduler_ShutdownCancelCause(t *testing.T) {
 		<-check.started
 		i.Shutdown()
 
-		is.EqualError((<-result)["db"], "DI: health check timeout: context canceled")
+		is.EqualError((<-result)["db"], "doger: health check timeout: context canceled")
 		is.ErrorIs(<-check.cause, ErrStartAfterShutdown)
 	})
 }

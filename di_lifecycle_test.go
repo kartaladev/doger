@@ -118,7 +118,7 @@ func TestShutdownWithContext(t *testing.T) {
 	is.NoError(ShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i))
 	_, _ = Invoke[*lazyTestShutdownerKOCtx](i)
 
-	is.EqualError(ShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i), "DI: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available")
+	is.EqualError(ShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i), "doger: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available")
 }
 
 func TestMustShutdown(t *testing.T) {
@@ -167,7 +167,7 @@ func TestMustShutdownWithContext(t *testing.T) {
 	})
 	_, _ = Invoke[*lazyTestShutdownerKOCtx](i)
 
-	is.PanicsWithError("DI: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available", func() {
+	is.PanicsWithError("doger: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available", func() {
 		MustShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i)
 	})
 }
@@ -208,7 +208,7 @@ func TestShutdownNamedWithContext(t *testing.T) {
 	is.NoError(ShutdownNamedWithContext(ctx, i, "foobar"))
 	_, _ = Invoke[*lazyTestShutdownerKOCtx](i)
 
-	is.EqualError(ShutdownNamedWithContext(ctx, i, "foobar"), "DI: could not find service `foobar`, no service available")
+	is.EqualError(ShutdownNamedWithContext(ctx, i, "foobar"), "doger: could not find service `foobar`, no service available")
 }
 
 func TestMustShutdownNamed(t *testing.T) {
@@ -251,7 +251,7 @@ func TestMustShutdownNamedWithContext(t *testing.T) {
 	})
 	_, _ = InvokeNamed[*lazyTestShutdownerKOCtx](i, "foobar")
 
-	is.PanicsWithError("DI: could not find service `foobar`, no service available", func() {
+	is.PanicsWithError("doger: could not find service `foobar`, no service available", func() {
 		MustShutdownNamedWithContext(ctx, i, "foobar")
 	})
 }
@@ -270,7 +270,7 @@ func TestDoubleInjection(t *testing.T) {
 		})
 	})
 
-	const declared = "DI: service `*github.com/kartaladev/doger.test` has already been declared"
+	const declared = "doger: service `*github.com/kartaladev/doger.test` has already been declared"
 
 	// the rows run in order on the same injector, each redeclaring *test
 	tests := []struct {

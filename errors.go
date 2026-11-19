@@ -4,34 +4,166 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 )
 
 var (
-	//nolint:revive
-	ErrServiceNotFound    = errors.New("DI: could not find service")
-	ErrServiceNotMatch    = errors.New("DI: could not find service satisfying interface")
-	ErrCircularDependency = errors.New("DI: circular dependency detected")
-	ErrHealthCheckTimeout = errors.New("DI: health check timeout")
+	// ErrServiceNotFound is matched by the error of an invocation, health
+	// check, ShutdownNamed call or dependency declaration that names a service
+	// no visible scope has registered, or one exported from a scope that was
+	// shut down. The message names the service and lists the services that
+	// are available.
+	ErrServiceNotFound = errors.New("doger: could not find service")
+	// ErrServiceNotMatch is matched by the error of InvokeAs and MustInvokeAs
+	// when no visible service is assignable to the requested type.
+	ErrServiceNotMatch = errors.New("doger: could not find service satisfying interface")
+	// ErrCircularDependency is matched by the error of an invocation or
+	// dependency declaration that would close a cycle between services, and
+	// by the error of Start when the dependencies it orders form a cycle. The
+	// message shows the cycle.
+	ErrCircularDependency = errors.New("doger: circular dependency detected")
+	// ErrHealthCheckTimeout is matched by the result of a health check whose
+	// context ended (its timeout passed or it was cancelled) before the
+	// result was observed. The result also matches the context's error.
+	ErrHealthCheckTimeout = errors.New("doger: health check timeout")
 	// ErrHealthCheckPanic is matched by the result of a health check that
 	// panicked. The panic value follows it in the message, and an error value
 	// is wrapped, so errors.Is and errors.As also match it.
-	ErrHealthCheckPanic = errors.New("DI: health check panic")
+	ErrHealthCheckPanic = errors.New("doger: health check panic")
 
 	// ErrAlreadyStarted is returned by a Start call after the first one, whether
 	// the first one succeeded or failed.
-	ErrAlreadyStarted = errors.New("DI: container already started")
-	// ErrStartAfterShutdown is returned by Start, Refresh and Scope.Start once
-	// root Shutdown has begun. It is also the cause Shutdown gives the context
+	ErrAlreadyStarted = errors.New("doger: container already started")
+	// ErrStartAfterShutdown is matched by the error of Start, Refresh and
+	// Scope.Start once root Shutdown has begun. It is also the cause Shutdown gives the context
 	// of a running Start, Refresh or Scope.Start, so the error a run that
 	// Shutdown interrupted returns matches it, and the cause of the context of
 	// a health check in flight (see [context.Cause]).
-	ErrStartAfterShutdown = errors.New("DI: container is shut down")
+	ErrStartAfterShutdown = errors.New("doger: container is shut down")
 	// ErrNotStarted is returned by Refresh and Scope.Start while the
 	// container's first Start has not succeeded.
-	ErrNotStarted = errors.New("DI: container not started")
+	ErrNotStarted = errors.New("doger: container not started")
 )
+
+// libPrefix starts every message the library originates.
+const libPrefix = "doger: "
+
+// libError marks an error the library made with libErrorf, so a message
+// wrapping it can tell the leading libPrefix is the library's own.
+type libError struct {
+	err error
+}
+
+// Error returns the message of the formatted error.
+func (e *libError) Error() string {
+	return e.err.Error()
+}
+
+// Unwrap returns the formatted error, which wraps the %w arguments.
+func (e *libError) Unwrap() error {
+	return e.err
+}
+
+// libSentinels are the exported sentinels, all library errors.
+var libSentinels = []error{
+	ErrServiceNotFound, ErrServiceNotMatch, ErrCircularDependency,
+	ErrHealthCheckTimeout, ErrHealthCheckPanic,
+	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted,
+	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
+	ErrExtensionCycle, ErrExtensionConflict,
+}
+
+// isLibMade reports whether the library made err itself: a sentinel, a
+// libErrorf result, or a library error type whose message it formats.
+func isLibMade(err error) bool {
+	switch e := err.(type) {
+	case *libError, *ExtensionError:
+		return true
+	case *StartError:
+		return !e.unprefixed
+	}
+
+	return slices.Contains(libSentinels, err)
+}
+
+// isLibLed reports whether the message of err starts with libPrefix written
+// by the library: some error in its chain that the library made has a
+// message the whole message starts with. A consumer error whose own text
+// starts with libPrefix is not library-led.
+func isLibLed(err error) bool {
+	message := err.Error()
+	if !strings.HasPrefix(message, libPrefix) {
+		return false
+	}
+
+	pending := []error{err}
+	for len(pending) > 0 {
+		e := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if e == nil {
+			continue
+		}
+		if isLibMade(e) && strings.HasPrefix(message, e.Error()) {
+			return true
+		}
+
+		switch u := e.(type) {
+		case interface{ Unwrap() error }:
+			pending = append(pending, u.Unwrap())
+		case interface{ Unwrap() []error }:
+			pending = append(pending, u.Unwrap()...)
+		}
+	}
+
+	return false
+}
+
+// unprefixedText returns the message of err, without its leading libPrefix
+// when that prefix is the library's (see isLibLed).
+func unprefixedText(err error) string {
+	if isLibLed(err) {
+		return strings.TrimPrefix(err.Error(), libPrefix)
+	}
+
+	return err.Error()
+}
+
+// unprefixedError is a library-led error whose message is shown without its
+// leading libPrefix, so a message wrapping it carries the prefix once.
+// errors.Is and errors.As reach the original through Unwrap.
+type unprefixedError struct {
+	err error
+}
+
+// Error returns the message of the wrapped error without its leading
+// libPrefix.
+func (e unprefixedError) Error() string {
+	return strings.TrimPrefix(e.err.Error(), libPrefix)
+}
+
+// Unwrap returns the wrapped error.
+func (e unprefixedError) Unwrap() error {
+	return e.err
+}
+
+// libErrorf formats a library error like fmt.Errorf, with libPrefix added
+// once in front of format. A library-led error argument (see isLibLed) is
+// shown without its prefix, and still matches with errors.Is and errors.As
+// when wrapped with %w; any other argument, including a consumer error
+// whose text starts with libPrefix, is formatted as is.
+func libErrorf(format string, args ...any) error {
+	unprefixed := make([]any, len(args))
+	for i, arg := range args {
+		if err, ok := arg.(error); ok && isLibLed(err) {
+			arg = unprefixedError{err}
+		}
+		unprefixed[i] = arg
+	}
+
+	return &libError{fmt.Errorf(libPrefix+format, unprefixed...)}
+}
 
 // StartOp names the step of Start that failed for a service.
 type StartOp string
@@ -81,11 +213,11 @@ func (e *StartError) Error() string {
 	case e.unprefixed:
 		return e.causeText()
 	case e.Op == StartOpHandle:
-		return fmt.Sprintf("DI: kind `%s` failed for service `%s` in scope `%s`: %s", e.Kind, e.Service, e.scopeName(), e.causeText())
+		return fmt.Sprintf("doger: kind `%s` failed for service `%s` in scope `%s`: %s", e.Kind, e.Service, e.scopeName(), e.causeText())
 	case e.Op == StartOpStart:
-		return fmt.Sprintf("DI: failed to start service `%s` in scope `%s`: %s", e.Service, e.scopeName(), e.causeText())
+		return fmt.Sprintf("doger: failed to start service `%s` in scope `%s`: %s", e.Service, e.scopeName(), e.causeText())
 	default:
-		return fmt.Sprintf("DI: failed to build service `%s` in scope `%s`: %s", e.Service, e.scopeName(), e.causeText())
+		return fmt.Sprintf("doger: failed to build service `%s` in scope `%s`: %s", e.Service, e.scopeName(), e.causeText())
 	}
 }
 
@@ -141,10 +273,10 @@ func (r ShutdownReport) Error() string {
 	}
 
 	if len(lines) == 0 {
-		return "DI: no shutdown errors"
+		return "doger: no shutdown errors"
 	}
 
-	return "DI: shutdown errors:\n" + strings.Join(lines, "\n")
+	return "doger: shutdown errors:\n" + strings.Join(lines, "\n")
 }
 
 // mergeShutdownReports merges multiple ShutdownReport values into a single report.

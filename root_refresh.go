@@ -2,7 +2,6 @@ package doger
 
 import (
 	"context"
-	"fmt"
 )
 
 // Refresh starts what is not started yet, with context.Background(); see
@@ -84,7 +83,7 @@ func (s *RootScope) scopeClosing(scope *Scope) bool {
 // Scope.Start fails with it.
 func (s *RootScope) runScopeStartingHooks(ctx context.Context, scope *Scope) error {
 	if err := runVetoHooks(ctx, s.opts.HookScopeStarting, scope, startingHookPanicError("scope")); err != nil {
-		return withAbortCause(ctx, fmt.Errorf("DI: scope `%s` start aborted: %w", scope.Name(), err))
+		return withAbortCause(ctx, libErrorf("scope `%s` start aborted: %w", scope.Name(), err))
 	}
 
 	return nil
@@ -103,7 +102,7 @@ func (s *RootScope) incrementalPhaseError() error {
 // incrementally, or nil. lifecycleMu must be held.
 func (s *RootScope) checkIncrementalPhase() error {
 	if s.closePhase != closeOpen {
-		return fmt.Errorf("DI: cannot start: %w", ErrStartAfterShutdown)
+		return libErrorf("cannot start: %w", ErrStartAfterShutdown)
 	}
 	if s.startPhase != startStarted && s.startPhase != startReady {
 		return ErrNotStarted

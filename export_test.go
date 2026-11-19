@@ -129,7 +129,7 @@ func TestExport_Invalid(t *testing.T) {
 		{
 			name:    "nil_scope",
 			export:  func(*RootScope, *Scope) error { return Export[*exClient](nil) },
-			message: "DI: cannot export from a nil scope",
+			message: "doger: cannot export from a nil scope",
 			absent:  []string{clientName},
 		},
 		{
@@ -141,25 +141,25 @@ func TestExport_Invalid(t *testing.T) {
 		{
 			name:    "missing",
 			export:  func(_ *RootScope, redis *Scope) error { return Export[*exMissing](redis) },
-			message: fmt.Sprintf("DI: service `%s` has not been declared", NameOf[*exMissing]()),
+			message: fmt.Sprintf("doger: service `%s` has not been declared", NameOf[*exMissing]()),
 			absent:  []string{NameOf[*exMissing]()},
 		},
 		{
 			name:    "type_mismatch",
 			export:  func(_ *RootScope, redis *Scope) error { return ExportNamed[*exOther](redis, clientName) },
-			message: fmt.Sprintf("DI: service `%s` is not assignable to", clientName),
+			message: fmt.Sprintf("doger: service `%s` is not assignable to", clientName),
 			absent:  []string{clientName},
 		},
 		{
 			name:    "empty_name",
 			export:  func(_ *RootScope, redis *Scope) error { return Export[*exClient](redis, ExportAs("")) },
-			message: "DI: export name cannot be empty",
+			message: "doger: export name cannot be empty",
 			absent:  []string{""},
 		},
 		{
 			name:    "duplicate",
 			export:  func(_ *RootScope, redis *Scope) error { return Export[*exClient](redis, ExportAs(otherName)) },
-			message: fmt.Sprintf("DI: service `%s` has already been declared", otherName),
+			message: fmt.Sprintf("doger: service `%s` has already been declared", otherName),
 		},
 	}
 
@@ -200,7 +200,7 @@ func TestExport_SourceMustBeOwn(t *testing.T) {
 
 	err := Export[*exClient](b)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), fmt.Sprintf("DI: service `%s` has not been declared", NameOf[*exClient]()))
+	assert.Contains(t, err.Error(), fmt.Sprintf("doger: service `%s` has not been declared", NameOf[*exClient]()))
 }
 
 func TestMustExport_Panics(t *testing.T) {
@@ -224,7 +224,7 @@ func TestMustExport_Panics(t *testing.T) {
 			recovered := recoverPanic(func() { tt.call(redis) })
 			err, ok := recovered.(error)
 			require.True(t, ok, "expected an error panic, got %v", recovered)
-			assert.Contains(t, err.Error(), fmt.Sprintf("DI: service `%s` has not been declared", clientName))
+			assert.Contains(t, err.Error(), fmt.Sprintf("doger: service `%s` has not been declared", clientName))
 		})
 	}
 }

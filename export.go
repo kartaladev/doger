@@ -2,7 +2,6 @@ package doger
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -107,7 +106,7 @@ func ExportNamed[T any](from *Scope, name string, opts ...ExportOption) error {
 	}
 
 	root.opts.onAfterRegistration(owner, published)
-	root.opts.Logf("DI: service %s exported from scope %s", published, from.name)
+	root.opts.Logf("doger: service %s exported from scope %s", published, from.name)
 
 	return nil
 }
@@ -129,20 +128,20 @@ func wrapExportIfDefault[T any](source any, export *serviceExport[T]) serviceWra
 // when it is invalid.
 func validateExport(from *Scope, sourceName, publishedName string, target reflect.Type) (any, error) {
 	if from == nil {
-		return nil, errors.New("DI: cannot export from a nil scope")
+		return nil, libErrorf("cannot export from a nil scope")
 	}
 	if from.parentScope == nil {
-		return nil, fmt.Errorf("DI: scope `%s` has no parent scope to export to", from.name)
+		return nil, libErrorf("scope `%s` has no parent scope to export to", from.name)
 	}
 	if publishedName == "" {
-		return nil, errors.New("DI: export name cannot be empty")
+		return nil, libErrorf("export name cannot be empty")
 	}
 	source, ok := from.serviceGet(sourceName)
 	if !ok {
-		return nil, fmt.Errorf("DI: service `%s` has not been declared", sourceName)
+		return nil, libErrorf("service `%s` has not been declared", sourceName)
 	}
 	if !serviceCanCastToType(source, target) {
-		return nil, fmt.Errorf("DI: service `%s` is not assignable to `%s`", sourceName, typetostring.GetReflectType(target))
+		return nil, libErrorf("service `%s` is not assignable to `%s`", sourceName, typetostring.GetReflectType(target))
 	}
 
 	return source, nil

@@ -100,7 +100,7 @@ func TestServiceAlias_getInstanceAny(t *testing.T) {
 	// target service not found
 	service2 := newServiceAlias[*lazyTestHeathcheckerOK, int]("github.com/kartaladev/doger.Healthchecker", i, "int")
 	instance2, err2 := service2.getInstanceAny(i)
-	is.EqualError(err2, "DI: could not find service `int`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`, `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(err2, "doger: could not find service `int`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`, `github.com/kartaladev/doger.Healthchecker`")
 	is.EqualValues(0, instance2) // getInstanceAny returns the zero value of the type
 
 	Provide(i, func(i Injector) (int, error) {
@@ -110,7 +110,7 @@ func TestServiceAlias_getInstanceAny(t *testing.T) {
 	// target service found but not convertible type
 	service3 := newServiceAlias[*lazyTestHeathcheckerOK, int]("github.com/kartaladev/doger.Healthchecker", i, "int")
 	instance3, err3 := service3.getInstanceAny(i)
-	is.EqualError(err3, "DI: service found, but type mismatch: invoking `*github.com/kartaladev/doger.lazyTestHeathcheckerOK` but registered `int`")
+	is.EqualError(err3, "doger: service found, but type mismatch: invoking `*github.com/kartaladev/doger.lazyTestHeathcheckerOK` but registered `int`")
 	is.EqualValues(0, instance3) // getInstanceAny returns the zero value of the type
 
 	// Test with child scopes
@@ -171,7 +171,7 @@ func TestServiceAlias_getInstance(t *testing.T) {
 	// target service not found
 	service2 := newServiceAlias[*lazyTestHeathcheckerOK, int]("github.com/kartaladev/doger.Healthchecker", i, "int")
 	instance2, err2 := service2.getInstance(i)
-	is.EqualError(err2, "DI: could not find service `int`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`, `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(err2, "doger: could not find service `int`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`, `github.com/kartaladev/doger.Healthchecker`")
 	is.Equal(0, instance2) // For getInstance, we get the zero value of the type
 
 	Provide(i, func(i Injector) (int, error) {
@@ -181,7 +181,7 @@ func TestServiceAlias_getInstance(t *testing.T) {
 	// target service found but not convertible type
 	service3 := newServiceAlias[*lazyTestHeathcheckerOK, int]("github.com/kartaladev/doger.Healthchecker", i, "int")
 	instance3, err3 := service3.getInstance(i)
-	is.EqualError(err3, "DI: service found, but type mismatch: invoking `*github.com/kartaladev/doger.lazyTestHeathcheckerOK` but registered `int`")
+	is.EqualError(err3, "doger: service found, but type mismatch: invoking `*github.com/kartaladev/doger.lazyTestHeathcheckerOK` but registered `int`")
 	is.Equal(0, instance3) // For getInstance, we get the zero value of the type
 
 	// Test with child scopes

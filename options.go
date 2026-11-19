@@ -1,7 +1,6 @@
 package doger
 
 import (
-	"fmt"
 	"reflect"
 	"slices"
 )
@@ -31,9 +30,9 @@ type ProvideOption func(*serviceOptions)
 // Repeating it is the same as giving it once.
 //
 // Registration panics, before the service is stored, when AsStarter is
-// applied to a transient service ("DI: transient service `name` cannot be
+// applied to a transient service ("doger: transient service `name` cannot be
 // started") or to a concrete type with no Start method of a Starter variant
-// ("DI: service `name` does not implement any Starter interface"). A service
+// ("doger: service `name` does not implement any Starter interface"). A service
 // registered under an interface type is checked on its instance at Start.
 func AsStarter() ProvideOption {
 	return func(o *serviceOptions) {
@@ -145,7 +144,7 @@ func WithHealthTags(tags ...string) ProvideOption {
 // check's error unchanged, nor on a service that is not a health checker.
 //
 // Registration panics, before the service is stored, for a transient
-// registration ("DI: transient service `name` cannot be health-checked").
+// registration ("doger: transient service `name` cannot be health-checked").
 func AsOptionalHealth() ProvideOption {
 	return func(o *serviceOptions) {
 		o.optionalHealth = true
@@ -194,7 +193,7 @@ func validateServiceOptions(name string, service serviceWrapperAny, opts *servic
 	}
 
 	if slices.Contains(opts.healthTags, "") {
-		panic(fmt.Errorf("DI: service `%s` has an empty health tag", name))
+		panic(libErrorf("service `%s` has an empty health tag", name))
 	}
 
 	if service.getServiceType() == ServiceTypeTransient {
@@ -209,13 +208,13 @@ func validateServiceOptions(name string, service serviceWrapperAny, opts *servic
 // validateTransientOpts rejects opt-ins that need a single instance.
 func validateTransientOpts(name string, opts *serviceOptions) {
 	if opts.starter {
-		panic(fmt.Errorf("DI: transient service `%s` cannot be started", name))
+		panic(libErrorf("transient service `%s` cannot be started", name))
 	}
 	if len(opts.kinds) > 0 {
-		panic(fmt.Errorf("DI: transient service `%s` cannot be handled by kind `%s`", name, opts.kinds[0].id.name))
+		panic(libErrorf("transient service `%s` cannot be handled by kind `%s`", name, opts.kinds[0].id.name))
 	}
 	if opts.healthTagsSet || opts.optionalHealth {
-		panic(fmt.Errorf("DI: transient service `%s` cannot be health-checked", name))
+		panic(libErrorf("transient service `%s` cannot be health-checked", name))
 	}
 }
 
@@ -225,7 +224,7 @@ func validateKindOpt(name string, registered reflect.Type, opts *serviceOptions)
 	for i := range opts.kinds {
 		binding := &opts.kinds[i]
 		if _, ok := seen[binding.id]; ok {
-			panic(fmt.Errorf("DI: kind `%s` applied twice to service `%s`", binding.id.name, name))
+			panic(libErrorf("kind `%s` applied twice to service `%s`", binding.id.name, name))
 		}
 		seen[binding.id] = struct{}{}
 
@@ -234,7 +233,7 @@ func validateKindOpt(name string, registered reflect.Type, opts *serviceOptions)
 		case registered.Kind() == reflect.Interface:
 			binding.deferred = true
 		default:
-			panic(fmt.Errorf("DI: service `%s` is not assignable to `%s` required by kind `%s`", name, binding.target.String(), binding.id.name))
+			panic(libErrorf("service `%s` is not assignable to `%s` required by kind `%s`", name, binding.target.String(), binding.id.name))
 		}
 	}
 }
@@ -246,7 +245,7 @@ func validateStarterOpt(name string, registered reflect.Type, opts *serviceOptio
 	case registered.Kind() == reflect.Interface:
 		opts.starterDeferred = true
 	default:
-		panic(fmt.Errorf("DI: service `%s` does not implement any Starter interface", name))
+		panic(libErrorf("service `%s` does not implement any Starter interface", name))
 	}
 }
 

@@ -116,7 +116,7 @@ func TestKind_InterfaceRegistration(t *testing.T) {
 		{
 			name:     "instance_without_run",
 			instance: &kindPlain{},
-			errMsg:   "DI: service `life` does not implement `doger.Job` required by kind `scheduled`",
+			errMsg:   "doger: service `life` does not implement `doger.Job` required by kind `scheduled`",
 			received: []string{},
 		},
 	}
@@ -158,22 +158,22 @@ func TestKind_InvalidValues(t *testing.T) {
 		{
 			name:    "zero_with",
 			call:    func(*RootScope) { var zero Kind[Job, Spec]; zero.With(Spec{}) },
-			message: "DI: kind not created with NewKind",
+			message: "doger: kind not created with NewKind",
 		},
 		{
 			name:    "zero_handle",
 			call:    func(root *RootScope) { var zero Kind[Job, Spec]; zero.Handle(root, StageBeforeStart, h) },
-			message: "DI: kind not created with NewKind",
+			message: "doger: kind not created with NewKind",
 		},
 		{
 			name:    "invalid_stage",
 			call:    func(root *RootScope) { NewKind[Job, Spec]("k").Handle(root, Stage(7), h) },
-			message: "DI: invalid stage 7 for kind `k`",
+			message: "doger: invalid stage 7 for kind `k`",
 		},
 		{
 			name:    "nil_handler",
 			call:    func(root *RootScope) { NewKind[Job, Spec]("k").Handle(root, StageBeforeStart, nil) },
-			message: "DI: nil handler for kind `k`",
+			message: "doger: nil handler for kind `k`",
 		},
 	}
 

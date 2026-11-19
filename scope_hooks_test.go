@@ -134,7 +134,7 @@ func TestScopeStartingHook_Veto(t *testing.T) {
 			behavior: func() error { panic("veto-boom") },
 			check: func(t *testing.T, err error) {
 				t.Helper()
-				assert.EqualError(t, err, "DI: scope `tenant` start aborted: DI: scope starting hook panicked: veto-boom")
+				assert.EqualError(t, err, "doger: scope `tenant` start aborted: scope starting hook panicked: veto-boom")
 			},
 		},
 		{
@@ -193,7 +193,7 @@ func TestScopeHooks_LaterPanicLogged(t *testing.T) {
 	tenant.Shutdown()
 
 	is.Equal([]string{"scope-closing first"}, panics.list())
-	is.Contains(logs.list(), "DI: scope-closing hook panicked: second")
+	is.Contains(logs.list(), "doger: scope-closing hook panicked: second")
 	for _, line := range logs.list() {
 		is.NotContains(line, "container scope-closing")
 	}

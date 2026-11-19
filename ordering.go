@@ -1,7 +1,6 @@
 package doger
 
 import (
-	"fmt"
 	"slices"
 )
 
@@ -45,7 +44,7 @@ func (s *RootScope) checkCycles(candidates []*startCandidate) error {
 			for _, desc := range cycle {
 				names = append(names, desc.Service)
 			}
-			return fmt.Errorf("DI: cannot start: %w: %s", ErrCircularDependency, humanReadableInvokerChain(names))
+			return libErrorf("cannot start: %w: %s", ErrCircularDependency, humanReadableInvokerChain(names))
 		}
 	}
 

@@ -401,7 +401,7 @@ func TestInvokeAll_OrderPanic(t *testing.T) {
 			},
 			match: func(t *testing.T, err error) {
 				t.Helper()
-				assert.EqualError(t, err, "DI: Order() of collection member `bad` panicked: boom")
+				assert.EqualError(t, err, "doger: Order() of collection member `bad` panicked: boom")
 			},
 		},
 		{

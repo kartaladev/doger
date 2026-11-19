@@ -2,7 +2,6 @@ package doger
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 
@@ -76,7 +75,7 @@ func (s *RootScope) startScheduling() {
 
 // errSchedulerInterrupted is the outcome of a ScheduleHealthRounds call a
 // panic interrupted.
-var errSchedulerInterrupted = errors.New("DI: health scheduler interrupted")
+var errSchedulerInterrupted = libErrorf("health scheduler interrupted")
 
 // finishScheduling records the outcome of ScheduleHealthRounds: its stop
 // function, nil on failure, which stopScheduling calls once shutdown began,
@@ -139,7 +138,7 @@ func (s *RootScope) stopScheduling(ctx context.Context) {
 func (s *RootScope) callStop(ctx context.Context, stop func(context.Context) error) {
 	recovered, panicked := callHookSafely(func() {
 		if err := stop(context.WithoutCancel(ctx)); err != nil {
-			s.opts.Logf("DI: health scheduler stop failed: %v", err)
+			s.opts.Logf("doger: health scheduler stop failed: %v", err)
 		}
 	})
 	switch {
@@ -147,7 +146,7 @@ func (s *RootScope) callStop(ctx context.Context, stop func(context.Context) err
 	case s.opts.HookContainerPanic != nil:
 		s.opts.HookContainerPanic(s, "healthscheduler", recovered)
 	default:
-		s.opts.Logf("DI: health scheduler stop panicked: %v", recovered)
+		s.opts.Logf("doger: health scheduler stop panicked: %v", recovered)
 	}
 }
 
@@ -169,14 +168,14 @@ func (s *RootScope) callScheduler(scheduler HealthScheduler) (stop func(context.
 	switch {
 	case panicked && s.opts.HookContainerPanic != nil:
 		s.opts.HookContainerPanic(s, "healthscheduler", recovered)
-		return nil, fmt.Errorf("DI: health scheduler panicked: %v", recovered)
+		return nil, fmt.Errorf("doger: health scheduler panicked: %v", recovered)
 	case panicked:
 		err = fmt.Errorf("%v", recovered)
 	case err == nil && stop == nil:
 		stop = func(context.Context) error { return nil }
 	}
 	if err != nil {
-		s.opts.Logf("DI: health scheduler failed: %v", err)
+		s.opts.Logf("doger: health scheduler failed: %v", err)
 		if stop != nil {
 			// a schedule partly started is stopped at once
 			s.callStop(context.Background(), stop)
@@ -338,7 +337,7 @@ func (s *RootScope) callHealthHook(call func()) {
 		s.opts.HookContainerPanic(s, "healthchanged", recovered)
 		return
 	}
-	s.opts.Logf("DI: health hook panicked: %v", recovered)
+	s.opts.Logf("doger: health hook panicked: %v", recovered)
 }
 
 // AddServiceHealthChangedHook adds a hook called when a service's recorded

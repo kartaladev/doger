@@ -2,7 +2,6 @@ package doger
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -128,7 +127,7 @@ func (s *Scope) Scope(name string, packages ...func(Injector)) *Scope {
 
 	if _, ok := s.childScopes[name]; ok {
 		s.mu.Unlock()
-		panic(fmt.Errorf("DI: scope `%s` has already been declared", name))
+		panic(libErrorf("scope `%s` has already been declared", name))
 	}
 
 	child := newScope(name, s.rootScope, s)
@@ -446,7 +445,7 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // ctx ends first, the report fails with an error keyed by this scope with an
 // empty service name, wrapping ctx.Err(), and the running shutdown goes on.
 // If the running shutdown panics before producing a report (for example in a
-// custom Logf), the joined calls get a failed report containing "DI: scope
+// custom Logf), the joined calls get a failed report containing "doger: scope
 // shutdown did not complete". Never shut a scope down synchronously from its
 // own Closing or Closed hooks, or from its services' Shutdown: it would wait
 // for itself.
@@ -561,7 +560,7 @@ func (s *Scope) joinClose() (run *scopeCloseRun, winner bool) {
 // before producing one, for example in a custom Logf.
 func (s *Scope) finishScopeClose(run *scopeCloseRun, report *ShutdownReport) {
 	if report == nil {
-		report = s.failureReport(errors.New("DI: scope shutdown did not complete"))
+		report = s.failureReport(libErrorf("scope shutdown did not complete"))
 	}
 
 	root := s.rootScope
@@ -582,7 +581,7 @@ func (s *Scope) waitForScopeClose(ctx context.Context, run *scopeCloseRun) *Shut
 		return cloneShutdownReport(run.report)
 	}
 
-	return s.failureReport(fmt.Errorf("DI: waiting for scope shutdown: %w", ctx.Err()))
+	return s.failureReport(libErrorf("waiting for scope shutdown: %w", ctx.Err()))
 }
 
 // failureReport returns a failed report whose only error, err, is keyed by
@@ -607,7 +606,7 @@ func (s *Scope) waitForStartingRun(ctx context.Context) error {
 	root.lifecycleMu.Unlock()
 
 	if inFlight && starting && !awaitDone(done, ctx) {
-		return fmt.Errorf("DI: waiting for start: %w", ctx.Err())
+		return libErrorf("waiting for start: %w", ctx.Err())
 	}
 
 	return nil
@@ -1100,7 +1099,7 @@ func (s *Scope) serviceShutdown(ctx context.Context, name string) error {
 		s.RootScope().opts.onAfterShutdown(s, name, err)
 	} else {
 		// Should never happen.
-		panic(fmt.Errorf("DI: service `%s` is not shutdowner", name))
+		panic(libErrorf("service `%s` is not shutdowner", name))
 	}
 
 	return err

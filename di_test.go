@@ -762,7 +762,7 @@ func TestInvoke(t *testing.T) {
 
 	_, err2 := Invoke[*test](i)
 	is.Error(err2)
-	is.EqualError(err2, "DI: could not find service `*github.com/kartaladev/doger.test`, available services: `github.com/kartaladev/doger.test`")
+	is.EqualError(err2, "doger: could not find service `*github.com/kartaladev/doger.test`, available services: `github.com/kartaladev/doger.test`")
 
 	ProvideNamedValue(i, NameOf[any](), 0)
 
@@ -837,7 +837,7 @@ func TestInvokeNamed(t *testing.T) {
 	is.Equal(instance2, instance2any)
 
 	instance3, err3 := InvokeNamed[string](i, "foobar")
-	is.EqualError(err3, "DI: service found, but type mismatch: invoking `string` but registered `int`")
+	is.EqualError(err3, "doger: service found, but type mismatch: invoking `string` but registered `int`")
 	is.Empty(instance3)
 }
 
@@ -881,7 +881,7 @@ func TestInvokeStruct(t *testing.T) {
 
 	// not a struct
 	test1, err := InvokeStruct[int](i)
-	is.Equal("DI: must be a struct or a pointer to a struct, but got `int`", err.Error())
+	is.Equal("doger: must be a struct or a pointer to a struct, but got `int`", err.Error())
 	is.Empty(test1)
 
 	// exported field - generic type
@@ -930,7 +930,7 @@ func TestInvokeStruct(t *testing.T) {
 		EagerTest *int `do:"*github.com/kartaladev/doger.eagerTest"`
 	}
 	test7, err := InvokeStruct[namedDependencyButTypeMismatch](i)
-	is.Equal("DI: `*github.com/kartaladev/doger.eagerTest` is not assignable to field `github.com/kartaladev/doger.namedDependencyButTypeMismatch.EagerTest`", err.Error())
+	is.Equal("doger: `*github.com/kartaladev/doger.eagerTest` is not assignable to field `github.com/kartaladev/doger.namedDependencyButTypeMismatch.EagerTest`", err.Error())
 	is.Empty(test7)
 
 	// use a custom tag
@@ -998,9 +998,9 @@ func TestAs(t *testing.T) {
 	Provide(i, func(i Injector) (*lazyTestHeathcheckerOK, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NoError(As[*lazyTestHeathcheckerOK, Healthchecker](i))
-	is.EqualError(As[*lazyTestShutdownerOK, Healthchecker](i), "DI: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
-	is.EqualError(As[*lazyTestHeathcheckerKO, Healthchecker](i), "DI: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
-	is.EqualError(As[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i), "DI: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
+	is.EqualError(As[*lazyTestShutdownerOK, Healthchecker](i), "doger: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(As[*lazyTestHeathcheckerKO, Healthchecker](i), "doger: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
+	is.EqualError(As[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i), "doger: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
 
 	i = New()
 	type iTestHeathchecker interface {
@@ -1067,9 +1067,9 @@ func TestAsNamed(t *testing.T) {
 	Provide(i, func(i Injector) (*lazyTestHeathcheckerOK, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NoError(AsNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker"))
-	is.EqualError(AsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker"), "DI: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
-	is.EqualError(AsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker"), "DI: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
-	is.EqualError(AsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK"), "DI: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
+	is.EqualError(AsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker"), "doger: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(AsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker"), "doger: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
+	is.EqualError(AsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK"), "doger: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
 
 	i = New()
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
@@ -1209,7 +1209,7 @@ func TestInvokeAs(t *testing.T) {
 	// not found
 	svc2, err := InvokeAs[Shutdowner](i)
 	is.Empty(svc2)
-	is.EqualError(err, "DI: could not find service satisfying interface `github.com/kartaladev/doger.Shutdowner`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`")
+	is.EqualError(err, "doger: could not find service satisfying interface `github.com/kartaladev/doger.Shutdowner`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`")
 }
 
 func TestMustInvokeAs(t *testing.T) {
@@ -1552,7 +1552,7 @@ func TestBind(t *testing.T) {
 func TestProvide_DefaultSameScope(t *testing.T) {
 	t.Parallel()
 
-	duplicate := fmt.Sprintf("DI: service `%s` has already been declared", NameOf[*dfDialer]())
+	duplicate := fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfDialer]())
 	lazyDefault := func(i Injector) { Provide(i, dialerProvider("default-dialer", nil), AsDefault()) }
 	explicit := func(i Injector) { Provide(i, dialerProvider("app-dialer", nil)) }
 	invoked := func(t *testing.T, i Injector) {
@@ -1633,7 +1633,7 @@ func TestProvide_ExplicitDuplicateUnchanged(t *testing.T) {
 	root := New()
 	Provide(root, dialerProvider("first", nil))
 
-	assert.PanicsWithError(t, fmt.Sprintf("DI: service `%s` has already been declared", NameOf[*dfDialer]()), func() {
+	assert.PanicsWithError(t, fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfDialer]()), func() {
 		Provide(root, dialerProvider("second", nil))
 	})
 }
@@ -1721,7 +1721,7 @@ func TestOverride_IgnoresAsDefault(t *testing.T) {
 		root := New()
 		Override(root, dialerProvider("override-dialer", nil), AsDefault())
 
-		assert.PanicsWithError(t, fmt.Sprintf("DI: service `%s` has already been declared", NameOf[*dfDialer]()), func() {
+		assert.PanicsWithError(t, fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfDialer]()), func() {
 			Provide(root, dialerProvider("app-dialer", nil))
 		})
 	})

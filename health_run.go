@@ -195,7 +195,7 @@ func (s *Scope) wrapperHealthCheckFunc(name string, serviceAny any) func(context
 	}
 
 	// Should never happen.
-	panic(fmt.Errorf("DI: service `%s` is not healthchecker", name))
+	panic(libErrorf("service `%s` is not healthchecker", name))
 }
 
 // rootForcedCheckers lists the services a root health check covers: those

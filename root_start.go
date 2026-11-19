@@ -180,11 +180,11 @@ func (s *RootScope) keepFirstPanic(first *hookPanic, p hookPanic) {
 func (s *RootScope) logHookPanic(p hookPanic) {
 	if p.subject == "scope" {
 		// scope points name their subject already: "scope-closing"
-		s.opts.Logf("DI: %s hook panicked: %v", p.point, p.value)
+		s.opts.Logf("doger: %s hook panicked: %v", p.point, p.value)
 		return
 	}
 
-	s.opts.Logf("DI: container %s hook panicked: %v", p.point, p.value)
+	s.opts.Logf("doger: container %s hook panicked: %v", p.point, p.value)
 }
 
 // dispatchFirstPanic dispatches the first observer hook panic of an
@@ -266,7 +266,7 @@ func (s *RootScope) beginStart(ctx context.Context) (context.Context, error) {
 	defer s.lifecycleMu.Unlock()
 
 	if s.closePhase != closeOpen {
-		return nil, fmt.Errorf("DI: cannot start: %w", ErrStartAfterShutdown)
+		return nil, libErrorf("cannot start: %w", ErrStartAfterShutdown)
 	}
 	if s.startPhase != startIdle {
 		return nil, ErrAlreadyStarted
@@ -332,7 +332,7 @@ func abortOutcome(ctx context.Context, err error) error {
 	cause := shutdownCause(ctx)
 	switch {
 	case err == nil:
-		return fmt.Errorf("DI: start aborted: %w", cause)
+		return fmt.Errorf("doger: start aborted: %w", cause)
 	case errors.Is(err, ErrStartAfterShutdown):
 		return err
 	case errors.Is(err, context.Cause(ctx)):
@@ -415,7 +415,7 @@ func (s *RootScope) runPipeline(ctx context.Context, roots []*Scope) (closing bo
 // with it.
 func (s *RootScope) runStartingHooks(startCtx context.Context) error {
 	if err := runVetoHooks(startCtx, s.opts.HookContainerStarting, s, startingHookPanicError("container")); err != nil {
-		return withAbortCause(startCtx, fmt.Errorf("DI: container start aborted: %w", err))
+		return withAbortCause(startCtx, fmt.Errorf("doger: container start aborted: %w", err))
 	}
 
 	return nil
@@ -448,10 +448,10 @@ func runVetoHooks[T any](ctx context.Context, hooks []func(context.Context, T) e
 func startingHookPanicError(subject string) func(recovered any) error {
 	return func(recovered any) error {
 		if err, ok := recovered.(error); ok {
-			return fmt.Errorf("DI: %s starting hook panicked: %w", subject, err)
+			return libErrorf("%s starting hook panicked: %w", subject, err)
 		}
 
-		return fmt.Errorf("DI: %s starting hook panicked: %v", subject, recovered)
+		return libErrorf("%s starting hook panicked: %v", subject, recovered)
 	}
 }
 
@@ -609,7 +609,7 @@ func buildCandidates(startCtx context.Context, candidates []*startCandidate) err
 				continue
 			}
 			if instance == nil || !reflect.TypeOf(instance).Implements(binding.target) {
-				err := fmt.Errorf("DI: service `%s` does not implement `%s` required by kind `%s`", candidate.name, binding.target.String(), binding.id.name)
+				err := libErrorf("service `%s` does not implement `%s` required by kind `%s`", candidate.name, binding.target.String(), binding.id.name)
 				return withAbortCause(startCtx, newStartError(StartOpBuild, candidate.scope, candidate.name, "", err))
 			}
 		}
@@ -735,7 +735,7 @@ func (s *RootScope) startStartersParallel(startCtx context.Context, candidates [
 // startCandidate starts one Starter candidate with its hooks.
 func (s *RootScope) startCandidate(startCtx context.Context, candidate *startCandidate) error {
 	if !instanceIsStarter(candidate.instance) {
-		startErr := newStartError(StartOpStart, candidate.scope, candidate.name, "", fmt.Errorf("DI: service `%s` was opted in with AsStarter but does not implement any Starter interface", candidate.name))
+		startErr := newStartError(StartOpStart, candidate.scope, candidate.name, "", libErrorf("service `%s` was opted in with AsStarter but does not implement any Starter interface", candidate.name))
 		startErr.unprefixed = true // the cause names the service already
 		return startErr
 	}
@@ -799,10 +799,10 @@ func instanceIsStarter(instance any) bool {
 // is wrapped, so errors.Is and errors.As reach it.
 func recoverAsError(r any) error {
 	if err, ok := r.(error); ok {
-		return fmt.Errorf("DI: recovered panic: %w", err)
+		return fmt.Errorf("doger: recovered panic: %w", err)
 	}
 
-	return fmt.Errorf("DI: recovered panic: %v", r)
+	return fmt.Errorf("doger: recovered panic: %v", r)
 }
 
 // checkAbort returns an error wrapping the cause when the Start-time context
@@ -810,7 +810,7 @@ func recoverAsError(r any) error {
 // cancelled Start.
 func checkAbort(startCtx context.Context) error {
 	if startCtx.Err() != nil {
-		return fmt.Errorf("DI: start aborted: %w", context.Cause(startCtx))
+		return fmt.Errorf("doger: start aborted: %w", context.Cause(startCtx))
 	}
 
 	return nil

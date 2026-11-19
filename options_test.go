@@ -392,12 +392,12 @@ func TestProvideOptions_Repeated(t *testing.T) {
 		{
 			name:     "as_runnable_twice",
 			opts:     []ProvideOption{AsRunnable(), AsRunnable()},
-			panicMsg: "DI: kind `runnable` applied twice to service `worker`",
+			panicMsg: "doger: kind `runnable` applied twice to service `worker`",
 		},
 		{
 			name:     "same_kind_twice",
 			opts:     []ProvideOption{scheduled.With(Spec{Every: time.Minute}), scheduled.With(Spec{Every: 2 * time.Minute})},
-			panicMsg: "DI: kind `scheduled` applied twice to service `worker`",
+			panicMsg: "doger: kind `scheduled` applied twice to service `worker`",
 		},
 	}
 
@@ -436,7 +436,7 @@ func TestProvideOptions_Invalid(t *testing.T) {
 			register: func(root *RootScope) {
 				ProvideNamed(root, "cfg", func(Injector) (*optConfig, error) { return &optConfig{}, nil }, AsStarter())
 			},
-			panicMsg: "DI: service `cfg` does not implement any Starter interface",
+			panicMsg: "doger: service `cfg` does not implement any Starter interface",
 		},
 		{
 			name:    "transient_as_starter",
@@ -444,7 +444,7 @@ func TestProvideOptions_Invalid(t *testing.T) {
 			register: func(root *RootScope) {
 				ProvideNamedTransient(root, "srv", func(Injector) (*optServer, error) { return &optServer{}, nil }, AsStarter())
 			},
-			panicMsg: "DI: transient service `srv` cannot be started",
+			panicMsg: "doger: transient service `srv` cannot be started",
 		},
 		{
 			name:    "interface_as_starter_is_deferred",
@@ -466,7 +466,7 @@ func TestProvideOptions_Invalid(t *testing.T) {
 			register: func(root *RootScope) {
 				ProvideNamedTransient(root, "tjob", func(Injector) (*CleanupJob, error) { return &CleanupJob{}, nil }, scheduled.With(Spec{}))
 			},
-			panicMsg: "DI: transient service `tjob` cannot be handled by kind `scheduled`",
+			panicMsg: "doger: transient service `tjob` cannot be handled by kind `scheduled`",
 		},
 		{
 			name:    "concrete_not_assignable_to_kind",
@@ -474,7 +474,7 @@ func TestProvideOptions_Invalid(t *testing.T) {
 			register: func(root *RootScope) {
 				ProvideNamed(root, "plain", func(Injector) (*optConfig, error) { return &optConfig{}, nil }, scheduled.With(Spec{}))
 			},
-			panicMsg: "DI: service `plain` is not assignable to `doger.Job` required by kind `scheduled`",
+			panicMsg: "doger: service `plain` is not assignable to `doger.Job` required by kind `scheduled`",
 		},
 		{
 			name:    "transient_as_runnable",
@@ -482,7 +482,7 @@ func TestProvideOptions_Invalid(t *testing.T) {
 			register: func(root *RootScope) {
 				ProvideNamedTransient(root, "job", func(Injector) (*CleanupJob, error) { return &CleanupJob{}, nil }, AsRunnable())
 			},
-			panicMsg: "DI: transient service `job` cannot be handled by kind `runnable`",
+			panicMsg: "doger: transient service `job` cannot be handled by kind `runnable`",
 		},
 		{
 			name:    "concrete_not_runner",
@@ -490,7 +490,7 @@ func TestProvideOptions_Invalid(t *testing.T) {
 			register: func(root *RootScope) {
 				ProvideNamed(root, "cfg", func(Injector) (*optConfig, error) { return &optConfig{}, nil }, AsRunnable())
 			},
-			panicMsg: "DI: service `cfg` is not assignable to `doger.Runner` required by kind `runnable`",
+			panicMsg: "doger: service `cfg` is not assignable to `doger.Runner` required by kind `runnable`",
 		},
 		{
 			name:    "interface_kind_is_deferred",
@@ -613,7 +613,7 @@ func TestProvideOptions_AsDefaultPanics(t *testing.T) {
 		{
 			name:     "transient_starter",
 			register: func(i Injector) { ProvideTransient(i, newDialer, AsDefault(), AsStarter()) },
-			panicMsg: fmt.Sprintf("DI: transient service `%s` cannot be started", dialerName),
+			panicMsg: fmt.Sprintf("doger: transient service `%s` cannot be started", dialerName),
 		},
 	}
 
@@ -637,7 +637,7 @@ func TestProvideOptions_AsDefaultValidatedBeforeSkip(t *testing.T) {
 	root := New()
 	Provide(root, dialerProvider("app-dialer", nil))
 
-	assert.PanicsWithError(t, fmt.Sprintf("DI: transient service `%s` cannot be started", NameOf[*dfDialer]()), func() {
+	assert.PanicsWithError(t, fmt.Sprintf("doger: transient service `%s` cannot be started", NameOf[*dfDialer]()), func() {
 		ProvideTransient(root, dialerProvider("default-dialer", nil), AsDefault(), AsStarter())
 	})
 }
@@ -705,13 +705,13 @@ func TestHealthOptions_InvalidPanics(t *testing.T) {
 			name:     "empty_tag",
 			service:  "db",
 			register: func(root *RootScope) { ProvideNamedValue(root, "db", &optServer{}, WithHealthTags("")) },
-			panicMsg: "DI: service `db` has an empty health tag",
+			panicMsg: "doger: service `db` has an empty health tag",
 		},
 		{
 			name:     "empty_tag_among_others",
 			service:  "db",
 			register: func(root *RootScope) { ProvideNamedValue(root, "db", &optServer{}, WithHealthTags("ok", "")) },
-			panicMsg: "DI: service `db` has an empty health tag",
+			panicMsg: "doger: service `db` has an empty health tag",
 		},
 		{
 			name:    "transient_tags",
@@ -719,7 +719,7 @@ func TestHealthOptions_InvalidPanics(t *testing.T) {
 			register: func(root *RootScope) {
 				ProvideNamedTransient(root, "tmp", func(Injector) (*optServer, error) { return &optServer{}, nil }, WithHealthTags(HealthTagReadiness))
 			},
-			panicMsg: "DI: transient service `tmp` cannot be health-checked",
+			panicMsg: "doger: transient service `tmp` cannot be health-checked",
 		},
 		{
 			name:    "transient_optional",
@@ -727,7 +727,7 @@ func TestHealthOptions_InvalidPanics(t *testing.T) {
 			register: func(root *RootScope) {
 				ProvideNamedTransient(root, "tmp", func(Injector) (*optServer, error) { return &optServer{}, nil }, AsOptionalHealth())
 			},
-			panicMsg: "DI: transient service `tmp` cannot be health-checked",
+			panicMsg: "doger: transient service `tmp` cannot be health-checked",
 		},
 		{
 			name:     "not_a_health_checker",

@@ -107,5 +107,5 @@ func ExampleDependencySource_UnmarshalText() {
 	fmt.Println(json.Unmarshal([]byte(`{"source": "other"}`), &edge))
 	// Output:
 	// <nil> cache depends-on
-	// DI: unknown dependency source "other"
+	// doger: unknown dependency source "other"
 }

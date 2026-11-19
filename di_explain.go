@@ -115,7 +115,7 @@ func (s *DefaultState) UnmarshalText(text []byte) error {
 		}
 	}
 
-	return fmt.Errorf("DI: unknown default state %q", text)
+	return libErrorf("unknown default state %q", text)
 }
 
 // String returns a formatted string representation of the service explanation.

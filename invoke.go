@@ -64,7 +64,7 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 
 	serviceScope.onServiceInvoke(name)
 
-	injector.RootScope().opts.Logf("DI: service %s invoked", name)
+	injector.RootScope().opts.Logf("doger: service %s invoked", name)
 
 	return instance, nil
 }
@@ -117,7 +117,7 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 
 	serviceScope.onServiceInvoke(name)
 
-	injector.RootScope().opts.Logf("DI: service %s invoked", name)
+	injector.RootScope().opts.Logf("doger: service %s invoked", name)
 
 	return instance, nil
 }
@@ -177,7 +177,7 @@ func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, re
 
 	scope.onServiceInvoke(realName)
 
-	injector.RootScope().opts.Logf("DI: service %s invoked", hookName)
+	injector.RootScope().opts.Logf("doger: service %s invoked", hookName)
 
 	return instance, nil
 }
@@ -267,9 +267,9 @@ func orderValue(name string, instance any, opts *serviceOptions) (order int, err
 	defer func() {
 		if r := recover(); r != nil {
 			if e, ok := r.(error); ok {
-				err = fmt.Errorf("DI: Order() of collection member `%s` panicked: %w", name, e)
+				err = fmt.Errorf("doger: Order() of collection member `%s` panicked: %w", name, e)
 			} else {
-				err = fmt.Errorf("DI: Order() of collection member `%s` panicked: %v", name, r)
+				err = fmt.Errorf("doger: Order() of collection member `%s` panicked: %v", name, r)
 			}
 		}
 	}()
@@ -326,7 +326,7 @@ func (c collectionCandidate) options() *serviceOptions {
 
 // wrapMemberError names the collection member whose build failed.
 func wrapMemberError(name string, err error) error {
-	return fmt.Errorf("DI: could not invoke collection member `%s`: %w", name, err)
+	return libErrorf("could not invoke collection member `%s`: %w", name, err)
 }
 
 // collectionCandidate is a member of a collection, before it is built.
@@ -741,7 +741,7 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 
 	// Ensure that servicePtr is a pointer to a struct
 	if structValue.Kind() != reflect.Pointer || structValue.Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("DI: must be a pointer to a struct")
+		return libErrorf("must be a pointer to a struct")
 	}
 
 	structValue = structValue.Elem()
@@ -760,7 +760,7 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 		wasTagNameEmpty := serviceName == ""
 
 		if !fieldValue.CanAddr() {
-			return fmt.Errorf("DI: field is not addressable `%s.%s`", structName, field.Name)
+			return libErrorf("field is not addressable `%s.%s`", structName, field.Name)
 		}
 
 		if !fieldValue.CanSet() {
@@ -799,7 +799,7 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 
 		// Should be checked before invocation, because we just built something that is not assignable to the field.
 		if !dependencyValue.Type().AssignableTo(fieldValue.Type()) {
-			return fmt.Errorf("DI: `%s` is not assignable to field `%s.%s`", serviceName, structName, field.Name)
+			return libErrorf("`%s` is not assignable to field `%s.%s`", serviceName, structName, field.Name)
 		}
 
 		// Should not panic, since we checked CanAddr() and CanSet() earlier.
@@ -848,7 +848,7 @@ func injectCollectionField(injector Injector, structName string, field reflect.S
 		}
 		fieldValue.Set(collection)
 	default:
-		return fmt.Errorf("DI: tag `*` requires a slice or map[string] field, got `%s.%s`", structName, field.Name)
+		return libErrorf("tag `*` requires a slice or map[string] field, got `%s.%s`", structName, field.Name)
 	}
 
 	return nil
@@ -897,7 +897,7 @@ func serviceNotFound(injector Injector, err error, chain []string) error {
 // but its type does not match the expected type. This typically occurs when a service
 // is registered with one type but invoked with a different type.
 func serviceTypeMismatch(invoking string, registered string) error {
-	return fmt.Errorf("DI: service found, but type mismatch: invoking `%s` but registered `%s`", invoking, registered)
+	return libErrorf("service found, but type mismatch: invoking `%s` but registered `%s`", invoking, registered)
 }
 
 // getServiceNames formats a list of ServiceDescription names for error reporting.
@@ -936,7 +936,7 @@ func handleProviderPanic[T any](provider Provider[T], i Injector) (svc T, err er
 			if e, ok := r.(error); ok {
 				err = e
 			} else {
-				err = fmt.Errorf("DI: %v", r)
+				err = fmt.Errorf("doger: %v", r)
 			}
 		}
 	}()

@@ -325,7 +325,7 @@ func TestPropertySource_LateSameNamePanics(t *testing.T) {
 	var found bool
 	require.NoError(t, Extend(root, lookupExtension("", "addr", &value, &found)))
 
-	assert.PanicsWithError(t, "DI: service `github.com/kartaladev/doger.PropertySource` has already been declared", func() {
+	assert.PanicsWithError(t, "doger: service `github.com/kartaladev/doger.PropertySource` has already been declared", func() {
 		Provide(root, func(Injector) (PropertySource, error) { return mapSource{}, nil })
 	})
 }

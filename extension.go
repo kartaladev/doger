@@ -16,7 +16,7 @@ import (
 // extension it cannot install: a nil or typed-nil extension, an empty or
 // invalid name or instance key, or an empty [ExtendScopeName]. Nothing is
 // installed then.
-var ErrInvalidExtension = errors.New("DI: invalid extension")
+var ErrInvalidExtension = errors.New("doger: invalid extension")
 
 // ErrExtensionDisabled is returned, possibly wrapped, by an extension's
 // Extend to decline installing, for example when its configuration turns it
@@ -28,7 +28,7 @@ var ErrInvalidExtension = errors.New("DI: invalid extension")
 // does not match ErrExtensionDisabled; the identity is still recorded as
 // disabled. The library has no enable/disable switch of its own: whether to
 // decline is the extension's choice.
-var ErrExtensionDisabled = errors.New("DI: extension disabled")
+var ErrExtensionDisabled = errors.New("doger: extension disabled")
 
 // ErrRequiredExtensionDisabled is matched by the error
 // [ExtensionContext.Require] returns for a disabled extension, including
@@ -36,7 +36,7 @@ var ErrExtensionDisabled = errors.New("DI: extension disabled")
 // [ErrExtensionDisabled], so an extension returning it fails instead of
 // being disabled in turn. When shutting the declined attempt down failed,
 // the error also holds that failure, as an [*ExtensionError].
-var ErrRequiredExtensionDisabled = errors.New("DI: required extension is disabled")
+var ErrRequiredExtensionDisabled = errors.New("doger: required extension is disabled")
 
 // ErrExtensionCycle is matched by the error of a cycle of
 // [ExtensionContext.Require] calls, such as a requiring b requiring a, on
@@ -44,7 +44,7 @@ var ErrRequiredExtensionDisabled = errors.New("DI: required extension is disable
 // goroutines installing concurrently, or through concurrent Require calls
 // made by one extension's Extend from several goroutines. The extensions of
 // the cycle fail and are rolled back instead of deadlocking.
-var ErrExtensionCycle = errors.New("DI: extension cycle")
+var ErrExtensionCycle = errors.New("doger: extension cycle")
 
 // ErrExtensionConflict is matched by the error [Extend] returns, installing
 // nothing, when an extension identity is already installed with another
@@ -53,7 +53,7 @@ var ErrExtensionCycle = errors.New("DI: extension cycle")
 // root. Install a second instance with an instance key
 // ([ExtensionInstance]), or rename the private scope with
 // [ExtendScopeName].
-var ErrExtensionConflict = errors.New("DI: extension conflict")
+var ErrExtensionConflict = errors.New("doger: extension conflict")
 
 // ExtensionError is the error [Extend] returns when an extension fails to
 // install: its Extend returned an error or panicked, or an export it asked
@@ -71,7 +71,7 @@ type ExtensionError struct {
 
 // Error names the extension and its instance key, followed by the cause.
 func (e *ExtensionError) Error() string {
-	return "DI: extension " + describeExtension(e.Name, e.Instance) + ": " + e.Err.Error()
+	return libPrefix + "extension " + describeExtension(e.Name, e.Instance) + ": " + unprefixedText(e.Err)
 }
 
 // Unwrap returns the cause.
@@ -710,7 +710,7 @@ func attemptInstall(root *RootScope, req installRequest, x *ExtensionContext) (o
 // shutting the declined attempt down failed, an *ExtensionError wrapping it,
 // not the ErrExtensionDisabled cause, since a leak is not a clean decline.
 func recordDisabled(root *RootScope, req installRequest, rollbackErr error) error {
-	root.opts.Logf("DI: extension %s disabled", plainExtensionName(req.name, req.id.instance))
+	root.opts.Logf("doger: extension %s disabled", plainExtensionName(req.name, req.id.instance))
 	if rollbackErr != nil {
 		return &ExtensionError{Name: req.name, Instance: req.id.instance, Err: rollbackErr}
 	}

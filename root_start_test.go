@@ -753,7 +753,7 @@ func TestStart_AsStarterInstanceWithoutStart(t *testing.T) {
 
 	err := root.Start()
 
-	assert.ErrorContains(t, err, "DI: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
+	assert.ErrorContains(t, err, "doger: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
 }
 
 func TestStart_ShutdownAfterFailure(t *testing.T) {
@@ -1202,7 +1202,7 @@ func TestStart_HooksSkipNonStarter(t *testing.T) {
 
 	err := root.Start()
 
-	is.ErrorContains(err, "DI: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
+	is.ErrorContains(err, "doger: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
 	is.Empty(rec.list())
 }
 
@@ -1227,7 +1227,7 @@ func TestStartError_Fields(t *testing.T) {
 				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return nil, errBuild })
 			},
 			service: "b", op: StartOpBuild, cause: errBuild,
-			message: "DI: failed to build service `b` in scope `[root]`: build failed",
+			message: "doger: failed to build service `b` in scope `[root]`: build failed",
 		},
 		{
 			name: "Start returns errBoom",
@@ -1235,7 +1235,7 @@ func TestStartError_Fields(t *testing.T) {
 				provideLazy(root, "b", &errorStarter{err: errBoom})
 			},
 			service: "b", op: StartOpStart, cause: errBoom,
-			message: "DI: failed to start service `b` in scope `[root]`: boom",
+			message: "doger: failed to start service `b` in scope `[root]`: boom",
 		},
 		{
 			name: "kind handler returns errBoom",
@@ -1245,7 +1245,7 @@ func TestStartError_Fields(t *testing.T) {
 				k.Handle(root, StageBeforeStart, func(context.Context, Component[Job, Spec]) error { return errBoom })
 			},
 			service: "j", kind: "k", op: StartOpHandle, cause: errBoom,
-			message: "DI: kind `k` failed for service `j` in scope `[root]`: boom",
+			message: "doger: kind `k` failed for service `j` in scope `[root]`: boom",
 		},
 		{
 			name: "missing declared dependency",
@@ -1253,7 +1253,7 @@ func TestStartError_Fields(t *testing.T) {
 				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return &startWithErr{}, nil }, DependsOnNamed("missing"))
 			},
 			service: "b", op: StartOpBuild, cause: ErrServiceNotFound,
-			message: "DI: failed to build service `b` in scope `[root]`: DI: could not find service `missing`, available services: `b`, path: `b` -> `missing`",
+			message: "doger: failed to build service `b` in scope `[root]`: doger: could not find service `missing`, available services: `b`, path: `b` -> `missing`",
 		},
 	}
 
@@ -2239,14 +2239,14 @@ func TestAbortOutcome(t *testing.T) {
 		want   string
 		same   bool // the result is returned unchanged
 	}{
-		{name: "Shutdown cause, nil", cause: ErrStartAfterShutdown, want: "DI: start aborted: DI: container is shut down"},
-		{name: "caller cause, nil", want: "DI: start aborted: DI: container is shut down: context canceled"},
-		{name: "Shutdown cause, failure", cause: ErrStartAfterShutdown, result: errBoom, want: "boom (start aborted: DI: container is shut down)"},
-		{name: "caller cause, failure", result: errBoom, want: "boom (start aborted: DI: container is shut down: context canceled)"},
+		{name: "Shutdown cause, nil", cause: ErrStartAfterShutdown, want: "doger: start aborted: doger: container is shut down"},
+		{name: "caller cause, nil", want: "doger: start aborted: doger: container is shut down: context canceled"},
+		{name: "Shutdown cause, failure", cause: ErrStartAfterShutdown, result: errBoom, want: "boom (start aborted: doger: container is shut down)"},
+		{name: "caller cause, failure", result: errBoom, want: "boom (start aborted: doger: container is shut down: context canceled)"},
 		{
 			name:   "caller cause, failure carrying it",
 			result: fmt.Errorf("boom (start aborted: %w)", context.Canceled),
-			want:   "boom (start aborted: context canceled) (start aborted: DI: container is shut down)",
+			want:   "boom (start aborted: context canceled) (start aborted: doger: container is shut down)",
 		},
 		{name: "caller cause, failure already aborted", result: alreadyAborted, want: alreadyAborted.Error(), same: true},
 	}

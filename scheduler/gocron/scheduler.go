@@ -19,7 +19,7 @@ var _ doger.HealthScheduler = (*Scheduler)(nil)
 const DefaultInterval = 30 * time.Second
 
 // ErrInvalidOption is matched by the error New returns for an invalid option.
-var ErrInvalidOption = errors.New("dogergocron: invalid option")
+var ErrInvalidOption = errors.New("doger: invalid option")
 
 // Option configures a Scheduler. It returns an error for an invalid value.
 type Option func(*config) error

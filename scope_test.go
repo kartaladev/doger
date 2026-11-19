@@ -1962,7 +1962,7 @@ func TestScope_HealthCheckWithContextExpiration_Timeout(t *testing.T) {
 		for _, err := range results {
 			is.Error(err)
 			// Check if it's a timeout error (could be wrapped)
-			is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "DI: health check timeout: context deadline exceeded")
+			is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded")
 		}
 
 		// Check that the service was attempted to be health checked
@@ -2006,7 +2006,7 @@ func TestScope_HealthCheckWithContextExpiration_Cancellation(t *testing.T) {
 		for _, err := range results {
 			is.Error(err)
 			// Check if it's a cancellation error (could be wrapped)
-			is.True(errors.Is(err, context.Canceled) || err.Error() == "DI: health check timeout: context canceled")
+			is.True(errors.Is(err, context.Canceled) || err.Error() == "doger: health check timeout: context canceled")
 		}
 
 		// Check that the service was attempted to be health checked
@@ -2054,7 +2054,7 @@ func TestScope_HealthCheckWithContextExpiration_MultipleServices(t *testing.T) {
 		// At least one service should have a timeout error
 		hasTimeoutError := 0
 		for _, err := range results {
-			if err != nil && (errors.Is(err, context.DeadlineExceeded) || err.Error() == "DI: health check timeout: context deadline exceeded") {
+			if err != nil && (errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded") {
 				hasTimeoutError++
 			}
 		}
@@ -2103,7 +2103,7 @@ func TestScope_HealthCheckWithContextExpiration_ChildScopes(t *testing.T) {
 		// At least one service should have a timeout error
 		hasTimeoutError := 0
 		for _, err := range results1 {
-			if err != nil && (errors.Is(err, context.DeadlineExceeded) || err.Error() == "DI: health check timeout: context deadline exceeded") {
+			if err != nil && (errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded") {
 				hasTimeoutError++
 			}
 		}
@@ -2144,7 +2144,7 @@ func TestScope_HealthCheckWithContextExpiration_GlobalTimeoutOption(t *testing.T
 		for _, err := range results {
 			is.Error(err)
 			// Check if it's a timeout error (could be wrapped)
-			is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "DI: health check timeout: context deadline exceeded")
+			is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded")
 		}
 
 		// Check that the service was attempted to be health checked
@@ -2188,7 +2188,7 @@ func TestScope_ContextExpiration_ShutdownAndHealthcheckSameTimeout(t *testing.T)
 	for _, err := range healthcheckResults {
 		is.Error(err)
 		// Check if it's a timeout error (could be wrapped)
-		is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "DI: health check timeout: context deadline exceeded")
+		is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded")
 	}
 }
 
@@ -2731,7 +2731,7 @@ func TestScopeShutdown_ExportingChildJoinAfterPanic(t *testing.T) {
 		is.Equal("logf", <-panicked)
 		report := <-jobsDone
 		is.False(report.Succeed)
-		is.ErrorContains(report.Errors[newServiceDescription(jobs.ID(), jobs.Name(), "")], "DI: scope shutdown did not complete")
+		is.ErrorContains(report.Errors[newServiceDescription(jobs.ID(), jobs.Name(), "")], "doger: scope shutdown did not complete")
 	})
 }
 

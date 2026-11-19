@@ -139,17 +139,17 @@ func TestInvokeStruct_CollectionInvalidField(t *testing.T) {
 		{
 			name:    "single value",
 			invoke:  func(root *RootScope) error { _, err := InvokeStruct[structSingle](root); return err },
-			message: fmt.Sprintf("DI: tag `*` requires a slice or map[string] field, got `%s.H`", NameOf[structSingle]()),
+			message: fmt.Sprintf("doger: tag `*` requires a slice or map[string] field, got `%s.H`", NameOf[structSingle]()),
 		},
 		{
 			name:    "map with int keys",
 			invoke:  func(root *RootScope) error { _, err := InvokeStruct[structIntKeys](root); return err },
-			message: fmt.Sprintf("DI: tag `*` requires a slice or map[string] field, got `%s.M`", NameOf[structIntKeys]()),
+			message: fmt.Sprintf("doger: tag `*` requires a slice or map[string] field, got `%s.M`", NameOf[structIntKeys]()),
 		},
 		{
 			name:    "map with string-kinded keys",
 			invoke:  func(root *RootScope) error { _, err := InvokeStruct[structKeyKind](root); return err },
-			message: fmt.Sprintf("DI: tag `*` requires a slice or map[string] field, got `%s.K`", NameOf[structKeyKind]()),
+			message: fmt.Sprintf("doger: tag `*` requires a slice or map[string] field, got `%s.K`", NameOf[structKeyKind]()),
 		},
 	}
 

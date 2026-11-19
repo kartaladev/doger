@@ -12,10 +12,10 @@ var _ Injector = (*virtualScope)(nil)
 // invoker chain is invokerChain.
 func newVirtualScope(predecessor Injector, invokerChain []string) *virtualScope {
 	if predecessor == nil {
-		panic("DI: predecessor cannot be nil")
+		panic("doger: predecessor cannot be nil")
 	}
 	if len(invokerChain) == 0 {
-		panic("DI: invokerChain cannot be empty")
+		panic("doger: invokerChain cannot be empty")
 	}
 
 	return &virtualScope{

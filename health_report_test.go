@@ -1066,7 +1066,7 @@ func TestHealthReport_LeftDuringStart(t *testing.T) {
 		wantErr string
 	}{
 		{name: "result", wantErr: "down"},
-		{name: "timeout", blocks: true, wantErr: "DI: health check timeout: context deadline exceeded"},
+		{name: "timeout", blocks: true, wantErr: "doger: health check timeout: context deadline exceeded"},
 	}
 
 	for _, tt := range tests {
@@ -1157,7 +1157,7 @@ func TestHealthReport_ReaderBound(t *testing.T) {
 		{name: "default_9999ms", advance: DefaultHealthReportCheckTimeout - time.Millisecond},
 		{name: "20ms", timeout: 20 * time.Millisecond, advance: 20 * time.Millisecond, returns: true, message: healthCheckTestDeadlineMessage},
 		{name: "unbounded_10m", timeout: -time.Nanosecond, advance: 10 * time.Minute},
-		{name: "cancelled_before", cancelled: true, returns: true, message: "DI: health check timeout: context canceled"},
+		{name: "cancelled_before", cancelled: true, returns: true, message: "doger: health check timeout: context canceled"},
 	}
 
 	for _, tt := range tests {

@@ -37,7 +37,7 @@ func ExampleInjectorOpts_clock() {
 
 	fmt.Println((<-result)["db"])
 	// Output:
-	// DI: health check timeout: context deadline exceeded
+	// doger: health check timeout: context deadline exceeded
 }
 
 func ExampleInjectorOpts_healthCheckSingleTimeout() {
@@ -70,5 +70,5 @@ func ExampleInjectorOpts_healthCheckSingleTimeout() {
 	fmt.Println(<-result)
 	// Output:
 	// still running after 1s
-	// DI: health check timeout: context deadline exceeded
+	// doger: health check timeout: context deadline exceeded
 }

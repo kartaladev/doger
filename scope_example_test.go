@@ -185,7 +185,7 @@ func ExampleScope_Shutdown() {
 	// Output:
 	// false
 	// 1
-	// DI: shutdown errors:
+	// doger: shutdown errors:
 	//   - api > db: shutdown error
 }
 
@@ -223,6 +223,6 @@ func ExampleScope_ShutdownWithContext_timeout() {
 	report := injector.ShutdownWithContext(ctx)
 	fmt.Println(report.Error())
 	// Output:
-	// DI: shutdown errors:
+	// doger: shutdown errors:
 	//   - api > db: context deadline exceeded
 }

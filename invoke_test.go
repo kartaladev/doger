@@ -31,7 +31,7 @@ func TestInvokeAnyByName(t *testing.T) {
 	svc, err = invokeAnyByName(i, "not_found")
 	is.Error(err)
 	is.Empty(svc)
-	is.Contains(err.Error(), "DI: could not find service `not_found`, available services: ")
+	is.Contains(err.Error(), "doger: could not find service `not_found`, available services: ")
 
 	// test virtual scope wrapper
 	called := false
@@ -63,7 +63,7 @@ func TestInvokeAnyByName(t *testing.T) {
 
 	is.Empty(svc)
 	is.ErrorIs(err, ErrCircularDependency)
-	is.EqualError(err, "DI: circular dependency detected: `foo` -> `bar` -> `foo`")
+	is.EqualError(err, "doger: circular dependency detected: `foo` -> `bar` -> `foo`")
 
 	// Test service type mismatch
 	ProvideNamed(i, "type-mismatch", func(ivs Injector) (int, error) {
@@ -89,7 +89,7 @@ func TestInvokeAnyByName(t *testing.T) {
 	})
 	svc, err = invokeAnyByName(i, "provider-panic-string")
 	is.Error(err)
-	is.EqualError(err, "DI: test panic")
+	is.EqualError(err, "doger: test panic")
 	is.Empty(svc)
 
 	// Test provider panic with error
@@ -162,7 +162,7 @@ func TestInvokeByName(t *testing.T) {
 	svc, err = invokeByName[string](nil, "not_found")
 	is.Error(err)
 	is.Empty(svc)
-	is.Contains(err.Error(), "DI: could not find service `not_found`, available services: ")
+	is.Contains(err.Error(), "doger: could not find service `not_found`, available services: ")
 
 	// test virtual scope wrapper
 	called := false
@@ -194,7 +194,7 @@ func TestInvokeByName(t *testing.T) {
 
 	is.Empty(svc)
 	is.ErrorIs(err, ErrCircularDependency)
-	is.EqualError(err, "DI: circular dependency detected: `foo` -> `bar` -> `foo`")
+	is.EqualError(err, "doger: circular dependency detected: `foo` -> `bar` -> `foo`")
 
 	// Test service type mismatch
 	ProvideNamed(i, "type-mismatch", func(ivs Injector) (int, error) {
@@ -203,7 +203,7 @@ func TestInvokeByName(t *testing.T) {
 	// Try to invoke as string when it's actually int
 	svc, err = invokeByName[string](i, "type-mismatch")
 	is.Error(err)
-	is.EqualError(err, "DI: service found, but type mismatch: invoking `string` but registered `int`")
+	is.EqualError(err, "doger: service found, but type mismatch: invoking `string` but registered `int`")
 	is.Empty(svc)
 
 	// Test provider error
@@ -221,7 +221,7 @@ func TestInvokeByName(t *testing.T) {
 	})
 	svc, err = invokeByName[string](i, "provider-panic-string")
 	is.Error(err)
-	is.EqualError(err, "DI: test panic")
+	is.EqualError(err, "doger: test panic")
 	is.Empty(svc)
 
 	// Test provider panic with error
@@ -299,7 +299,7 @@ func TestInvokeByGenericType(t *testing.T) {
 	svcX, err := invokeByGenericType[string](i)
 	is.Empty(svcX)
 	is.Error(err)
-	is.Contains(err.Error(), "DI: could not find service satisfying interface `string`, available services: `*github.com/kartaladev/doger.lazyTest`")
+	is.Contains(err.Error(), "doger: could not find service satisfying interface `string`, available services: `*github.com/kartaladev/doger.lazyTest`")
 
 	// test virtual scope wrapper
 	called := false
@@ -332,7 +332,7 @@ func TestInvokeByGenericType(t *testing.T) {
 	is.Empty(svc1)
 	is.ErrorIs(err, ErrCircularDependency)
 
-	is.EqualError(err, "DI: circular dependency detected: `*github.com/kartaladev/doger.eagerTest` -> `bar` -> `*github.com/kartaladev/doger.eagerTest`")
+	is.EqualError(err, "doger: circular dependency detected: `*github.com/kartaladev/doger.eagerTest` -> `bar` -> `*github.com/kartaladev/doger.eagerTest`")
 
 	// Test with nil injector (should use default root scope)
 	// Note: Skipping DefaultRootScope tests due to parallel test conflicts
@@ -341,7 +341,7 @@ func TestInvokeByGenericType(t *testing.T) {
 	svc4, err := invokeByGenericType[Healthchecker](i)
 	is.Empty(svc4)
 	is.Error(err)
-	is.Contains(err.Error(), "DI: could not find service satisfying interface `github.com/kartaladev/doger.Healthchecker`")
+	is.Contains(err.Error(), "doger: could not find service satisfying interface `github.com/kartaladev/doger.Healthchecker`")
 
 	// Test provider error with different service type
 	// Note: Skipping provider error tests due to service conflicts
@@ -491,7 +491,7 @@ func TestInvokeByTags(t *testing.T) {
 
 	// not pointer
 	err = invokeByTags(i, "*myStruct", reflect.ValueOf(eagerTest{}), false)
-	is.Equal("DI: must be a pointer to a struct", err.Error())
+	is.Equal("doger: must be a pointer to a struct", err.Error())
 
 	// exported field - generic type
 	type hasExportedEagerTestDependency struct {
@@ -543,7 +543,7 @@ func TestInvokeByTags(t *testing.T) {
 	}
 	test6 := namedDependencyButTypeMismatch{}
 	err = invokeByTags(i, "*myStruct", reflect.ValueOf(&test6), false)
-	is.Equal("DI: `*github.com/kartaladev/doger.eagerTest` is not assignable to field `*myStruct.EagerTest`", err.Error())
+	is.Equal("doger: `*github.com/kartaladev/doger.eagerTest` is not assignable to field `*myStruct.EagerTest`", err.Error())
 
 	// use a custom tag
 	i = NewWithOpts(&InjectorOpts{StructTagKey: "hello"})
@@ -573,7 +573,7 @@ func TestInvokeByTags_ImplicitAliasing_FallbackOnNotFound(t *testing.T) {
 	s := foobar{}
 	err := invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
 	is.Error(err)
-	is.Equal("DI: could not find service `github.com/kartaladev/doger.Healthchecker`, no service available", err.Error())
+	is.Equal("doger: could not find service `github.com/kartaladev/doger.Healthchecker`, no service available", err.Error())
 	is.Nil(s.Dep)
 
 	// Now, declare a service with the right type
@@ -621,7 +621,7 @@ func TestInvokeByTags_ImplicitAliasing_NoFallbackOnOtherErrors(t *testing.T) {
 	s := foobar{}
 	err := invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
 	is.Error(err)
-	is.Equal("DI: could not find service `bad`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`", err.Error())
+	is.Equal("doger: could not find service `bad`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`", err.Error())
 	is.Nil(s.Dep)
 
 	// Now, declare a service with a wrong type
@@ -633,7 +633,7 @@ func TestInvokeByTags_ImplicitAliasing_NoFallbackOnOtherErrors(t *testing.T) {
 	s = foobar{}
 	err = invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
 	is.Error(err)
-	is.Equal("DI: `bad` is not assignable to field `*foobar.Dep`", err.Error())
+	is.Equal("doger: `bad` is not assignable to field `*foobar.Dep`", err.Error())
 	is.Nil(s.Dep)
 
 	// Now, declare a service with the right type, but with provider error
@@ -665,12 +665,12 @@ func TestServiceNotFound(t *testing.T) {
 	err := serviceNotFound(child1, ErrServiceNotFound, []string{"not-found"})
 	is.Error(err)
 	is.ErrorIs(err, ErrServiceNotFound)
-	is.EqualError(err, "DI: could not find service `not-found`, no service available")
+	is.EqualError(err, "doger: could not find service `not-found`, no service available")
 
 	err = serviceNotFound(child1, ErrServiceNotFound, []string{"not-found1", "not-found2"})
 	is.Error(err)
 	is.ErrorIs(err, ErrServiceNotFound)
-	is.EqualError(err, "DI: could not find service `not-found2`, no service available, path: `not-found1` -> `not-found2`")
+	is.EqualError(err, "doger: could not find service `not-found2`, no service available, path: `not-found1` -> `not-found2`")
 
 	rootScope.serviceSet("root-a", newServiceLazy("root-a", func(i Injector) (int, error) { return 0, nil }))
 	child1.serviceSet("child1-a", newServiceLazy("child1-a", func(i Injector) (int, error) { return 1, nil }))
@@ -682,12 +682,12 @@ func TestServiceNotFound(t *testing.T) {
 	err = serviceNotFound(child1, ErrServiceNotFound, []string{"not-found"})
 	is.Error(err)
 	is.ErrorIs(err, ErrServiceNotFound)
-	is.EqualError(err, "DI: could not find service `not-found`, available services: `child1-a`, `root-a`")
+	is.EqualError(err, "doger: could not find service `not-found`, available services: `child1-a`, `root-a`")
 
 	err = serviceNotFound(child1, ErrServiceNotFound, []string{"not-found1", "not-found2"})
 	is.Error(err)
 	is.ErrorIs(err, ErrServiceNotFound)
-	is.EqualError(err, "DI: could not find service `not-found2`, available services: `child1-a`, `root-a`, path: `not-found1` -> `not-found2`")
+	is.EqualError(err, "doger: could not find service `not-found2`, available services: `child1-a`, `root-a`, path: `not-found1` -> `not-found2`")
 
 	// Test service ordering in error messages
 	// Create services in different order to test sorting
@@ -734,13 +734,13 @@ func TestServiceNotFound(t *testing.T) {
 	err = serviceNotFound(emptyInjector, ErrServiceNotFound, []string{"not-found"})
 	is.Error(err)
 	is.ErrorIs(err, ErrServiceNotFound)
-	is.EqualError(err, "DI: could not find service `not-found`, no service available")
+	is.EqualError(err, "doger: could not find service `not-found`, no service available")
 
 	// Test with different error types
 	err = serviceNotFound(child1, ErrServiceNotMatch, []string{"not-found"})
 	is.Error(err)
 	is.ErrorIs(err, ErrServiceNotMatch)
-	is.Contains(err.Error(), "DI: could not find service satisfying interface `not-found`")
+	is.Contains(err.Error(), "doger: could not find service satisfying interface `not-found`")
 
 	// Test with very long service names
 	longName := "very-long-service-name-that-exceeds-normal-length-limits-for-testing-purposes"
@@ -773,7 +773,7 @@ func TestInvoke_NotFoundNamesLibraryTypes(t *testing.T) {
 				_, err := Invoke[*RootScope](i)
 				return err
 			},
-			message: "DI: could not find service `*github.com/kartaladev/doger.RootScope`, no service available",
+			message: "doger: could not find service `*github.com/kartaladev/doger.RootScope`, no service available",
 		},
 		{
 			name:  "int_registered",
@@ -782,7 +782,7 @@ func TestInvoke_NotFoundNamesLibraryTypes(t *testing.T) {
 				_, err := Invoke[Healthchecker](i)
 				return err
 			},
-			message: "DI: could not find service `github.com/kartaladev/doger.Healthchecker`, available services: `int`",
+			message: "doger: could not find service `github.com/kartaladev/doger.Healthchecker`, available services: `int`",
 		},
 	}
 
@@ -831,7 +831,7 @@ func TestHandleProviderPanic(t *testing.T) {
 		{
 			name:     "panics with string",
 			provider: func(i Injector) (int, error) { panic("aïe") },
-			wantMsg:  "DI: aïe",
+			wantMsg:  "doger: aïe",
 		},
 		{
 			name:     "panics with error",
@@ -890,8 +890,8 @@ func TestInvoke_ProviderPanic(t *testing.T) {
 		{name: "transient_nil", kind: "transient", value: nil, message: "runtime error: panic called with nil argument", isNil: true},
 		{name: "lazy_error", kind: "lazy", value: errBoom, message: "boom", isBoom: true},
 		{name: "transient_error", kind: "transient", value: errBoom, message: "boom", isBoom: true},
-		{name: "lazy_string", kind: "lazy", value: "s", message: "DI: s"},
-		{name: "lazy_int", kind: "lazy", value: 42, message: "DI: 42"},
+		{name: "lazy_string", kind: "lazy", value: "s", message: "doger: s"},
+		{name: "lazy_int", kind: "lazy", value: 42, message: "doger: 42"},
 	}
 
 	for _, tt := range tests {

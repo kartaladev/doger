@@ -81,7 +81,7 @@ func (s *DependencySource) UnmarshalText(text []byte) error {
 		}
 	}
 
-	return fmt.Errorf("DI: unknown dependency source %q", text)
+	return libErrorf("unknown dependency source %q", text)
 }
 
 // newDAG creates a new DAG (Directed Acyclic Graph) with initialized dependencies and dependents maps.

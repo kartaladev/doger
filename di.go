@@ -1,7 +1,6 @@
 package doger
 
 import (
-	"fmt"
 	"reflect"
 )
 
@@ -215,7 +214,7 @@ func provide[T any, A any](i Injector, name string, valueOrProvider A, serviceCt
 	}
 
 	root.opts.onAfterRegistration(scope, name)
-	root.opts.Logf("DI: service %s injected", name)
+	root.opts.Logf("doger: service %s injected", name)
 }
 
 // registerLocked registers incoming as name in scope under the scope's write
@@ -295,7 +294,7 @@ func nonDefaultExists(scope *Scope, name string) bool {
 
 // duplicateServiceError is the error of a registration whose name is taken.
 func duplicateServiceError(name string) error {
-	return fmt.Errorf("DI: service `%s` has already been declared", name)
+	return libErrorf("service `%s` has already been declared", name)
 }
 
 // wrapIfDefault returns the wrapper to store for service in scope: decorated
@@ -441,7 +440,7 @@ func override[T any, A any](i Injector, name string, valueOrProvider A, serviceC
 	service.setOptions(options)
 	_i.serviceSet(name, service) // @TODO: should we unload/shutdown the previous service ?
 
-	_i.RootScope().opts.Logf("DI: service %s overridden", name)
+	_i.RootScope().opts.Logf("doger: service %s overridden", name)
 }
 
 // Invoke retrieves and instantiates a service from the DI container using type inference.
@@ -567,7 +566,7 @@ func InvokeStruct[T any](i Injector) (T, error) {
 	// Check if the empty value is a struct (before passing a pointer to reflect.ValueOf).
 	// It will be checked in invokeByTags, but the error message is different.
 	if value.Kind() != reflect.Pointer || value.Elem().Kind() != reflect.Struct {
-		return empty[T](), fmt.Errorf("DI: must be a struct or a pointer to a struct, but got `%s`", structName)
+		return empty[T](), libErrorf("must be a struct or a pointer to a struct, but got `%s`", structName)
 	}
 
 	err := invokeByTags(i, structName, value, true)
@@ -697,12 +696,12 @@ func MustAs[Initial any, Alias any](i Injector) {
 func AsNamed[Initial any, Alias any](i Injector, initial string, alias string) error {
 	// first, we check if Initial can be cast to Alias
 	if !genericCanCastToGeneric[Initial, Alias]() {
-		return fmt.Errorf("DI: `%s` does not implement `%s`", initial, alias)
+		return libErrorf("`%s` does not implement `%s`", initial, alias)
 	}
 
 	_i := getInjectorOrDefault(i)
 	if ok := _i.serviceExistRec(initial); !ok {
-		return fmt.Errorf("DI: service `%s` has not been declared", initial)
+		return libErrorf("service `%s` has not been declared", initial)
 	}
 
 	provide(_i, alias, nil, func(_ string, _ any) serviceWrapper[Alias] {

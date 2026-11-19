@@ -2,8 +2,6 @@ package doger
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"maps"
 	"os"
 	"os/signal"
@@ -85,7 +83,7 @@ func NewWithOpts(opts *InjectorOpts, packages ...func(Injector)) *RootScope {
 		root.healthSlots = make(chan struct{}, opts.HealthCheckParallelism)
 	}
 
-	root.opts.Logf("DI: injector created")
+	root.opts.Logf("doger: injector created")
 
 	for _, pkg := range packages {
 		pkg(root)
@@ -231,7 +229,7 @@ func (s *RootScope) Shutdown() *ShutdownReport { return s.ShutdownWithContext(co
 //     and wraps ctx.Err(). The first caller's shutdown keeps running.
 //   - If the first caller panics before producing a report (for example in
 //     a custom Logf), the panic propagates to it, and every other caller gets
-//     a failed report containing "DI: root shutdown did not complete".
+//     a failed report containing "doger: root shutdown did not complete".
 //   - A nil ctx is treated as context.Background().
 //   - Services registered on the root after the first Shutdown are not shut
 //     down by a later root Shutdown.
@@ -308,7 +306,7 @@ func (s *RootScope) waitForClose(ctx context.Context, done <-chan struct{}) *Shu
 		return cloneShutdownReport(s.closeReport)
 	}
 
-	return s.rootFailureReport(fmt.Errorf("DI: waiting for root shutdown: %w", ctx.Err()))
+	return s.rootFailureReport(libErrorf("waiting for root shutdown: %w", ctx.Err()))
 }
 
 // shutdownAsWinner shuts the container down. Its deferred finishClose runs
@@ -341,7 +339,7 @@ func waitForStart(ctx context.Context, ticket closeTicket) error {
 	}
 
 	if !awaitDone(ticket.startDone, ctx) {
-		return fmt.Errorf("DI: waiting for start: %w", ctx.Err())
+		return libErrorf("waiting for start: %w", ctx.Err())
 	}
 
 	return nil
@@ -402,7 +400,7 @@ func (s *RootScope) inFlightRun() (context.CancelCauseFunc, chan struct{}, bool)
 func (s *RootScope) finishClose(report *ShutdownReport) {
 	stored := cloneShutdownReport(report)
 	if report == nil {
-		stored = s.rootFailureReport(errors.New("DI: root shutdown did not complete"))
+		stored = s.rootFailureReport(libErrorf("root shutdown did not complete"))
 	}
 
 	s.lifecycleMu.Lock()
@@ -744,7 +742,7 @@ func (s *RootScope) CloneWithOpts(opts *InjectorOpts) *RootScope {
 	// stored, so later registrations in the clone come after all of them.
 	clone.nextRegIndex.Store(s.nextRegIndex.Load())
 
-	s.opts.Logf("DI: injector cloned")
+	s.opts.Logf("doger: injector cloned")
 
 	return clone
 }

@@ -123,7 +123,7 @@ func TestRootScope_HealthCheckTimeouts(t *testing.T) {
 
 		err1 := HealthCheckNamedWithContext(context.Background(), i, NameOf[*lazyTestHeathcheckerOKTimeout]())
 		err2 := HealthCheckNamedWithContext(context.Background(), i, NameOf[*lazyTestHeathcheckerOK]())
-		is.EqualError(err1, "DI: health check timeout: context deadline exceeded")
+		is.EqualError(err1, "doger: health check timeout: context deadline exceeded")
 		is.NoError(err2)
 
 		// with 10ms global timeout
@@ -135,7 +135,7 @@ func TestRootScope_HealthCheckTimeouts(t *testing.T) {
 
 		errAll = i.HealthCheckWithContext(context.Background())
 		is.Len(errAll, 2)
-		is.EqualError(errAll[NameOf[*lazyTestHeathcheckerOKTimeout]()], "DI: health check timeout: context deadline exceeded")
+		is.EqualError(errAll[NameOf[*lazyTestHeathcheckerOKTimeout]()], "doger: health check timeout: context deadline exceeded")
 		is.NoError(errAll[NameOf[*lazyTestHeathcheckerOK]()])
 
 		// with 10ms global timeout with sequential healthchecks
@@ -164,10 +164,10 @@ func TestRootScope_HealthCheckTimeouts(t *testing.T) {
 		is.NotEmpty(errors)
 		is.Less(len(errors), 5)
 		if len(errors) == 3 {
-			is.EqualError(errors[0], "DI: health check timeout: context deadline exceeded")
+			is.EqualError(errors[0], "doger: health check timeout: context deadline exceeded")
 		}
 		// because executed last
-		// is.EqualError(errAll[NameOf[*lazyTestHeathcheckerOK]()], "DI: health check timeout: context deadline exceeded")
+		// is.EqualError(errAll[NameOf[*lazyTestHeathcheckerOK]()], "doger: health check timeout: context deadline exceeded")
 
 		time.Sleep(50 * time.Millisecond) // let abandoned checks return
 	})
@@ -726,7 +726,7 @@ func TestRootScope_ShutdownWinnerPanic(t *testing.T) {
 			if is.NotNil(report) {
 				is.False(report.Succeed)
 				is.Len(report.Errors, 1)
-				is.ErrorContains(report.Errors[rootServiceDescription(root)], "DI: root shutdown did not complete")
+				is.ErrorContains(report.Errors[rootServiceDescription(root)], "doger: root shutdown did not complete")
 			}
 		})
 	}

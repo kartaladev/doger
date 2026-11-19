@@ -380,7 +380,7 @@ func TestAsDefault_ProviderRegistersOwnName(t *testing.T) {
 
 	_, err := Invoke[*dfDialer](root)
 
-	require.EqualError(t, err, fmt.Sprintf("DI: service `%s` has already been declared", NameOf[*dfDialer]()))
+	require.EqualError(t, err, fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfDialer]()))
 }
 
 func TestAsDefault_DecisionFrozen(t *testing.T) {
@@ -706,7 +706,7 @@ func raceReplaceAndResolve(t *testing.T, order func(register, invoke func(), bui
 	register := func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				assert.EqualError(t, recovered.(error), fmt.Sprintf("DI: service `%s` has already been declared", NameOf[*dfConn]())) //nolint:errcheck,forcetypeassert
+				assert.EqualError(t, recovered.(error), fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfConn]())) //nolint:errcheck,forcetypeassert
 			}
 		}()
 		Provide(root, func(Injector) (*dfConn, error) { return &dfConn{label: "explicit", shutdowns: &explicitShutdowns}, nil })

@@ -2,7 +2,6 @@ package doger
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"slices"
 )
@@ -106,10 +105,10 @@ func (k Kind[T, M]) With(meta M) ProvideOption {
 func (k Kind[T, M]) Handle(root *RootScope, stage Stage, handler func(context.Context, Component[T, M]) error) {
 	k.mustBeCreated()
 	if stage != StageBeforeStart && stage != StageAfterStart {
-		panic(fmt.Errorf("DI: invalid stage %d for kind `%s`", stage, k.id.name))
+		panic(libErrorf("invalid stage %d for kind `%s`", stage, k.id.name))
 	}
 	if handler == nil {
-		panic(fmt.Errorf("DI: nil handler for kind `%s`", k.id.name))
+		panic(libErrorf("nil handler for kind `%s`", k.id.name))
 	}
 	if root == nil {
 		root = DefaultRootScope
@@ -141,7 +140,7 @@ func (k Kind[T, M]) newEntry(stage Stage, handler func(context.Context, Componen
 		run: func(ctx context.Context, scope *Scope, name string, instance any, meta any) error {
 			typed, ok := instance.(T)
 			if !ok {
-				return fmt.Errorf("DI: service `%s` does not implement `%s` required by kind `%s`", name, reflect.TypeFor[T]().String(), k.id.name)
+				return libErrorf("service `%s` does not implement `%s` required by kind `%s`", name, reflect.TypeFor[T]().String(), k.id.name)
 			}
 			typedMeta, _ := meta.(M)
 
@@ -157,6 +156,6 @@ func (k Kind[T, M]) target() reflect.Type {
 
 func (k Kind[T, M]) mustBeCreated() {
 	if k.id == nil {
-		panic(fmt.Errorf("DI: kind not created with NewKind"))
+		panic(libErrorf("kind not created with NewKind"))
 	}
 }

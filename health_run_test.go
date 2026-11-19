@@ -63,20 +63,20 @@ func TestHealthCheck_Panic(t *testing.T) {
 			name:    "no_hook_boom_HealthCheck",
 			value:   "boom",
 			entry:   rootCheck,
-			message: "DI: health check panic: boom",
+			message: "doger: health check panic: boom",
 		},
 		{
 			name:    "no_hook_EOF_HealthCheckNamed",
 			value:   io.EOF,
 			entry:   namedCheck,
-			message: "DI: health check panic: EOF",
+			message: "doger: health check panic: EOF",
 			match:   func(t *testing.T, err error) { t.Helper(); assert.ErrorIs(t, err, io.EOF) },
 		},
 		{
 			name:    "no_hook_nil_HealthReport",
 			value:   nil,
 			entry:   func(i *RootScope) error { return healthRunTestReportErr(i, "db") },
-			message: "DI: health check panic: " + new(runtime.PanicNilError).Error(),
+			message: "doger: health check panic: " + new(runtime.PanicNilError).Error(),
 			match: func(t *testing.T, err error) {
 				t.Helper()
 				var nilErr *runtime.PanicNilError
@@ -88,7 +88,7 @@ func TestHealthCheck_Panic(t *testing.T) {
 			withHook: true,
 			value:    "boom",
 			entry:    rootCheck,
-			message:  "DI: health check panic: boom",
+			message:  "doger: health check panic: boom",
 		},
 	}
 
@@ -776,7 +776,7 @@ func TestHealthCheck_CallerLeaves(t *testing.T) {
 		synctest.Wait()
 		close(db.release)
 
-		is.EqualError((<-a)["db"], "DI: health check timeout: context canceled")
+		is.EqualError((<-a)["db"], "doger: health check timeout: context canceled")
 		is.NoError((<-b)["db"])
 	})
 }
@@ -824,7 +824,7 @@ func TestHealthCheck_EndedContextStartsNoCheck(t *testing.T) {
 				start := time.Now()
 				state, err := tt.entry(ctx, i)
 				is.Zero(time.Since(start), "the call did not return at once")
-				is.EqualError(err, "DI: health check timeout: context canceled")
+				is.EqualError(err, "doger: health check timeout: context canceled")
 				if tt.report {
 					is.Equal(tt.wantState, state)
 				}
@@ -884,7 +884,7 @@ func TestHealthCheck_EndedContextQueuesNoFreshCheck(t *testing.T) {
 				close(db.release)
 				synctest.Wait() // the abandoned check returned
 
-				is.EqualError(i.health.wait(waiter), "DI: health check timeout: context canceled")
+				is.EqualError(i.health.wait(waiter), "doger: health check timeout: context canceled")
 				synctest.Wait()
 				is.Equal(int32(1), db.calls.Load(), "calls of the check")
 			})
@@ -963,7 +963,7 @@ func TestHealthCheck_LastCallerCancels(t *testing.T) {
 		synctest.Wait()
 		cancel()
 
-		is.EqualError((<-result)["db"], "DI: health check timeout: context canceled")
+		is.EqualError((<-result)["db"], "doger: health check timeout: context canceled")
 		synctest.Wait() // the check returned
 		is.Equal([]error{context.Canceled}, db.recordedErrs())
 
@@ -1622,7 +1622,7 @@ func TestHealthCheck_QueuedBehindAbandonedKeepsBound(t *testing.T) {
 
 				got := <-done
 				is.Equal(20*time.Millisecond, got.elapsed)
-				is.EqualError(got.err, "DI: health check timeout: context deadline exceeded")
+				is.EqualError(got.err, "doger: health check timeout: context deadline exceeded")
 				if tt.report {
 					is.Equal(HealthUnhealthy, got.state)
 				}

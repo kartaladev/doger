@@ -103,7 +103,7 @@ func (p Properties) Lookup(key string) (string, bool) {
 	}
 	if p.x != nil && p.x.closed.Load() {
 		p.x.lateLog.Do(func() {
-			p.root.opts.Logf("DI: properties of extension %s read after its Extend returned", p.x.name())
+			p.root.opts.Logf("doger: properties of extension %s read after its Extend returned", p.x.name())
 		})
 		return "", false
 	}
@@ -161,11 +161,11 @@ func decidePropertySource(root *RootScope) PropertySource {
 		var err error
 		source, err = InvokeNamed[PropertySource](root, name)
 		if err != nil {
-			root.opts.Logf("DI: property source unavailable, every property is unset: %T", err) // the type only: the message could hold a secret
+			root.opts.Logf("doger: property source unavailable, every property is unset: %T", err) // the type only: the message could hold a secret
 			source = noProperties{}
 		}
 	}
-	root.opts.Logf("DI: property source %T", source)
+	root.opts.Logf("doger: property source %T", source)
 
 	return source
 }

@@ -73,7 +73,7 @@ func healthCheckTestReturned(result <-chan map[string]error) bool {
 	return len(result) > 0
 }
 
-const healthCheckTestDeadlineMessage = "DI: health check timeout: context deadline exceeded"
+const healthCheckTestDeadlineMessage = "doger: health check timeout: context deadline exceeded"
 
 // healthCheckTestEntry is the public API a test row calls.
 type healthCheckTestEntry string
@@ -147,7 +147,7 @@ func TestHealthCheck_EndedContextIsTimeout(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			wantMessage := "DI: health check timeout: " + tt.ctxMessage
+			wantMessage := "doger: health check timeout: " + tt.ctxMessage
 
 			var wrongMessage, notSentinel, notCtxErr int
 			var firstErr error

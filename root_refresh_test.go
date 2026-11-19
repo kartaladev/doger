@@ -418,7 +418,7 @@ func TestScopeShutdown_JoinedWinnerPanics(t *testing.T) {
 		second := <-secondDone
 		if is.NotNil(second) {
 			is.False(second.Succeed)
-			is.ErrorContains(second.Errors[newServiceDescription(tenant.ID(), tenant.Name(), "")], "DI: scope shutdown did not complete")
+			is.ErrorContains(second.Errors[newServiceDescription(tenant.ID(), tenant.Name(), "")], "doger: scope shutdown did not complete")
 		}
 	})
 }

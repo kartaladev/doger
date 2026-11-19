@@ -117,7 +117,7 @@ func TestExplainNamedService_DefaultStateJSON(t *testing.T) {
 		t.Parallel()
 
 		var state DefaultState
-		assert.EqualError(t, state.UnmarshalText([]byte("maybe")), `DI: unknown default state "maybe"`)
+		assert.EqualError(t, state.UnmarshalText([]byte("maybe")), `doger: unknown default state "maybe"`)
 	})
 }
 

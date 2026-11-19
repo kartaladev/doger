@@ -23,7 +23,7 @@ func ExampleRootScope_AddContainerStartingHook() {
 	err := root.Start()
 	fmt.Println(err)
 	// Output:
-	// DI: container start aborted: missing DB_URL
+	// doger: container start aborted: missing DB_URL
 }
 
 type exampleMigration struct{}
@@ -71,7 +71,7 @@ func ExampleRootScope_AddContainerFailedHook() {
 	_ = root.Start()
 	// Output:
 	// db started
-	// start failed: DI: failed to start service `http` in scope `[root]`: port in use
+	// start failed: doger: failed to start service `http` in scope `[root]`: port in use
 	// db stopped
 }
 
@@ -232,7 +232,7 @@ func ExampleRootScope_AddScopeStartingHook() {
 	fmt.Println(root.Scope("tenant-b").Start())
 	// Output:
 	// <nil>
-	// DI: scope `tenant-b` start aborted: no config
+	// doger: scope `tenant-b` start aborted: no config
 }
 
 func ExampleRootScope_AddScopeStartedHook() {
