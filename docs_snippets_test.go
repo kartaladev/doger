@@ -54,13 +54,14 @@ func docsPanicNil() bool {
 	return errors.As(err, &panicNilErr) && errors.Is(err, doger.ErrProviderPanic)
 }
 
-func docsHealthEnded(ctx context.Context, injector *doger.RootScope) {
+func docsHealthEnded(ctx context.Context, injector *doger.RootScope) error {
 	// docs:health-ended
 	err := doger.HealthCheckNamedWithContext(ctx, injector, "db")
 	if errors.Is(err, context.Canceled) {
 		fmt.Println("the check's context was cancelled")
 	}
 	// docs:end
+	return err
 }
 
 func docsAlias() error {
@@ -135,7 +136,7 @@ func docsHealthTimeout() {
 	_ = injector
 }
 
-func docsProviderPanic(injector *doger.RootScope, errBroken error) {
+func docsProviderPanic(injector *doger.RootScope, errBroken error) error {
 	// docs:provider-panic
 	_, err := doger.Invoke[*Postgres](injector) // its provider panicked with errBroken
 	if errors.Is(err, errBroken) {              // still true: the panic value is wrapped
@@ -145,6 +146,7 @@ func docsProviderPanic(injector *doger.RootScope, errBroken error) {
 		fmt.Println("failed service:", serviceErr.Service)
 	}
 	// docs:end
+	return err
 }
 
 func docsProvideOptions() {
@@ -182,25 +184,29 @@ func docsBoundedShutdown(injector *doger.RootScope) {
 	// docs:end
 }
 
-func docsDuplicateScope(injector *doger.RootScope) {
+func docsDuplicateScope(injector *doger.RootScope) error {
 	// docs:duplicate-scope
-	defer func() {
-		if err, ok := recover().(error); ok && errors.Is(err, doger.ErrScopeAlreadyDeclared) {
-			fmt.Println(err) // doger: scope `tenant` has already been declared
-		}
-	}()
-	injector.Scope("tenant")
-	injector.Scope("tenant")
+	declareTwice := func() (err error) {
+		defer func() { err, _ = recover().(error) }()
+		injector.Scope("tenant")
+		injector.Scope("tenant")
+		return nil
+	}
+
+	err := declareTwice()
+	errors.Is(err, doger.ErrScopeAlreadyDeclared) // true: doger: scope `tenant` has already been declared
 	// docs:end
+	return err
 }
 
-func docsAfterShutdown(injector *doger.RootScope) {
+func docsAfterShutdown(injector *doger.RootScope) error {
 	// docs:after-shutdown
 	injector.Shutdown()
 
 	_, err := doger.Invoke[*Postgres](injector)
 	errors.Is(err, doger.ErrShutdown) // true: build a new container instead
 	// docs:end
+	return err
 }
 
 func docsStarter() {
@@ -208,7 +214,8 @@ func docsStarter() {
 	injector := doger.New()
 	doger.Provide(injector, NewServer, doger.AsStarter()) // started by injector.Start()
 
-	// or start every registered type with a Start method, as before:
+	// or opt into auto-detection, a doger feature: every registered type
+	// with a Start method is started too
 	auto := doger.NewWithOpts(&doger.InjectorOpts{EnableStarterAutoDetection: true})
 	// docs:end
 	_, _ = injector, auto
@@ -227,6 +234,11 @@ func docsPrerelease(root *doger.RootScope, ext doger.Extension) {
 	errors.Is(root.Start(), doger.ErrShutdown) // was ErrStartAfterShutdown
 	// docs:end
 }
+
+// docsCheck is a health check that passes.
+type docsCheck struct{}
+
+func (docsCheck) HealthCheck() error { return nil }
 
 // docsExtension is an extension that registers nothing.
 type docsExtension struct{}
@@ -324,12 +336,33 @@ func TestDocs_MigrationSnippetsRun(t *testing.T) {
 	t.Parallel()
 
 	docsBasic()
-	docsHealthEnded(t.Context(), doger.New())
+
+	healthy := doger.New()
+	doger.ProvideNamedValue(healthy, "db", docsCheck{})
+	ended, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := docsHealthEnded(ended, healthy); !errors.Is(err, doger.ErrHealthCheckTimeout) || !errors.Is(err, context.Canceled) {
+		t.Errorf("health check on an ended context: %v, want ErrHealthCheckTimeout and context.Canceled", err)
+	}
+
+	panicking := doger.New()
+	errBroken := errors.New("broken")
+	doger.Provide(panicking, func(doger.Injector) (*Postgres, error) { panic(errBroken) })
+	if err := docsProviderPanic(panicking, errBroken); !errors.Is(err, doger.ErrProviderPanic) || !errors.Is(err, errBroken) {
+		t.Errorf("provider panic: %v, want ErrProviderPanic wrapping the panic value", err)
+	}
+
+	if err := docsDuplicateScope(doger.New()); !errors.Is(err, doger.ErrScopeAlreadyDeclared) {
+		t.Errorf("duplicate scope: %v, want ErrScopeAlreadyDeclared", err)
+	}
+	if err := docsAfterShutdown(doger.New()); !errors.Is(err, doger.ErrShutdown) {
+		t.Errorf("invoke after shutdown: %v, want ErrShutdown", err)
+	}
+
 	docsLogger()
 	docsMaxFrames()
 	docsHooks()
 	docsHealthTimeout()
-	docsProviderPanic(doger.New(), errors.New("broken"))
 	docsBoundedShutdown(doger.New())
 	docsPrerelease(doger.New(), docsExtension{})
 	if !docsPanicNil() {
@@ -345,7 +378,5 @@ func TestDocs_MigrationSnippetsRun(t *testing.T) {
 	if err := docsShutdownReport(doger.New()); err != nil {
 		t.Error(err)
 	}
-	docsDuplicateScope(doger.New())
-	docsAfterShutdown(doger.New())
 	docsStarter()
 }

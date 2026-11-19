@@ -90,7 +90,7 @@ The HTTP adapters move under the root path and get a `doger` prefix, so they no 
 | `github.com/samber/do/http/gin/v2`   | `github.com/kartaladev/doger/http/gin`   | `dogergin`     |
 | `github.com/samber/do/http/std/v2`   | `github.com/kartaladev/doger/http/std`   | `dogerhttpstd` |
 
-The routes stay relative to the base path you pass. `dogerchi.Use` takes a `chi.Router` instead of a `*chi.Mux` (a wider parameter, so calls compile unchanged). The page functions and each adapter's `Use` gain a trailing `...dogerhttp.Option`: calls compile unchanged, but a variable of the old function type must be updated. The std adapter answers GET and HEAD only, and every adapter answers a render failure with a generic 500 body instead of the error text.
+The routes stay relative to the base path you pass. `dogerchi.Use` takes a `chi.Router` instead of a `*chi.Mux` (a wider parameter, so calls compile unchanged). The page functions and each adapter's `Use` gain a trailing `...dogerhttp.Option`, such as `dogerhttp.WithFullSourcePaths()` (show the full path of a service's source file instead of its base name) and `dogerhttp.WithErrorHandler(handler)` (receive the error of a page that fails to render): calls compile unchanged, but a variable of the old function type must be updated. The std adapter answers GET and HEAD only, and every adapter answers a render failure with a generic 500 body instead of the error text.
 
 ### Inferred service names of library types {#inferred-service-names}
 
@@ -329,7 +329,7 @@ if errors.Is(err, context.Canceled) {
 ### Shutdown {#shutdown}
 
 - **Run once.** Root `Shutdown` runs once per container; a later call returns a copy of the first report.
-- **The report's error.** `ShutdownReport.Err()` returns nil on success and otherwise an error matching every service's error; check it instead of the report itself. `Error()` returns `""` on success.
+- **The report's error.** `ShutdownReport.Err()` returns nil on success and otherwise an error matching every service's error; check it instead of the report itself. `Error()` returns `""` on success. `Unwrap()` returns one `*ServiceError` per failed service, and the report marshals to JSON with `succeed`, `shutdownTime`, `services` and `errors` (arrays ordered by scope, then service).
 
 <!-- snippet: shutdown-report -->
 
@@ -372,13 +372,15 @@ errors.Is(err, doger.ErrShutdown) // true: build a new container instead
 <!-- snippet: duplicate-scope -->
 
 ```go
-defer func() {
-	if err, ok := recover().(error); ok && errors.Is(err, doger.ErrScopeAlreadyDeclared) {
-		fmt.Println(err) // doger: scope `tenant` has already been declared
-	}
-}()
-injector.Scope("tenant")
-injector.Scope("tenant")
+declareTwice := func() (err error) {
+	defer func() { err, _ = recover().(error) }()
+	injector.Scope("tenant")
+	injector.Scope("tenant")
+	return nil
+}
+
+err := declareTwice()
+errors.Is(err, doger.ErrScopeAlreadyDeclared) // true: doger: scope `tenant` has already been declared
 ```
 
 ## New options {#new-options}
@@ -408,7 +410,7 @@ Every `InjectorOpts` field `samber/do` v2 had is kept, apart from `Logf`. These 
 
 ### Starting the container {#start}
 
-doger adds `Start`: it builds and starts, in dependency order, the services registered with `AsStarter()`. A `samber/do` application never called it, so nothing starts by surprise; to start every type with a `Start` method instead, turn auto-detection on:
+doger adds `Start`: it builds and starts, in dependency order, the services registered with `AsStarter()`. `samber/do` has no `Start`, so nothing starts until you opt services in. Auto-detection, which also starts every type with a `Start` method, is a doger feature you can turn on:
 
 <!-- snippet: starter -->
 
@@ -416,7 +418,8 @@ doger adds `Start`: it builds and starts, in dependency order, the services regi
 injector := doger.New()
 doger.Provide(injector, NewServer, doger.AsStarter()) // started by injector.Start()
 
-// or start every registered type with a Start method, as before:
+// or opt into auto-detection, a doger feature: every registered type
+// with a Start method is started too
 auto := doger.NewWithOpts(&doger.InjectorOpts{EnableStarterAutoDetection: true})
 ```
 
@@ -432,16 +435,17 @@ See [Upgrading to the Start lifecycle release](../upgrading/start-lifecycle.md) 
 
 Code written against an early doger version also meets these renames:
 
-| Before                                                                | After                                          | Migration                                                                                                |
-| --------------------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `Flatten()`                                                           | `ExtendIntoRoot()`                             | Rename the call; `Extend` with a nil root returns `ErrNilInjector`                                       |
-| `ExportAs(name)`                                                      | `WithExportName(name)`                         | Rename the call                                                                                          |
-| `var Runnable`                                                        | `func Runnable() Kind[Runner, struct{}]`       | `Runnable.Handle(...)` becomes `Runnable().Handle(...)`                                                  |
-| `HealthReportOption` struct                                           | a function type                                | None for `MatchHealthTags`/`IgnoreContainerPhase`; a `HealthReportOption{}` literal no longer compiles   |
-| `Stage`, `DependencySource` starting at 0                             | constants start at 1; 0 is invalid             | Use the named constants                                                                                  |
-| `DisableStarterAutoDetection`                                         | `EnableStarterAutoDetection`, false by default | Add `AsStarter()` to the services that must start                                                        |
-| `Clock clockwork.Clock`, `HealthScheduler` taking a `clockwork.Clock` | `doger.Clock`                                  | Wrap a clockwork clock with `dogerclockwork.Wrap` (module `github.com/kartaladev/doger/clock/clockwork`) |
-| `ErrStartAfterShutdown`                                               | `ErrShutdown`                                  | Rename the sentinel                                                                                      |
+| Before                                                                | After                                                                                                                                                                                                     | Migration                                                                                                                    |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `Flatten()`                                                           | `ExtendIntoRoot()`                                                                                                                                                                                        | Rename the call; `Extend` with a nil root returns `ErrNilInjector`                                                           |
+| `ExportAs(name)`                                                      | `WithExportName(name)`                                                                                                                                                                                    | Rename the call                                                                                                              |
+| `var Runnable`                                                        | `func Runnable() Kind[Runner, struct{}]`                                                                                                                                                                  | `Runnable.Handle(...)` becomes `Runnable().Handle(...)`                                                                      |
+| `HealthReportOption` struct                                           | a function type                                                                                                                                                                                           | None for `MatchHealthTags`/`IgnoreContainerPhase`; a `HealthReportOption{}` literal no longer compiles                       |
+| `Stage`, `DependencySource` starting at 0                             | constants start at 1; 0 is invalid                                                                                                                                                                        | Use the named constants                                                                                                      |
+| `DisableStarterAutoDetection`                                         | `EnableStarterAutoDetection`, false by default                                                                                                                                                            | Add `AsStarter()` to the services that must start                                                                            |
+| `Clock clockwork.Clock`, `HealthScheduler` taking a `clockwork.Clock` | `doger.Clock`                                                                                                                                                                                             | Wrap a clockwork clock with `dogerclockwork.Wrap` (module `github.com/kartaladev/doger/clock/clockwork`)                     |
+| `ErrStartAfterShutdown`                                               | `ErrShutdown`                                                                                                                                                                                             | Rename the sentinel                                                                                                          |
+| `dogergocron` running on any `clockwork.Clock` the container held     | it maps `doger.RealClock()` and clocks made by `dogerclockwork.Wrap`; any other `doger.Clock` makes `ScheduleHealthRounds` fail with `dogergocron.ErrUnsupportedClock`, leaving the container unmonitored | Wrap a consumer-written clock with `dogerclockwork.Wrap`, or pass your own gocron scheduler with `dogergocron.WithScheduler` |
 
 <!-- snippet: prerelease -->
 
