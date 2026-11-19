@@ -57,7 +57,83 @@ func skipFrame(selfPkg, goroot, function, file string) bool {
 // This function is used internally by the DI container to track service
 // invocation locations for debugging and explanation purposes.
 func NewFrameFromCaller() (Frame, bool) {
-	return callerFrame(runtime.Caller, funcNameForPC, 10)
+	stack := captureStack()
+	return callerFrame(stack.caller, stack.funcName, 10)
+}
+
+// outsideDepth is how many frames NewFrameFromCallerOutside inspects: enough
+// for a registration made through several layers of the library, such as
+// New calling a Package calling Eager.
+const outsideDepth = 32
+
+// NewFrameFromCallerOutside is NewFrameFromCaller that also skips the frames
+// whose function belongs to package pkgPath, except frames declared in
+// _test.go files. A library passes its own import path to report the
+// consumer's call site rather than its own code.
+//
+// Returns the first remaining frame and true, or false when none is found
+// within the inspected depth.
+func NewFrameFromCallerOutside(pkgPath string) (Frame, bool) {
+	stack := captureStack()
+	return callerFrameOutside(stack.caller, stack.funcName, outsideDepth, pkgPath)
+}
+
+// maxStackDepth is the size of the fixed array captureStack fills: the
+// largest depth any caller-frame search inspects.
+const maxStackDepth = outsideDepth
+
+// stack holds the frames of one runtime.Callers pass, innermost first, read
+// through caller and funcName in place of runtime.Caller and
+// runtime.FuncForPC. Index 0 is captureStack, as index 0 of runtime.Caller
+// is the function calling it.
+type stack struct {
+	frames [maxStackDepth]runtime.Frame
+	n      int
+	last   int // the index caller returned last, read by funcName
+}
+
+// captureStack records the stack of its caller in one runtime.Callers pass
+// into a fixed-size array.
+func captureStack() *stack {
+	var pcs [maxStackDepth]uintptr
+	// skip runtime.Callers: index 0 is captureStack
+	n := runtime.Callers(1, pcs[:])
+
+	s := &stack{}
+	frames := runtime.CallersFrames(pcs[:n])
+	for s.n < maxStackDepth {
+		frame, more := frames.Next()
+		if frame.PC == 0 {
+			break
+		}
+		s.frames[s.n] = frame
+		s.n++
+		if !more {
+			break
+		}
+	}
+
+	return s
+}
+
+// caller is runtime.Caller over the captured frames.
+func (s *stack) caller(skip int) (pc uintptr, file string, line int, ok bool) {
+	if skip < 0 || skip >= s.n {
+		return 0, "", 0, false
+	}
+	s.last = skip
+	frame := s.frames[skip]
+
+	return frame.PC, frame.File, frame.Line, true
+}
+
+// funcName returns the fully qualified function name of the frame caller
+// returned last, or false when it has none. callerFrameOutside calls it
+// right after caller, with the pc caller returned.
+func (s *stack) funcName(uintptr) (string, bool) {
+	function := s.frames[s.last].Function
+
+	return function, function != ""
 }
 
 // callerFrame returns the first of the first depth frames reported by caller
@@ -67,7 +143,18 @@ func callerFrame(
 	funcName func(pc uintptr) (string, bool),
 	depth int,
 ) (Frame, bool) {
-	// find the first frame that is not in this package
+	return callerFrameOutside(caller, funcName, depth, "")
+}
+
+// callerFrameOutside is callerFrame that also skips the non-test frames of
+// package pkgPath; an empty pkgPath skips nothing more.
+func callerFrameOutside(
+	caller func(skip int) (pc uintptr, file string, line int, ok bool),
+	funcName func(pc uintptr) (string, bool),
+	depth int,
+	pkgPath string,
+) (Frame, bool) {
+	// find the first frame that is not in this package, nor in pkgPath
 	for i := range depth {
 		pc, file, line, ok := caller(i)
 		if !ok {
@@ -78,23 +165,17 @@ func callerFrame(
 		if !ok {
 			break
 		}
-		if !skipFrame(selfPkgPath, goroot, name, file) {
-			return newFrame(pc, file, name, line), true
+		if skipFrame(selfPkgPath, goroot, name, file) {
+			continue
 		}
+		if pkgPath != "" && skipFrame(pkgPath, "", name, file) {
+			continue
+		}
+
+		return newFrame(pc, file, name, line), true
 	}
 
 	return Frame{}, false
-}
-
-// funcNameForPC returns the fully qualified name of the function containing
-// pc, or false when pc does not resolve to a function.
-func funcNameForPC(pc uintptr) (string, bool) {
-	f := runtime.FuncForPC(pc)
-	if f == nil {
-		return "", false
-	}
-
-	return f.Name(), true
 }
 
 // NewFrameFromPC creates a new Frame from a program counter (PC) value.

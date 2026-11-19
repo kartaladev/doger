@@ -107,20 +107,29 @@ func newServiceEntry(basePath string, scopeID string, description doger.ExplainI
 
 // dependencyEntry is a service of a dependency or dependent tree.
 type dependencyEntry struct {
-	Name     string
-	Link     string
+	Name string
+	Link string
+	// Ref marks a service already expanded elsewhere in the tree: it links
+	// to the service's page and has no children.
+	Ref      bool
 	Children []dependencyEntry
 }
 
 // dependencyEntries returns the entries of a dependency or dependent tree.
-// Each entry links to the page of its service and holds its own tree.
+// Each entry links to the page of its service and holds its own tree, except
+// a reference, which has none.
 func dependencyEntries(basePath string, services []doger.ExplainServiceDependencyOutput) []dependencyEntry {
 	return mAp(services, func(service doger.ExplainServiceDependencyOutput) dependencyEntry {
-		return dependencyEntry{
-			Name:     service.Service,
-			Link:     serviceLink(basePath, service.ScopeID, service.Service),
-			Children: dependencyEntries(basePath, service.Recursive),
+		entry := dependencyEntry{
+			Name: service.Service,
+			Link: serviceLink(basePath, service.ScopeID, service.Service),
+			Ref:  service.Ref,
 		}
+		if !service.Ref {
+			entry.Children = dependencyEntries(basePath, service.Recursive)
+		}
+
+		return entry
 	})
 }
 

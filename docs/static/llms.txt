@@ -3632,13 +3632,13 @@ for _, scope := range scopes {
 3. **Web UI**: Use the debugging web interface for visual inspection.
 
 ```go
-// Enable web UI for debugging
-doger.Provide(injector, func(i doger.Injector) (*doger.Options, error) {
-    return &doger.Options{
-        EnableWebUI: true,
-        WebUIPort:   8081,
-    }, nil
-})
+import dogerhttpstd "github.com/kartaladev/doger/http/std"
+
+// Mount the read-only debug UI behind your own auth middleware, on a
+// listener that is not public.
+mux := http.NewServeMux()
+mux.Handle("/debug/doger/", basicAuth(dogerhttpstd.Use("/debug/doger", injector)))
+http.ListenAndServe("127.0.0.1:8081", mux)
 ```
 
 ### Common Error Messages

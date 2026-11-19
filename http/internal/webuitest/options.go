@@ -12,8 +12,6 @@ import (
 	"testing"
 
 	"github.com/kartaladev/doger"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 var invokedAtRe = regexp.MustCompile(`Invoked at:([^\n<]*)`)
@@ -23,7 +21,9 @@ func InvokedAt(t *testing.T, page string) string {
 	t.Helper()
 
 	m := invokedAtRe.FindStringSubmatch(page)
-	require.Len(t, m, 2, "page has no \"Invoked at\" value")
+	if len(m) != 2 {
+		t.Fatalf("page has no \"Invoked at\" value")
+	}
 
 	return html.UnescapeString(strings.TrimSpace(m[1]))
 }
@@ -53,17 +53,17 @@ func SourcePathDisplay(t *testing.T, mount, mountFull Mount, source Source, suff
 
 			root, file, line := source(t)
 			resp := Get(t, tt.mount(t, root), ServicePath(root.ID(), "db"))
-			require.Equal(t, http.StatusOK, resp.StatusCode)
+			requireEqual(t, http.StatusOK, resp.StatusCode)
 
 			shown := InvokedAt(t, resp.Body)
 			location := ":" + strconv.Itoa(line)
 			if !tt.full {
-				assert.Equal(t, path.Base(file)+location, shown)
+				checkEqual(t, path.Base(file)+location, shown)
 				return
 			}
 
-			assert.True(t, strings.HasSuffix(shown, "/"+suffix+location), "%q does not end in %q", shown, suffix+location)
-			assert.True(t, strings.HasSuffix(file, strings.TrimSuffix(shown, location)), "%q is not the path of %q", shown, file)
+			checkTrue(t, strings.HasSuffix(shown, "/"+suffix+location), "%q does not end in %q", shown, suffix+location)
+			checkTrue(t, strings.HasSuffix(file, strings.TrimSuffix(shown, location)), "%q is not the path of %q", shown, file)
 		})
 	}
 }
@@ -114,12 +114,14 @@ func AssertRecorded(t *testing.T, r *ErrorRecorder, calls int) {
 	t.Helper()
 
 	recorded := r.Calls()
-	require.Len(t, recorded, calls)
+	requireEqual(t, calls, len(recorded), "error handler calls")
 
 	for _, call := range recorded {
-		require.Error(t, call.Err)
-		assert.Contains(t, call.Err.Error(), RenderFailurePath)
-		assert.Equal(t, RequestValue, call.RequestValue)
+		if call.Err == nil {
+			t.Fatalf("error handler called with a nil error")
+		}
+		checkContains(t, call.Err.Error(), RenderFailurePath)
+		checkEqual(t, RequestValue, call.RequestValue)
 	}
 }
 
@@ -128,8 +130,8 @@ func AssertRecorded(t *testing.T, r *ErrorRecorder, calls int) {
 func AssertGeneric500(t *testing.T, resp Response) {
 	t.Helper()
 
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-	assert.NotContains(t, resp.Body, RenderFailurePath)
-	assert.Equal(t, NoSniff, resp.Header.Get("X-Content-Type-Options"))
-	assert.Equal(t, ContentTypeText, resp.Header.Get("Content-Type"))
+	checkEqual(t, http.StatusInternalServerError, resp.StatusCode)
+	checkNotContains(t, resp.Body, RenderFailurePath)
+	checkEqual(t, NoSniff, resp.Header.Get("X-Content-Type-Options"))
+	checkEqual(t, ContentTypeText, resp.Header.Get("Content-Type"))
 }

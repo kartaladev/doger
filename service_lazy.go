@@ -31,7 +31,9 @@ type serviceLazy[T any] struct {
 	// checks read it without s.mu, which a build holds for the whole
 	// provider call.
 	published atomic.Pointer[T]
-	buildTime time.Duration
+	// buildTime holds the time.Duration of the last successful build, in
+	// nanoseconds; explain reads it without s.mu.
+	buildTime atomic.Int64
 	provider  Provider[T]
 
 	providerFrame stacktrace.Frame
@@ -46,9 +48,8 @@ func newServiceLazy[T any](name string, provider Provider[T]) *serviceLazy[T] {
 		name:     name,
 		typeName: inferServiceName[T](),
 
-		built:     false,
-		buildTime: 0,
-		provider:  provider,
+		built:    false,
+		provider: provider,
 
 		providerFrame:    providerFrame,
 		invocationFrames: newInvocationFrames(),
@@ -129,7 +130,7 @@ func (s *serviceLazy[T]) build(i Injector) (err error) {
 
 	s.instance = instance
 	s.built = true
-	s.buildTime = clock.Since(start)
+	s.buildTime.Store(int64(clock.Since(start)))
 	s.published.Store(&instance)
 
 	return nil
@@ -222,18 +223,18 @@ func (s *serviceLazy[T]) healthcheck(ctx context.Context) error {
 	return nil
 }
 
+// isShutdowner reads the published instance without s.mu, so explaining a
+// service never waits for its build.
 func (s *serviceLazy[T]) isShutdowner() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if !s.built {
+	instance, built := s.builtInstance()
+	if !built {
 		return false
 	}
 
-	_, ok1 := any(s.instance).(ShutdownerWithContextAndError)
-	_, ok2 := any(s.instance).(ShutdownerWithError)
-	_, ok3 := any(s.instance).(ShutdownerWithContext)
-	_, ok4 := any(s.instance).(Shutdowner)
+	_, ok1 := any(instance).(ShutdownerWithContextAndError)
+	_, ok2 := any(instance).(ShutdownerWithError)
+	_, ok3 := any(instance).(ShutdownerWithContext)
+	_, ok4 := any(instance).(Shutdowner)
 	return ok1 || ok2 || ok3 || ok4
 }
 
@@ -291,9 +292,8 @@ func (s *serviceLazy[T]) clone(newScope Injector) any {
 		opts:     s.opts,
 		typeName: s.typeName,
 
-		built:     false,
-		provider:  s.provider,
-		buildTime: 0,
+		built:    false,
+		provider: s.provider,
 
 		providerFrame:    s.providerFrame,
 		invocationFrames: newInvocationFrames(),
@@ -304,8 +304,11 @@ func (s *serviceLazy[T]) source() (stacktrace.Frame, []stacktrace.Frame) {
 	return s.providerFrame, s.invocationFrameList()
 }
 
+// getBuildTime reads the build time and the published instance without
+// s.mu, so explaining a service never waits for, nor races with, its build or
+// shutdown.
 func (s *serviceLazy[T]) getBuildTime() (time.Duration, bool) {
-	return s.buildTime, s.built
+	return time.Duration(s.buildTime.Load()), s.published.Load() != nil
 }
 
 func (s *serviceLazy[T]) getRegistrationIndex() uint64 {

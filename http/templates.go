@@ -172,10 +172,13 @@ const pagesTemplate = `
 {{- define "dependencyTree" -}}
 		<ul class="services">
 			{{range .}}
-				<li class="service">
+				<li class="service{{if .Ref}} ref{{end}}">
 					<a href="{{.Link}}">
 						{{.Name}}
 					</a>
+					{{if .Ref}}
+						<small title="shown expanded earlier in this tree">(reference)</small>
+					{{end}}
 					{{if .Children}}
 						{{template "dependencyTree" .Children}}
 					{{end}}

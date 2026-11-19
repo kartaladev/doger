@@ -30,9 +30,9 @@ func newServiceDescription(scopeID string, scopeName string, serviceName string)
 //   - ScopeName: The human-readable name of the scope containing the service
 //   - Service: The name of the service within the scope
 type ServiceDescription struct {
-	ScopeID   string
-	ScopeName string
-	Service   string
+	ScopeID   string `json:"scopeId"`
+	ScopeName string `json:"scopeName"`
+	Service   string `json:"service"`
 }
 
 // DependencySource says how a dependency edge was recorded. When an edge

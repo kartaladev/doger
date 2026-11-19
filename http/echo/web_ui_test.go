@@ -2,6 +2,7 @@ package dogerecho
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	dogerhttp "github.com/kartaladev/doger/http"
 	"github.com/kartaladev/doger/http/internal/webuitest"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -162,4 +164,25 @@ func TestWebUI_RootBasePath(t *testing.T) {
 
 		return webuitest.HandlerDoer(e)
 	})
+}
+
+func TestWebUI_BehindAuthMiddleware(t *testing.T) {
+	t.Parallel()
+	webuitest.BehindAuthMiddleware(t, func(t *testing.T, root doger.Injector) webuitest.Doer {
+		t.Helper()
+
+		e := echo.New()
+		auth := middleware.BasicAuth(func(user, password string, _ echo.Context) (bool, error) {
+			return subtle.ConstantTimeCompare([]byte(user), []byte(webuitest.AuthUser)) == 1 &&
+				subtle.ConstantTimeCompare([]byte(password), []byte(webuitest.AuthPassword)) == 1, nil
+		})
+		Use(e.Group(webuitest.BasePath, auth), webuitest.BasePath, root)
+
+		return webuitest.HandlerDoer(e)
+	})
+}
+
+func TestWebUI_LayeredGraphBounded(t *testing.T) {
+	t.Parallel()
+	webuitest.LayeredGraphBounded(t, mount)
 }
