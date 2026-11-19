@@ -180,6 +180,17 @@ type serviceWrapperBuildTime interface {
 	getBuildTime() (time.Duration, bool)
 }
 
+// buildStateOf returns the build time of a service and whether it is built,
+// read without waiting for a build in flight; a service with no build time
+// reports 0 and false.
+func buildStateOf(service any) (buildTime time.Duration, built bool) {
+	if timed, ok := service.(serviceWrapperBuildTime); ok {
+		return timed.getBuildTime()
+	}
+
+	return 0, false
+}
+
 // Interface compliance checks to ensure serviceWrapper[T] implements all required interfaces.
 // These compile-time checks help catch interface implementation errors early.
 var (
@@ -224,10 +235,7 @@ type serviceInfo struct {
 
 func inferServiceInfo(injector Injector, name string) (serviceInfo, bool) {
 	if serviceAny, ok := injector.serviceGet(name); ok {
-		var buildTime time.Duration
-		if lazy, ok := serviceAny.(serviceWrapperBuildTime); ok {
-			buildTime, _ = lazy.getBuildTime()
-		}
+		buildTime, _ := buildStateOf(serviceAny)
 
 		return serviceInfo{
 			name:             name,

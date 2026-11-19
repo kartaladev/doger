@@ -300,10 +300,7 @@ func ExplainNamedService(scope Injector, name string) (description ExplainServic
 		invoked = &frame
 	}
 
-	var buildTime time.Duration
-	if lazy, ok := serviceAny.(serviceWrapperBuildTime); ok {
-		buildTime, _ = lazy.getBuildTime()
-	}
+	buildTime, _ := buildStateOf(serviceAny)
 
 	output := ExplainServiceOutput{
 		ScopeID:          serviceScope.ID(),

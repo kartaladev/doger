@@ -168,9 +168,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 24. Explanation is free of data races
 
-- [ ] 24.1 RED: add `TestExplain_ConcurrentWithLazyBuild` and `TestExplain_ConcurrentWithShutdown` (scenarios "Explain concurrently with a lazy build", "Explain concurrently with shutdown"); verify `go test -race -run TestExplain_Concurrent .` fails with `WARNING: DATA RACE` at `getBuildTime`
-- [ ] 24.2 GREEN: read build time and built state under the read lock or from the published atomic state in lazy/default/eager `getBuildTime`; verify the 24.1 tests pass under `-race` and `make test` is green
-- [ ] 24.3 REFACTOR: Extract Function for the shared build-state snapshot used by explain and the web UI's `inferServiceInfo`; verify `make test` and `make lint` pass
+- [x] 24.1 RED: add `TestExplain_ConcurrentWithLazyBuild` and `TestExplain_ConcurrentWithShutdown` (scenarios "Explain concurrently with a lazy build", "Explain concurrently with shutdown"); verify `go test -race -run TestExplain_Concurrent .` fails with `WARNING: DATA RACE` at `getBuildTime`
+- [x] 24.2 GREEN: read build time and built state under the read lock or from the published atomic state in lazy/default/eager `getBuildTime`; verify the 24.1 tests pass under `-race` and `make test` is green
+- [x] 24.3 REFACTOR: Extract Function for the shared build-state snapshot used by explain and the web UI's `inferServiceInfo`; verify `make test` and `make lint` pass
 
 ## 25. Only successful builds record dependency edges
 

@@ -129,7 +129,7 @@ func lazyTestServiceOf[T any](s *serviceLazy[T]) lazyTestService {
 		getInstance:       func(i Injector) (any, error) { return s.getInstance(i) },
 		build:             s.build,
 		built:             func() bool { return s.built },
-		buildTime:         func() time.Duration { return s.buildTime },
+		buildTime:         func() time.Duration { return time.Duration(s.buildTime.Load()) },
 		instance:          func() any { return s.instance },
 	}
 }
@@ -527,10 +527,10 @@ func TestServiceLazy_build(t *testing.T) {
 	is.NotPanics(func() {
 		service3 := newServiceLazy("baz", provider3)
 		is.False(service3.built)
-		is.Empty(service3.buildTime)
+		is.Empty(service3.buildTime.Load())
 		_ = service3.build(i)
 		is.False(service3.built)
-		is.Empty(service3.buildTime)
+		is.Empty(service3.buildTime.Load())
 	})
 }
 
