@@ -338,7 +338,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 49. Lint configuration and adapter lint fixes
 
-- [ ] 49.1 Enable `gosec`, `errorlint` and `noctx` in `.golangci.yml` with an inline justification for every suppression; verify `make lint-all` reports the expected new issues (baseline for 47.2)
+- [x] 49.1 Enable `gosec`, `errorlint` and `noctx` in `.golangci.yml` with an inline justification for every suppression; verify `make lint-all` reports the expected new issues (baseline for 47.2)
 - [ ] 49.2 Fix the 8 adapter issues (errcheck in chi/echo/fiber, ST1013 in std/chi) and every gosec/errorlint/noctx finding across modules (scenario "The head of main is lint-clean"); verify `make lint-all` exits 0
 
 ## 50. Vulnerability gate and dependency floors

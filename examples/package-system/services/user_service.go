@@ -11,6 +11,7 @@ type UserService struct {
 	Logger Logger
 }
 
+// GetUser returns the user with id.
 func (u *UserService) GetUser(id string) string {
 	u.Logger.Log(fmt.Sprintf("Getting user with ID: %s", id))
 

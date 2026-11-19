@@ -1,6 +1,7 @@
 package dogerhttpstd_test
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -50,9 +51,9 @@ func ExampleUse() {
 	mux.Handle("/debug/doger/", auth(dogerhttpstd.Use("/debug/doger", injector)))
 
 	anonymous := httptest.NewRecorder()
-	mux.ServeHTTP(anonymous, httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody))
+	mux.ServeHTTP(anonymous, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody))
 
-	req := httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody)
 	req.SetBasicAuth("admin", "s3cret")
 	admin := httptest.NewRecorder()
 	mux.ServeHTTP(admin, req)

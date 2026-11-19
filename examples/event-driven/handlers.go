@@ -13,7 +13,7 @@ func (h *UserEventHandler) Handle(event Event) error {
 	h.Logger.Log(fmt.Sprintf("UserEventHandler: Processing event %s", event.Type))
 
 	switch event.Type {
-	case "user.created":
+	case EventUserCreated:
 		if userData, ok := event.Data.(UserCreatedEvent); ok {
 			h.Logger.Log(fmt.Sprintf("User created: ID=%s, Username=%s, Email=%s",
 				userData.UserID, userData.Username, userData.Email))
@@ -26,7 +26,7 @@ func (h *UserEventHandler) Handle(event Event) error {
 }
 
 func (h *UserEventHandler) GetEventType() string {
-	return "user.created"
+	return EventUserCreated
 }
 
 // OrderEventHandler handles order-related events.
@@ -38,7 +38,7 @@ func (h *OrderEventHandler) Handle(event Event) error {
 	h.Logger.Log(fmt.Sprintf("OrderEventHandler: Processing event %s", event.Type))
 
 	switch event.Type {
-	case "order.created":
+	case EventOrderCreated:
 		if orderData, ok := event.Data.(OrderCreatedEvent); ok {
 			h.Logger.Log(fmt.Sprintf("Order created: ID=%s, UserID=%s, Amount=%.2f",
 				orderData.OrderID, orderData.UserID, orderData.Amount))
@@ -51,7 +51,7 @@ func (h *OrderEventHandler) Handle(event Event) error {
 }
 
 func (h *OrderEventHandler) GetEventType() string {
-	return "order.created"
+	return EventOrderCreated
 }
 
 // PaymentEventHandler handles payment-related events.
@@ -63,7 +63,7 @@ func (h *PaymentEventHandler) Handle(event Event) error {
 	h.Logger.Log(fmt.Sprintf("PaymentEventHandler: Processing event %s", event.Type))
 
 	switch event.Type {
-	case "payment.processed":
+	case EventPaymentProcessed:
 		if paymentData, ok := event.Data.(PaymentProcessedEvent); ok {
 			h.Logger.Log(fmt.Sprintf("Payment processed: ID=%s, OrderID=%s, Amount=%.2f, Status=%s",
 				paymentData.PaymentID, paymentData.OrderID, paymentData.Amount, paymentData.Status))
@@ -76,5 +76,5 @@ func (h *PaymentEventHandler) Handle(event Event) error {
 }
 
 func (h *PaymentEventHandler) GetEventType() string {
-	return "payment.processed"
+	return EventPaymentProcessed
 }

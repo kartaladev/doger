@@ -32,7 +32,7 @@ func TestWritePage(t *testing.T) {
 			calls := 0
 			o := Options{ErrorHandler: func(context.Context, error) { calls++ }}
 			rec := httptest.NewRecorder()
-			WritePage(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody), "<p>page</p>", tt.err, o)
+			WritePage(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", http.NoBody), "<p>page</p>", tt.err, o)
 
 			assert.Equal(t, tt.status, rec.Code)
 			assert.Equal(t, tt.body, rec.Body.String())

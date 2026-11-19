@@ -1,6 +1,7 @@
 package dogerecho_test
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -41,9 +42,9 @@ func ExampleUse() {
 	dogerecho.Use(e.Group("/debug/doger", auth), "/debug/doger", injector)
 
 	anonymous := httptest.NewRecorder()
-	e.ServeHTTP(anonymous, httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody))
+	e.ServeHTTP(anonymous, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody))
 
-	req := httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody)
 	req.SetBasicAuth("admin", "s3cret")
 	admin := httptest.NewRecorder()
 	e.ServeHTTP(admin, req)

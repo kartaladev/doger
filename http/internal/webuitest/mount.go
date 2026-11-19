@@ -1,6 +1,7 @@
 package webuitest
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -157,7 +158,7 @@ func fetch(do Doer, target string) (int, error) {
 		return 0, err
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", http.NoBody)
 	req.URL = u
 	req.RequestURI = u.RequestURI()
 

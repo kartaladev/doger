@@ -13,6 +13,68 @@ func main() {
 	fmt.Println("This example demonstrates how to use doger.ExplainNamedService to")
 	fmt.Printf("understand service dependencies, lifecycle, and debugging information.\n\n")
 
+	registerServices(injector)
+
+	fmt.Println("\n=== Service Information ===")
+	fmt.Println("Available services:", injector.ListProvidedServices())
+
+	fmt.Println("\n=== Service Explanations (Before Invocation) ===")
+	fmt.Println("Explaining each service before any invocations:")
+
+	// Explain each service before invocation
+	services := []string{
+		"*main.Configuration",
+		"*main.Database",
+		"*main.Logger",
+		"*main.Cache",
+		"*main.UserService",
+		"*main.OrderService",
+		"*main.Application",
+	}
+
+	for _, serviceName := range services {
+		fmt.Printf("\n--- Explaining %s ---\n", serviceName)
+		explanation, found := doger.ExplainNamedService(injector, serviceName)
+		if found {
+			fmt.Println(explanation.String())
+		} else {
+			fmt.Println("Service not found")
+		}
+	}
+
+	fmt.Println("\n=== Dependency Graph Analysis ===")
+	fmt.Println("Analyzing dependency relationships:")
+
+	// Show dependency relationships
+	printExplanation(injector, "\nConfiguration (root service):", "*main.Configuration")
+
+	printExplanation(injector, "\nDatabase (depends on Configuration):", "*main.Database")
+
+	printExplanation(injector, "\nUserService (depends on Database, Cache, Logger):", "*main.UserService")
+
+	fmt.Println("\n=== Running Application ===")
+	fmt.Println("Invoking the Application service to trigger all dependencies:")
+	app := doger.MustInvoke[*Application](injector)
+	app.Run()
+
+	fmt.Println("\n=== Post-Execution Explanations ===")
+	fmt.Println("Explaining services after they have been invoked:")
+
+	// Show explanations after services have been invoked
+	printExplanation(injector, "\nApplication (after invocation):", "*main.Application")
+
+	fmt.Println("\n=== Service Explanation Benefits ===")
+	fmt.Println("1. Service dependency visualization - understand what depends on what")
+	fmt.Println("2. Service lifecycle tracking - see when services are created and invoked")
+	fmt.Println("3. Invocation source tracking - know which service triggered the creation")
+	fmt.Println("4. Service type information - understand the concrete types being used")
+	fmt.Println("5. Build time measurements - see how long service creation takes")
+	fmt.Println("6. Debugging support - identify dependency issues and circular references")
+}
+
+// registerServices registers the services of the example, each depending
+// on the ones registered before it.
+func registerServices(injector doger.Injector) {
 	// Step 1: Register Configuration (base service)
 	fmt.Println("Step 1: Registering Configuration (base service)")
 	doger.Provide(injector, func(i doger.Injector) (*Configuration, error) {
@@ -85,76 +147,12 @@ func main() {
 			OrderService: doger.MustInvoke[*OrderService](i),
 		}, nil
 	})
+}
 
-	fmt.Println("\n=== Service Information ===")
-	fmt.Println("Available services:", injector.ListProvidedServices())
-
-	fmt.Println("\n=== Service Explanations (Before Invocation) ===")
-	fmt.Println("Explaining each service before any invocations:")
-
-	// Explain each service before invocation
-	services := []string{
-		"*main.Configuration",
-		"*main.Database",
-		"*main.Logger",
-		"*main.Cache",
-		"*main.UserService",
-		"*main.OrderService",
-		"*main.Application",
+// printExplanation prints title, then the explanation of the service name.
+func printExplanation(injector doger.Injector, title, name string) {
+	fmt.Println(title)
+	if explanation, found := doger.ExplainNamedService(injector, name); found {
+		fmt.Println(explanation.String())
 	}
-
-	for _, serviceName := range services {
-		fmt.Printf("\n--- Explaining %s ---\n", serviceName)
-		explanation, found := doger.ExplainNamedService(injector, serviceName)
-		if found {
-			fmt.Println(explanation.String())
-		} else {
-			fmt.Println("Service not found")
-		}
-	}
-
-	fmt.Println("\n=== Dependency Graph Analysis ===")
-	fmt.Println("Analyzing dependency relationships:")
-
-	// Show dependency relationships
-	fmt.Println("\nConfiguration (root service):")
-	configExplanation, found := doger.ExplainNamedService(injector, "*main.Configuration")
-	if found {
-		fmt.Println(configExplanation.String())
-	}
-
-	fmt.Println("\nDatabase (depends on Configuration):")
-	dbExplanation, found := doger.ExplainNamedService(injector, "*main.Database")
-	if found {
-		fmt.Println(dbExplanation.String())
-	}
-
-	fmt.Println("\nUserService (depends on Database, Cache, Logger):")
-	userServiceExplanation, found := doger.ExplainNamedService(injector, "*main.UserService")
-	if found {
-		fmt.Println(userServiceExplanation.String())
-	}
-
-	fmt.Println("\n=== Running Application ===")
-	fmt.Println("Invoking the Application service to trigger all dependencies:")
-	app := doger.MustInvoke[*Application](injector)
-	app.Run()
-
-	fmt.Println("\n=== Post-Execution Explanations ===")
-	fmt.Println("Explaining services after they have been invoked:")
-
-	// Show explanations after services have been invoked
-	fmt.Println("\nApplication (after invocation):")
-	appExplanation, found := doger.ExplainNamedService(injector, "*main.Application")
-	if found {
-		fmt.Println(appExplanation.String())
-	}
-
-	fmt.Println("\n=== Service Explanation Benefits ===")
-	fmt.Println("1. Service dependency visualization - understand what depends on what")
-	fmt.Println("2. Service lifecycle tracking - see when services are created and invoked")
-	fmt.Println("3. Invocation source tracking - know which service triggered the creation")
-	fmt.Println("4. Service type information - understand the concrete types being used")
-	fmt.Println("5. Build time measurements - see how long service creation takes")
-	fmt.Println("6. Debugging support - identify dependency issues and circular references")
 }

@@ -1,6 +1,7 @@
 package dogerchi_test
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -52,14 +53,14 @@ func ExampleUse() {
 	dogerchi.Use(r.With(auth), "/debug/doger", injector)
 
 	anonymous := httptest.NewRecorder()
-	r.ServeHTTP(anonymous, httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody))
+	r.ServeHTTP(anonymous, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody))
 
-	empty := httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody)
+	empty := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody)
 	empty.SetBasicAuth("", "")
 	emptyCredentials := httptest.NewRecorder()
 	r.ServeHTTP(emptyCredentials, empty)
 
-	req := httptest.NewRequest(http.MethodGet, "/debug/doger/service", http.NoBody)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/debug/doger/service", http.NoBody)
 	req.SetBasicAuth("admin", "s3cret")
 	admin := httptest.NewRecorder()
 	r.ServeHTTP(admin, req)

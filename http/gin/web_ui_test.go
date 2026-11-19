@@ -75,7 +75,7 @@ func TestWebUI_RenderFailureGeneric500(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	c.Request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", http.NoBody)
 	response(c, "", errors.New(webuitest.RenderFailure), nil)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)

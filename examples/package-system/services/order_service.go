@@ -11,6 +11,7 @@ type OrderService struct {
 	Logger Logger
 }
 
+// GetOrder returns the order with id.
 func (o *OrderService) GetOrder(id string) string {
 	o.Logger.Log(fmt.Sprintf("Getting order with ID: %s", id))
 

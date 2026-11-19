@@ -58,7 +58,14 @@ func (s *Server) Start() error {
 	s.Logger.Log("  GET /health - Health check")
 	s.Logger.Log("  GET /debug/doger - DI container debug UI (DEBUG_USER / DEBUG_PASSWORD)")
 
-	return http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", s.Config.Port), router) //nolint:gosec
+	// a server with a read-header timeout, so slow clients cannot hold connections
+	server := &http.Server{
+		Addr:              fmt.Sprintf("127.0.0.1:%d", s.Config.Port),
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	return server.ListenAndServe()
 }
 
 // basicAuth returns a middleware that accepts only user with password. With

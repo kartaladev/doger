@@ -32,6 +32,12 @@ linters:
     # - wsl_v5
     - testifylint
     - modernize
+    # security issues; each finding is fixed or suppressed inline with its reason
+    - gosec
+    # error comparisons and type switches that miss wrapped errors
+    - errorlint
+    # HTTP requests built without a context
+    - noctx
 
   # disable noisy/controversial ones which you might enable later
   disable:
@@ -67,16 +73,24 @@ linters:
 
   exclusions:
     generated: lax
+    # make lint-all lints each example module from its own directory, where
+    # this path never matches: it only spares the examples when the root
+    # module is linted from the repository root
     paths:
       - examples$
     rules:
+      # providers and hooks take parameters fixed by their function types,
+      # which many implementations do not use
       - linters:
           - revive
         text: "^unused-parameter:"
+      # closing a response body has nothing actionable to report
       - linters:
           - errcheck
         text: "Error return value of `.*\\.Body\\.Close` is not checked"
-      # linters disabled in tests
+      # linters disabled in tests: repeated literals, long table-driven
+      # functions, ignored errors of setup calls and asserted type
+      # conversions are the norm there and are checked by the assertions
       - linters:
           - dupl
           - goconst
@@ -85,6 +99,7 @@ linters:
           - forcetypeassert
           - revive
         path: "_test\\.go$"
+      # the tests package holds black-box scenario tests, not API
       - linters:
           - revive
         path: "tests/"
