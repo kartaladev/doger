@@ -84,13 +84,14 @@ jobs:
 
     - name: Write the released go.mod files into logs
       run: |
-          for f in go.mod $(scripts/release-steps.sh modules | sed 's|$|/go.mod|'); do
-            echo "=== $f"
-            cat "$f"
+          for dir in $(scripts/release-steps.sh modules); do
+            echo "=== $dir/go.mod"
+            cat "$dir/go.mod"
           done
 
-    # the root module is tagged <semver>, each adapter <dir>/<semver>, for
-    # example http/gin/v0.2.0, scheduler/gocron/v0.2.0, clock/clockwork/v0.2.0
+    # every released module (derived from the go.mod files) is tagged: the
+    # root <semver>, every other module <dir>/<semver>, for example
+    # http/gin/v0.2.0, scheduler/gocron/v0.2.0, clock/clockwork/v0.2.0
     - name: Create tags
       env:
         SEMVER: ${{ inputs.semver }}
