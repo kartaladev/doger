@@ -2,6 +2,8 @@ package doger
 
 import (
 	"context"
+	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/jonboulle/clockwork"
@@ -128,21 +130,42 @@ func mustInjector(i Injector) Injector {
 // InjectorOpts contains all configuration options for the dependency injection container.
 // These options control logging, hooks, health checks, and other behavioral aspects
 // of the DI container.
+//
+// A container keeps its own copy of the options it was created with. Hook
+// fields are for configuration time; a plugin that adds hooks to a running
+// container uses the matching RootScope.AddXxxHook method, which is safe to
+// call at any time and applies from the next operation on.
 type InjectorOpts struct {
 	// HookBeforeRegistration is called before a service is registered in a scope.
 	// This hook can be used for validation, logging, or other pre-registration tasks.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddBeforeRegistrationHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookBeforeRegistration []func(scope *Scope, serviceName string)
 
 	// HookAfterRegistration is called after a service is successfully registered in a scope.
 	// This hook can be used for logging, metrics collection, or other post-registration tasks.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddAfterRegistrationHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookAfterRegistration []func(scope *Scope, serviceName string)
 
 	// HookBeforeInvocation is called before a service is invoked (instantiated).
 	// This hook can be used for logging, metrics, or other pre-invocation tasks.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddBeforeInvocationHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookBeforeInvocation []func(scope *Scope, serviceName string)
 
 	// HookAfterInvocation is called after a service is invoked, with the result error.
 	// This hook can be used for logging, metrics collection, or error handling.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddAfterInvocationHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookAfterInvocation []func(scope *Scope, serviceName string, err error)
 
 	// HookAfterBuild is called with each instance the container builds:
@@ -154,25 +177,45 @@ type InjectorOpts struct {
 	// after the service released its lock, so it may invoke, health-check or
 	// explain that service; another goroutine may obtain the instance before
 	// the hook returned.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddAfterBuildHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookAfterBuild []func(scope *Scope, serviceName string, instance any)
 
 	// HookBeforeShutdown is called before a service is shut down.
 	// This hook can be used for cleanup preparation or logging.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddBeforeShutdownHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookBeforeShutdown []func(scope *Scope, serviceName string)
 
 	// HookAfterShutdown is called after a service is shut down, with the result error.
 	// This hook can be used for logging, metrics collection, or error handling.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddAfterShutdownHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookAfterShutdown []func(scope *Scope, serviceName string, err error)
 
 	// HookBeforeStart is called by Start, Refresh and Scope.Start just before
 	// a service's Start method. With StartParallelism > 1, calls for
 	// different services may run concurrently.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddBeforeStartHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookBeforeStart []func(scope *Scope, serviceName string)
 
 	// HookAfterStart is called by Start, Refresh and Scope.Start just after a
 	// service's Start method, with the error the method returned, unwrapped
 	// (nil on success; a recovered panic as an error). With StartParallelism
 	// > 1, calls for different services may run concurrently.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddAfterStartHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookAfterStart []func(scope *Scope, serviceName string, err error)
 
 	// HookContainerStarting is called by the root container's first Start,
@@ -187,6 +230,10 @@ type InjectorOpts struct {
 	// deadline: Shutdown waits for the running Start, which waits for the hook.
 	// With a deadline, Shutdown returns a failed report when it expires, and
 	// Start then fails with an error matching ErrStartAfterShutdown.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddContainerStartingHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookContainerStarting []func(ctx context.Context, scope *RootScope) error
 
 	// HookContainerStarted is called by the first Start once its pipeline
@@ -194,11 +241,19 @@ type InjectorOpts struct {
 	// including the Runnable handler. It receives the context passed to
 	// Start. Use it for last wiring, such as route registration. It runs
 	// after the running Start was released, so it may call root Shutdown.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddContainerStartedHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookContainerStarted []func(ctx context.Context, scope *RootScope)
 
 	// HookContainerReady is called by the first Start after every Started
 	// hook has returned, with the context passed to Start. Use it to signal
 	// readiness to an orchestrator. It may call root Shutdown.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddContainerReadyHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookContainerReady []func(ctx context.Context, scope *RootScope)
 
 	// HookContainerFailed is called by the first Start when it fails after
@@ -208,6 +263,10 @@ type InjectorOpts struct {
 	// HookBeforeStart or HookAfterBuild), the Failed hooks run with an error
 	// wrapping the panic value before Start re-raises it; a Failed hook panic
 	// then goes to HookContainerPanic when set, and is logged otherwise.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddContainerFailedHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookContainerFailed []func(ctx context.Context, scope *RootScope, err error)
 
 	// HookContainerClosing is called by the root Shutdown that begins the
@@ -224,6 +283,10 @@ type InjectorOpts struct {
 	// Closed may run before or while the Started, Ready or Failed hooks run on
 	// the Start goroutine: hooks sharing state across these points must
 	// synchronize it.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddContainerClosingHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookContainerClosing []func(ctx context.Context, scope *RootScope)
 
 	// HookContainerClosed is called by the first root Shutdown once every
@@ -232,6 +295,10 @@ type InjectorOpts struct {
 	// unsupported. Concurrent Shutdown callers may return before the Closed
 	// hooks have run. A Closed hook may call root Shutdown, which returns a
 	// copy of the first report.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddContainerClosedHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookContainerClosed []func(ctx context.Context, scope *RootScope, report *ShutdownReport)
 
 	// HookScopeStarting is called by Scope.Start on a child scope, after its
@@ -240,6 +307,10 @@ type InjectorOpts struct {
 	// not called when the scope, or one of its ancestors, is shutting down:
 	// Scope.Start then starts nothing and returns nil. The root's own scope
 	// never fires scope hooks.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddScopeStartingHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookScopeStarting []func(ctx context.Context, scope *Scope) error
 
 	// HookScopeStarted is called by Scope.Start on a child scope once its
@@ -250,6 +321,10 @@ type InjectorOpts struct {
 	// hooks, so they may run during or before the Started hooks. A panic is
 	// recovered and dispatched like a container observer hook panic, with the
 	// point "scope-started" (see HookContainerPanic).
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddScopeStartedHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookScopeStarted []func(ctx context.Context, scope *Scope)
 
 	// HookScopeClosing is called when a child scope shuts down, directly or
@@ -262,11 +337,19 @@ type InjectorOpts struct {
 	// exception: its services shut down in dependency order with the
 	// parent's, so its Closing and Closed hooks run inside its parent's
 	// Closing/Closed pair, Closing just before its first service shuts down.
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddScopeClosingHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookScopeClosing []func(ctx context.Context, scope *Scope)
 
 	// HookScopeClosed is called when a child scope shut down, after its
 	// services. A panic is dispatched with the point "scope-closed" (see
 	// HookContainerPanic).
+	//
+	// The container copies this list when it is created: set it at
+	// configuration time. [RootScope.AddScopeClosedHook] adds a hook later, safely
+	// at any time, from the next operation on.
 	HookScopeClosed []func(ctx context.Context, scope *Scope)
 
 	// HookContainerPanic receives the first panic recovered from a Started,
@@ -452,97 +535,200 @@ func cloneHooks[T any](s []T) []T {
 	return append([]T{}, s...)
 }
 
-// initDefaults replaces unset options with their defaults: a no-op Logf,
-// empty hook lists and the real clock.
+// initDefaults replaces unset options with their defaults: a no-op Logf
+// and the real clock.
 func (o *InjectorOpts) initDefaults() {
 	if o.Logf == nil {
 		o.Logf = noOpLogf
 	}
-
-	emptyIfNil(&o.HookBeforeRegistration)
-	emptyIfNil(&o.HookAfterRegistration)
-	emptyIfNil(&o.HookBeforeInvocation)
-	emptyIfNil(&o.HookAfterInvocation)
-	emptyIfNil(&o.HookAfterBuild)
-	emptyIfNil(&o.HookBeforeShutdown)
-	emptyIfNil(&o.HookAfterShutdown)
-	emptyIfNil(&o.HookBeforeStart)
-	emptyIfNil(&o.HookAfterStart)
-	emptyIfNil(&o.HookContainerStarting)
-	emptyIfNil(&o.HookContainerStarted)
-	emptyIfNil(&o.HookContainerReady)
-	emptyIfNil(&o.HookContainerFailed)
-	emptyIfNil(&o.HookContainerClosing)
-	emptyIfNil(&o.HookContainerClosed)
-	emptyIfNil(&o.HookScopeStarting)
-	emptyIfNil(&o.HookScopeStarted)
-	emptyIfNil(&o.HookScopeClosing)
-	emptyIfNil(&o.HookScopeClosed)
 
 	if o.Clock == nil {
 		o.Clock = clockwork.NewRealClock()
 	}
 }
 
-// emptyIfNil replaces a nil slice with an empty one.
-func emptyIfNil[T any](s *[]T) {
-	if *s == nil {
-		*s = []T{}
-	}
-}
-
-func (o *InjectorOpts) onBeforeRegistration(scope *Scope, serviceName string) {
-	for _, fn := range o.HookBeforeRegistration {
+func (h *containerHooks) onBeforeRegistration(scope *Scope, serviceName string) {
+	for _, fn := range h.beforeRegistration.load() {
 		fn(scope, serviceName)
 	}
 }
 
-func (o *InjectorOpts) onAfterRegistration(scope *Scope, serviceName string) {
-	for _, fn := range o.HookAfterRegistration {
+func (h *containerHooks) onAfterRegistration(scope *Scope, serviceName string) {
+	for _, fn := range h.afterRegistration.load() {
 		fn(scope, serviceName)
 	}
 }
 
-func (o *InjectorOpts) onBeforeInvocation(scope *Scope, serviceName string) {
-	for _, fn := range o.HookBeforeInvocation {
+func (h *containerHooks) onBeforeInvocation(scope *Scope, serviceName string) {
+	for _, fn := range h.beforeInvocation.load() {
 		fn(scope, serviceName)
 	}
 }
 
-func (o *InjectorOpts) onAfterInvocation(scope *Scope, serviceName string, err error) {
-	for _, fn := range o.HookAfterInvocation {
+func (h *containerHooks) onAfterInvocation(scope *Scope, serviceName string, err error) {
+	for _, fn := range h.afterInvocation.load() {
 		fn(scope, serviceName, err)
 	}
 }
 
-func (o *InjectorOpts) onAfterBuild(scope *Scope, serviceName string, instance any) {
-	for _, fn := range o.HookAfterBuild {
+func (h *containerHooks) onAfterBuild(scope *Scope, serviceName string, instance any) {
+	for _, fn := range h.afterBuild.load() {
 		if fn != nil {
 			fn(scope, serviceName, instance)
 		}
 	}
 }
 
-func (o *InjectorOpts) onBeforeShutdown(scope *Scope, serviceName string) {
-	for _, fn := range o.HookBeforeShutdown {
+func (h *containerHooks) onBeforeShutdown(scope *Scope, serviceName string) {
+	for _, fn := range h.beforeShutdown.load() {
 		fn(scope, serviceName)
 	}
 }
 
-func (o *InjectorOpts) onAfterShutdown(scope *Scope, serviceName string, err error) {
-	for _, fn := range o.HookAfterShutdown {
+func (h *containerHooks) onAfterShutdown(scope *Scope, serviceName string, err error) {
+	for _, fn := range h.afterShutdown.load() {
 		fn(scope, serviceName, err)
 	}
 }
 
-func (o *InjectorOpts) onBeforeStart(scope *Scope, serviceName string) {
-	for _, fn := range o.HookBeforeStart {
+func (h *containerHooks) onBeforeStart(scope *Scope, serviceName string) {
+	for _, fn := range h.beforeStart.load() {
 		fn(scope, serviceName)
 	}
 }
 
-func (o *InjectorOpts) onAfterStart(scope *Scope, serviceName string, err error) {
-	for _, fn := range o.HookAfterStart {
+func (h *containerHooks) onAfterStart(scope *Scope, serviceName string, err error) {
+	for _, fn := range h.afterStart.load() {
 		fn(scope, serviceName, err)
+	}
+}
+
+// containerHooks holds the hook lists of a container. Each list is
+// copy-on-write: an adder stores a new slice, so a reader that loaded a list
+// once per operation runs it unchanged while hooks are added.
+type containerHooks struct {
+	beforeRegistration hookList[func(*Scope, string)]
+	afterRegistration  hookList[func(*Scope, string)]
+	beforeInvocation   hookList[func(*Scope, string)]
+	afterInvocation    hookList[func(*Scope, string, error)]
+	afterBuild         hookList[func(*Scope, string, any)]
+	beforeShutdown     hookList[func(*Scope, string)]
+	afterShutdown      hookList[func(*Scope, string, error)]
+	beforeStart        hookList[func(*Scope, string)]
+	afterStart         hookList[func(*Scope, string, error)]
+	containerStarting  hookList[func(context.Context, *RootScope) error]
+	containerStarted   hookList[func(context.Context, *RootScope)]
+	containerReady     hookList[func(context.Context, *RootScope)]
+	containerFailed    hookList[func(context.Context, *RootScope, error)]
+	containerClosing   hookList[func(context.Context, *RootScope)]
+	containerClosed    hookList[func(context.Context, *RootScope, *ShutdownReport)]
+	scopeStarting      hookList[func(context.Context, *Scope) error]
+	scopeStarted       hookList[func(context.Context, *Scope)]
+	scopeClosing       hookList[func(context.Context, *Scope)]
+	scopeClosed        hookList[func(context.Context, *Scope)]
+}
+
+// take moves the hook lists of opts, the container's own copy, into h.
+func (h *containerHooks) take(opts *InjectorOpts) {
+	h.beforeRegistration.set(opts.HookBeforeRegistration)
+	opts.HookBeforeRegistration = nil
+	h.afterRegistration.set(opts.HookAfterRegistration)
+	opts.HookAfterRegistration = nil
+	h.beforeInvocation.set(opts.HookBeforeInvocation)
+	opts.HookBeforeInvocation = nil
+	h.afterInvocation.set(opts.HookAfterInvocation)
+	opts.HookAfterInvocation = nil
+	h.afterBuild.set(opts.HookAfterBuild)
+	opts.HookAfterBuild = nil
+	h.beforeShutdown.set(opts.HookBeforeShutdown)
+	opts.HookBeforeShutdown = nil
+	h.afterShutdown.set(opts.HookAfterShutdown)
+	opts.HookAfterShutdown = nil
+	h.beforeStart.set(opts.HookBeforeStart)
+	opts.HookBeforeStart = nil
+	h.afterStart.set(opts.HookAfterStart)
+	opts.HookAfterStart = nil
+	h.containerStarting.set(opts.HookContainerStarting)
+	opts.HookContainerStarting = nil
+	h.containerStarted.set(opts.HookContainerStarted)
+	opts.HookContainerStarted = nil
+	h.containerReady.set(opts.HookContainerReady)
+	opts.HookContainerReady = nil
+	h.containerFailed.set(opts.HookContainerFailed)
+	opts.HookContainerFailed = nil
+	h.containerClosing.set(opts.HookContainerClosing)
+	opts.HookContainerClosing = nil
+	h.containerClosed.set(opts.HookContainerClosed)
+	opts.HookContainerClosed = nil
+	h.scopeStarting.set(opts.HookScopeStarting)
+	opts.HookScopeStarting = nil
+	h.scopeStarted.set(opts.HookScopeStarted)
+	opts.HookScopeStarted = nil
+	h.scopeClosing.set(opts.HookScopeClosing)
+	opts.HookScopeClosing = nil
+	h.scopeClosed.set(opts.HookScopeClosed)
+	opts.HookScopeClosed = nil
+}
+
+// optsWith returns a copy of opts holding the current hook lists of h.
+func (h *containerHooks) optsWith(opts *InjectorOpts) *InjectorOpts {
+	c := opts.clone()
+	c.HookBeforeRegistration = slices.Clone(h.beforeRegistration.load())
+	c.HookAfterRegistration = slices.Clone(h.afterRegistration.load())
+	c.HookBeforeInvocation = slices.Clone(h.beforeInvocation.load())
+	c.HookAfterInvocation = slices.Clone(h.afterInvocation.load())
+	c.HookAfterBuild = slices.Clone(h.afterBuild.load())
+	c.HookBeforeShutdown = slices.Clone(h.beforeShutdown.load())
+	c.HookAfterShutdown = slices.Clone(h.afterShutdown.load())
+	c.HookBeforeStart = slices.Clone(h.beforeStart.load())
+	c.HookAfterStart = slices.Clone(h.afterStart.load())
+	c.HookContainerStarting = slices.Clone(h.containerStarting.load())
+	c.HookContainerStarted = slices.Clone(h.containerStarted.load())
+	c.HookContainerReady = slices.Clone(h.containerReady.load())
+	c.HookContainerFailed = slices.Clone(h.containerFailed.load())
+	c.HookContainerClosing = slices.Clone(h.containerClosing.load())
+	c.HookContainerClosed = slices.Clone(h.containerClosed.load())
+	c.HookScopeStarting = slices.Clone(h.scopeStarting.load())
+	c.HookScopeStarted = slices.Clone(h.scopeStarted.load())
+	c.HookScopeClosing = slices.Clone(h.scopeClosing.load())
+	c.HookScopeClosed = slices.Clone(h.scopeClosed.load())
+
+	return c
+}
+
+// hookList is a copy-on-write list of hooks, safe for concurrent use. The
+// zero value is an empty list. A slice returned by load is never written.
+type hookList[F any] struct {
+	p atomic.Pointer[[]F]
+}
+
+// load returns the hooks of the list. A reader loads a list once per
+// operation and runs that slice unchanged while hooks are added.
+func (l *hookList[F]) load() []F {
+	if hooks := l.p.Load(); hooks != nil {
+		return *hooks
+	}
+
+	return nil
+}
+
+// set replaces the hooks of the list with a copy of hooks.
+func (l *hookList[F]) set(hooks []F) {
+	hooks = slices.Clone(hooks)
+	l.p.Store(&hooks)
+}
+
+// add appends hook to the list.
+func (l *hookList[F]) add(hook F) {
+	for {
+		old := l.p.Load()
+		var next []F
+		if old != nil {
+			next = slices.Clone(*old)
+		}
+		next = append(next, hook)
+		if l.p.CompareAndSwap(old, &next) {
+			return
+		}
 	}
 }

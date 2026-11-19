@@ -98,7 +98,7 @@ func ExportNamed[T any](from *Scope, name string, opts ...ExportOption) error {
 	export := wrapExportIfDefault(source, newServiceExport[T](published, owner, from.name, name))
 
 	root := owner.rootScope
-	root.opts.onBeforeRegistration(owner, published)
+	root.hooks.onBeforeRegistration(owner, published)
 
 	outcome, err := registerLocked(owner, published, export)
 	if err != nil {
@@ -108,7 +108,7 @@ func ExportNamed[T any](from *Scope, name string, opts ...ExportOption) error {
 		return nil
 	}
 
-	root.opts.onAfterRegistration(owner, published)
+	root.hooks.onAfterRegistration(owner, published)
 	root.opts.Logf("doger: service %s exported from scope %s", published, from.name)
 
 	return nil

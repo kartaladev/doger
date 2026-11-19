@@ -17,7 +17,7 @@ Container hooks run container-wide logic once per root container: when it starts
 | `HookContainerClosing`  | `func(context.Context, *RootScope)`                  | first root `Shutdown`, before any service shuts down |
 | `HookContainerClosed`   | `func(context.Context, *RootScope, *ShutdownReport)` | first root `Shutdown`, after every service shut down |
 
-Each hook list is a field of `doger.InjectorOpts`, and has a matching `RootScope.AddContainer<State>Hook` method, which ignores a nil hook. Register hooks at configuration time: the adders are not safe to call concurrently with `Start` or `Shutdown`. Each list is copied before it runs, so a hook added while a list runs applies from the next run of that list.
+Each hook list is a field of `doger.InjectorOpts`, and has a matching `RootScope.AddContainer<State>Hook` method, which ignores a nil hook. Set the fields at configuration time, and use the adders from plugins that add hooks to a running container: every adder is safe to call at any time, concurrently with any operation, and a hook it adds applies from the next operation on (whether an operation already running sees it is unspecified).
 
 ## Phases {#phases}
 

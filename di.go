@@ -211,7 +211,7 @@ func tryProvide[T any, A any](i Injector, name string, valueOrProvider A, servic
 	wrapped := wrapIfDefault(scope, service, options)
 
 	root := _i.RootScope()
-	root.opts.onBeforeRegistration(scope, name)
+	root.hooks.onBeforeRegistration(scope, name)
 
 	outcome, err := registerLocked(scope, name, wrapped)
 	if err != nil {
@@ -221,7 +221,7 @@ func tryProvide[T any, A any](i Injector, name string, valueOrProvider A, servic
 		return nil
 	}
 
-	root.opts.onAfterRegistration(scope, name)
+	root.hooks.onAfterRegistration(scope, name)
 	root.opts.Logf("doger: service %s injected", name)
 
 	return nil

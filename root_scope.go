@@ -75,6 +75,7 @@ func NewWithOpts(opts *InjectorOpts, packages ...func(Injector)) *RootScope {
 		opts:  opts,
 		kinds: defaultKinds,
 	}
+	root.hooks.take(opts)
 	root.health.root = root
 	initScope(&root.selfStorage, DefaultRootScopeName, root, nil)
 	root.self = &root.selfStorage
@@ -108,7 +109,8 @@ var _ Injector = (*RootScope)(nil)
 //   - Dependency graph management
 type RootScope struct {
 	self        *Scope        // The root scope instance
-	opts        *InjectorOpts // Configuration options
+	opts        *InjectorOpts // Configuration options; its hook lists moved to hooks
+	hooks       containerHooks
 	dag         *DAG          // Dependency graph for service relationships
 	healthSlots chan struct{} // one value per running health check started by a scope-wide check; nil when unlimited
 	health      healthMonitor // health checks in flight
@@ -290,7 +292,7 @@ func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 	report := s.shutdownAsWinner(ctx, ticket, &first)
 
 	// pointClosed: closeDone is closed, so code here may call Shutdown().
-	runObserverHooksWith(s, "container", "closed", s.opts.HookContainerClosed, &first, func(hook func(context.Context, *RootScope, *ShutdownReport)) {
+	runObserverHooksWith(s, "container", "closed", s.hooks.containerClosed.load(), &first, func(hook func(context.Context, *RootScope, *ShutdownReport)) {
 		hook(ctx, s, report)
 	})
 
@@ -321,7 +323,7 @@ func (s *RootScope) shutdownAsWinner(ctx context.Context, ticket closeTicket, fi
 	startErr := waitForStart(ctx, ticket)
 
 	// pointClosing
-	s.runObserverHooks(ctx, "closing", s.opts.HookContainerClosing, first)
+	s.runObserverHooks(ctx, "closing", s.hooks.containerClosing.load(), first)
 
 	report = s.self.shutdownWithContext(ctx, first)
 	if startErr != nil {
@@ -493,77 +495,163 @@ func (s *RootScope) onServiceInvoke(name string) { s.self.onServiceInvoke(name) 
  */
 
 // AddBeforeRegistrationHook adds a hook that will be called before a service is registered.
+// A nil hook is ignored. See [InjectorOpts.HookBeforeRegistration].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 //
 // Play: https://go.dev/play/p/IstT_4oovQD
 func (s *RootScope) AddBeforeRegistrationHook(hook func(*Scope, string)) {
-	s.opts.HookBeforeRegistration = append(s.opts.HookBeforeRegistration, hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.beforeRegistration.add(hook)
 }
 
 // AddAfterRegistrationHook adds a hook that will be called after a service is registered.
+// A nil hook is ignored. See [InjectorOpts.HookAfterRegistration].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 //
 // Play: https://go.dev/play/p/IstT_4oovQD
 func (s *RootScope) AddAfterRegistrationHook(hook func(*Scope, string)) {
-	s.opts.HookAfterRegistration = append(s.opts.HookAfterRegistration, hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.afterRegistration.add(hook)
 }
 
 // AddBeforeInvocationHook adds a hook that will be called before a service is invoked.
+// A nil hook is ignored. See [InjectorOpts.HookBeforeInvocation].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 //
 // Play: https://go.dev/play/p/IstT_4oovQD
 func (s *RootScope) AddBeforeInvocationHook(hook func(*Scope, string)) {
-	s.opts.HookBeforeInvocation = append(s.opts.HookBeforeInvocation, hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.beforeInvocation.add(hook)
 }
 
 // AddAfterInvocationHook adds a hook that will be called after a service is invoked.
+// A nil hook is ignored. See [InjectorOpts.HookAfterInvocation].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 //
 // Play: https://go.dev/play/p/IstT_4oovQD
 func (s *RootScope) AddAfterInvocationHook(hook func(*Scope, string, error)) {
-	s.opts.HookAfterInvocation = append(s.opts.HookAfterInvocation, hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.afterInvocation.add(hook)
 }
 
 // AddAfterBuildHook adds a hook that will be called with each instance the
 // container builds. A nil hook is ignored. See [InjectorOpts.HookAfterBuild].
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with invocations, Start or Shutdown.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddAfterBuildHook(hook func(*Scope, string, any)) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookAfterBuild = append(s.opts.HookAfterBuild, hook)
+	s.hooks.afterBuild.add(hook)
 }
 
 // AddBeforeShutdownHook adds a hook that will be called before a service is shutdown.
+// A nil hook is ignored. See [InjectorOpts.HookBeforeShutdown].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 //
 // Play: https://go.dev/play/p/FFKDcV0hMJx
 func (s *RootScope) AddBeforeShutdownHook(hook func(*Scope, string)) {
-	s.opts.HookBeforeShutdown = append(s.opts.HookBeforeShutdown, hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.beforeShutdown.add(hook)
 }
 
 // AddAfterShutdownHook adds a hook that will be called after a service is shutdown.
+// A nil hook is ignored. See [InjectorOpts.HookAfterShutdown].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 //
 // Play: https://go.dev/play/p/FFKDcV0hMJx
 func (s *RootScope) AddAfterShutdownHook(hook func(*Scope, string, error)) {
-	s.opts.HookAfterShutdown = append(s.opts.HookAfterShutdown, hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.afterShutdown.add(hook)
 }
 
 // AddBeforeStartHook adds a hook that will be called by Start, Refresh and
 // Scope.Start just before a service's Start method. See
 // [InjectorOpts.HookBeforeStart].
+// A nil hook is ignored.
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start, Refresh or Scope.Start.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddBeforeStartHook(hook func(*Scope, string)) {
-	s.opts.HookBeforeStart = append(s.opts.HookBeforeStart, hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.beforeStart.add(hook)
 }
 
 // AddAfterStartHook adds a hook that will be called by Start, Refresh and
 // Scope.Start just after a service's Start method, with the error the method
 // returned. See [InjectorOpts.HookAfterStart].
+// A nil hook is ignored.
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start, Refresh or Scope.Start.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddAfterStartHook(hook func(*Scope, string, error)) {
-	s.opts.HookAfterStart = append(s.opts.HookAfterStart, hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.afterStart.add(hook)
 }
 
 // AddContainerStartingHook adds a hook that will be called by the first
@@ -575,57 +663,70 @@ func (s *RootScope) AddAfterStartHook(hook func(*Scope, string, error)) {
 // The hook must not call root Shutdown synchronously without a deadline: it
 // would wait for the running Start, which waits for the hook. See
 // [InjectorOpts.HookContainerStarting].
+// A nil hook is ignored.
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddContainerStartingHook(hook func(context.Context, *RootScope) error) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookContainerStarting = append(s.opts.HookContainerStarting, hook)
+	s.hooks.containerStarting.add(hook)
 }
 
 // AddContainerStartedHook adds a hook that will be called by the first Start
 // once its pipeline succeeded. A nil hook is ignored. See
 // [InjectorOpts.HookContainerStarted].
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddContainerStartedHook(hook func(context.Context, *RootScope)) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookContainerStarted = append(s.opts.HookContainerStarted, hook)
+	s.hooks.containerStarted.add(hook)
 }
 
 // AddContainerReadyHook adds a hook that will be called by the first Start
 // after every Started hook returned. A nil hook is ignored. See
 // [InjectorOpts.HookContainerReady].
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddContainerReadyHook(hook func(context.Context, *RootScope)) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookContainerReady = append(s.opts.HookContainerReady, hook)
+	s.hooks.containerReady.add(hook)
 }
 
 // AddContainerFailedHook adds a hook that will be called by the first Start
 // when it fails, with the error Start returns. A nil hook is ignored. See
 // [InjectorOpts.HookContainerFailed].
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddContainerFailedHook(hook func(context.Context, *RootScope, error)) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookContainerFailed = append(s.opts.HookContainerFailed, hook)
+	s.hooks.containerFailed.add(hook)
 }
 
 // AddContainerClosingHook adds a hook that will be called by the first root
@@ -635,83 +736,103 @@ func (s *RootScope) AddContainerFailedHook(hook func(context.Context, *RootScope
 // would wait for the running Shutdown, which waits for the hook. See
 // [InjectorOpts.HookContainerClosing].
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddContainerClosingHook(hook func(context.Context, *RootScope)) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookContainerClosing = append(s.opts.HookContainerClosing, hook)
+	s.hooks.containerClosing.add(hook)
 }
 
 // AddContainerClosedHook adds a hook that will be called by the first root
 // Shutdown once every service is shut down, with its report. A nil hook is
 // ignored. See [InjectorOpts.HookContainerClosed].
+// A nil hook is ignored.
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddContainerClosedHook(hook func(context.Context, *RootScope, *ShutdownReport)) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookContainerClosed = append(s.opts.HookContainerClosed, hook)
+	s.hooks.containerClosed.add(hook)
 }
 
 // AddScopeStartingHook adds a hook that will be called by Scope.Start on a
 // child scope before anything starts; a non-nil error vetoes it. A nil hook
 // is ignored. See [InjectorOpts.HookScopeStarting].
+// A nil hook is ignored.
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddScopeStartingHook(hook func(context.Context, *Scope) error) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookScopeStarting = append(s.opts.HookScopeStarting, hook)
+	s.hooks.scopeStarting.add(hook)
 }
 
 // AddScopeStartedHook adds a hook that will be called by Scope.Start on a
 // child scope once its services started. A nil hook is ignored. See
 // [InjectorOpts.HookScopeStarted].
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddScopeStartedHook(hook func(context.Context, *Scope)) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookScopeStarted = append(s.opts.HookScopeStarted, hook)
+	s.hooks.scopeStarted.add(hook)
 }
 
 // AddScopeClosingHook adds a hook that will be called when a child scope
 // shuts down, before its services. A nil hook is ignored. See
 // [InjectorOpts.HookScopeClosing].
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddScopeClosingHook(hook func(context.Context, *Scope)) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookScopeClosing = append(s.opts.HookScopeClosing, hook)
+	s.hooks.scopeClosing.add(hook)
 }
 
 // AddScopeClosedHook adds a hook that will be called when a child scope shut
 // down. A nil hook is ignored. See [InjectorOpts.HookScopeClosed].
 //
-// Add hooks at configuration time: an adder is not safe to call
-// concurrently with Start or Shutdown. A running list is a copy, so a hook
-// added meanwhile applies from the next run of that list.
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown and other adders. The hook
+// applies to operations that begin after this call returned; whether an
+// operation already running sees it is unspecified. Use the InjectorOpts
+// field to set hooks at configuration time, and this method for plugins
+// that add hooks to a container they did not create.
 func (s *RootScope) AddScopeClosedHook(hook func(context.Context, *Scope)) {
 	if hook == nil {
 		return
 	}
-	s.opts.HookScopeClosed = append(s.opts.HookScopeClosed, hook)
+	s.hooks.scopeClosed.add(hook)
 }
 
 // Clone clones injector with provided services but not with invoked instances.
@@ -721,7 +842,7 @@ func (s *RootScope) AddScopeClosedHook(hook func(context.Context, *Scope)) {
 //
 // Play: https://go.dev/play/p/DqIlXhZ8c4t
 func (s *RootScope) Clone() *RootScope {
-	return s.CloneWithOpts(s.opts.clone())
+	return s.CloneWithOpts(s.hooks.optsWith(s.opts))
 }
 
 // CloneWithOpts clones injector with provided services but not with invoked instances, with options.

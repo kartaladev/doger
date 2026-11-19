@@ -57,10 +57,10 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 		return nil, serviceNotFound(injector, ErrServiceNotFound, chainTo(vScope, name))
 	}
 
-	injector.RootScope().opts.onBeforeInvocation(serviceScope, name)
+	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
 	child := newChildVirtualScope(vScope, serviceScope, name)
 	instance, err := service.getInstanceAny(child)
-	injector.RootScope().opts.onAfterInvocation(serviceScope, name, err)
+	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, err)
 	if err != nil {
 		return nil, err
 	}
@@ -112,10 +112,10 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 		return empty[T](), serviceTypeMismatch(inferServiceName[T](), serviceAny.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert
 	}
 
-	injector.RootScope().opts.onBeforeInvocation(serviceScope, name)
+	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
 	child := newChildVirtualScope(vScope, serviceScope, name)
 	instance, err := service.getInstance(child)
-	injector.RootScope().opts.onAfterInvocation(serviceScope, name, err)
+	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, err)
 
 	if err != nil {
 		return empty[T](), err
@@ -172,10 +172,10 @@ func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, re
 		}
 	}
 
-	injector.RootScope().opts.onBeforeInvocation(scope, hookName)
+	injector.RootScope().hooks.onBeforeInvocation(scope, hookName)
 	child := newChildVirtualScope(vScope, scope, realName)
 	instance, err := service.(serviceWrapperGetInstanceAny).getInstanceAny(child) //nolint:errcheck,forcetypeassert
-	injector.RootScope().opts.onAfterInvocation(scope, hookName, err)
+	injector.RootScope().hooks.onAfterInvocation(scope, hookName, err)
 	if err != nil {
 		return nil, err
 	}

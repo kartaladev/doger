@@ -133,17 +133,17 @@ func (s *RootScope) failAndRepanic(ctx context.Context, recovered any, err error
 // outcome: Started, then Ready, on success; Failed with err otherwise.
 func (s *RootScope) dispatchAfterStart(ctx context.Context, err error, first *hookPanic) {
 	if err != nil {
-		runObserverHooksWith(s, "container", "failed", s.opts.HookContainerFailed, first, func(hook func(context.Context, *RootScope, error)) {
+		runObserverHooksWith(s, "container", "failed", s.hooks.containerFailed.load(), first, func(hook func(context.Context, *RootScope, error)) {
 			hook(ctx, s, err)
 		})
 		return
 	}
 
-	s.runObserverHooks(ctx, "started", s.opts.HookContainerStarted, first)
+	s.runObserverHooks(ctx, "started", s.hooks.containerStarted.load(), first)
 	if s.markReady() {
 		s.startScheduling()
 	}
-	s.runObserverHooks(ctx, "ready", s.opts.HookContainerReady, first)
+	s.runObserverHooks(ctx, "ready", s.hooks.containerReady.load(), first)
 }
 
 // hookPanic is the first observer hook panic of one Start or Shutdown.
@@ -414,7 +414,7 @@ func (s *RootScope) runPipeline(ctx context.Context, roots []*Scope) (closing bo
 // error or panic is a veto: the remaining hooks do not run and Start fails
 // with it.
 func (s *RootScope) runStartingHooks(startCtx context.Context) error {
-	if err := runVetoHooks(startCtx, s.opts.HookContainerStarting, s, startingHookPanicError("container")); err != nil {
+	if err := runVetoHooks(startCtx, s.hooks.containerStarting.load(), s, startingHookPanicError("container")); err != nil {
 		return withAbortCause(startCtx, fmt.Errorf("doger: container start aborted: %w", err))
 	}
 
@@ -740,9 +740,9 @@ func (s *RootScope) startCandidate(startCtx context.Context, candidate *startCan
 		return startErr
 	}
 
-	s.opts.onBeforeStart(candidate.scope, candidate.name)
+	s.hooks.onBeforeStart(candidate.scope, candidate.name)
 	err := startInstance(startCtx, candidate.instance)
-	s.opts.onAfterStart(candidate.scope, candidate.name, err)
+	s.hooks.onAfterStart(candidate.scope, candidate.name, err)
 	if err != nil {
 		err = newStartError(StartOpStart, candidate.scope, candidate.name, "", err)
 		return withAbortCause(startCtx, err)

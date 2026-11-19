@@ -145,7 +145,7 @@ func (s *serviceLazy[T]) build(i Injector) (err error) {
 // with the scope behind the injector the wrapper received.
 func onAfterBuild(i Injector, name string, instance any) {
 	if scope := injectorScope(i); scope != nil {
-		scope.RootScope().opts.onAfterBuild(scope, name, instance)
+		scope.RootScope().hooks.onAfterBuild(scope, name, instance)
 	}
 }
 

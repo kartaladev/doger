@@ -1,8 +1,13 @@
 package doger
 
 import (
+	"context"
+	"fmt"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
@@ -123,7 +128,7 @@ func TestContainerOptions_CallerOptsUnchanged(t *testing.T) {
 			construct: func(opts *InjectorOpts) *RootScope { return NewWithOpts(opts) },
 			effective: func(t *testing.T, root *RootScope, opts *InjectorOpts) {
 				t.Helper()
-				assert.Len(t, root.opts.HookBeforeInvocation, 1)
+				assert.Len(t, root.hooks.beforeInvocation.load(), 1)
 				root.AddBeforeInvocationHook(func(*Scope, string) {})
 				assert.Nil(t, opts.HookBeforeInvocation[:2][1], "the caller's spare capacity was written")
 			},
@@ -240,4 +245,175 @@ func TestContainerOptions_SharedOptsIndependent(t *testing.T) {
 			assert.Len(t, opts.HookBeforeInvocation, 1)
 		})
 	}
+}
+
+// addHookSvc is a lazy service that is both a Starter and a Shutdowner.
+type addHookSvc struct{}
+
+func (*addHookSvc) Start(context.Context) error { return nil }
+func (*addHookSvc) Shutdown() error             { return nil }
+
+func TestContainerOptions_AddHookConcurrent(t *testing.T) {
+	t.Parallel()
+
+	invoke := func(root *RootScope, n int) {
+		_, _ = InvokeNamed[*addHookSvc](root, fmt.Sprintf("svc-%d", n%10))
+	}
+	shutdown := func(root *RootScope, n int) {
+		_ = ShutdownNamed(root, fmt.Sprintf("svc-%d", n%10))
+	}
+
+	tests := []struct {
+		name      string
+		operation func(root *RootScope, n int)
+		adder     func(root *RootScope, hook func())
+		// after, when set, runs once every goroutine returned.
+		after func(t *testing.T, root *RootScope, counter *atomic.Int64)
+	}{
+		{
+			name:      "before_invocation",
+			operation: invoke,
+			adder: func(root *RootScope, hook func()) {
+				root.AddBeforeInvocationHook(func(*Scope, string) { hook() })
+			},
+		},
+		{
+			name:      "after_invocation",
+			operation: invoke,
+			adder: func(root *RootScope, hook func()) {
+				root.AddAfterInvocationHook(func(*Scope, string, error) { hook() })
+			},
+		},
+		{
+			name: "before_registration",
+			operation: func(root *RootScope, n int) {
+				ProvideNamedValue(root, fmt.Sprintf("v-%d", n), n)
+			},
+			adder: func(root *RootScope, hook func()) {
+				root.AddBeforeRegistrationHook(func(*Scope, string) { hook() })
+			},
+		},
+		{
+			name:      "after_build",
+			operation: invoke,
+			adder: func(root *RootScope, hook func()) {
+				root.AddAfterBuildHook(func(*Scope, string, any) { hook() })
+			},
+		},
+		{
+			name:      "after_shutdown",
+			operation: shutdown,
+			adder: func(root *RootScope, hook func()) {
+				root.AddAfterShutdownHook(func(*Scope, string, error) { hook() })
+			},
+		},
+		{
+			name:      "before_shutdown",
+			operation: shutdown,
+			adder: func(root *RootScope, hook func()) {
+				root.AddBeforeShutdownHook(func(*Scope, string) { hook() })
+			},
+		},
+		{
+			name:      "before_start",
+			operation: func(root *RootScope, _ int) { _ = root.Start() },
+			adder: func(root *RootScope, hook func()) {
+				root.AddBeforeStartHook(func(*Scope, string) { hook() })
+			},
+		},
+		{
+			name:      "container_closing",
+			operation: func(root *RootScope, _ int) { _ = root.Shutdown() },
+			adder: func(root *RootScope, hook func()) {
+				root.AddContainerClosingHook(func(context.Context, *RootScope) { hook() })
+			},
+		},
+		{
+			name:      "nil_hook_ignored",
+			operation: invoke,
+			adder:     func(root *RootScope, _ func()) { root.AddBeforeInvocationHook(nil) },
+		},
+		{
+			name:      "same_hook_twice_runs_twice",
+			operation: invoke,
+			adder: func(root *RootScope, hook func()) {
+				same := func(*Scope, string) { hook() }
+				root.AddBeforeInvocationHook(same)
+				root.AddBeforeInvocationHook(same)
+			},
+			after: func(t *testing.T, root *RootScope, counter *atomic.Int64) {
+				t.Helper()
+				counter.Store(0)
+				invoke(root, 0)
+				assert.Equal(t, int64(2*4*100), counter.Load())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 10*time.Second)
+
+			root := New()
+			for i := range 10 {
+				ProvideNamed(root, fmt.Sprintf("svc-%d", i), func(Injector) (*addHookSvc, error) {
+					return &addHookSvc{}, nil
+				}, AsStarter())
+			}
+			var counter atomic.Int64
+			hook := func() { counter.Add(1) }
+
+			var (
+				adding    sync.WaitGroup
+				operating sync.WaitGroup
+				done      atomic.Bool
+				panics    atomic.Int64
+				next      atomic.Int64
+			)
+			for range 4 {
+				adding.Go(func() {
+					for range 100 {
+						if recoverPanic(func() { tt.adder(root, hook) }) != nil {
+							panics.Add(1)
+						}
+					}
+				})
+				operating.Go(func() {
+					for {
+						n := int(next.Add(1)) // unique across goroutines
+						if recoverPanic(func() { tt.operation(root, n) }) != nil {
+							panics.Add(1)
+						}
+						if done.Load() {
+							return
+						}
+					}
+				})
+			}
+			adding.Wait()
+			done.Store(true)
+			operating.Wait()
+
+			assert.Zero(t, panics.Load(), "no call panics")
+			if tt.after != nil {
+				tt.after(t, root, &counter)
+			}
+			_ = root.Shutdown()
+		})
+	}
+}
+
+func TestContainerOptions_AddHookAppliesNext(t *testing.T) {
+	t.Parallel()
+
+	root := New()
+	ProvideNamed(root, "svc", func(Injector) (int, error) { return 1, nil })
+	var recorded []string
+	root.AddBeforeInvocationHook(func(_ *Scope, name string) { recorded = append(recorded, name) })
+
+	_, err := InvokeNamed[int](root, "svc")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"svc"}, recorded)
 }

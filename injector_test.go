@@ -53,66 +53,66 @@ func TestInjectorOpts_addHook(t *testing.T) {
 	i := New()
 
 	//
-	is.Empty(i.opts.HookBeforeRegistration)
-	is.Empty(i.opts.HookAfterRegistration)
-	is.Empty(i.opts.HookBeforeInvocation)
-	is.Empty(i.opts.HookAfterInvocation)
-	is.Empty(i.opts.HookBeforeShutdown)
-	is.Empty(i.opts.HookAfterShutdown)
+	is.Empty(i.hooks.beforeRegistration.load())
+	is.Empty(i.hooks.afterRegistration.load())
+	is.Empty(i.hooks.beforeInvocation.load())
+	is.Empty(i.hooks.afterInvocation.load())
+	is.Empty(i.hooks.beforeShutdown.load())
+	is.Empty(i.hooks.afterShutdown.load())
 
 	//
 	i.AddBeforeRegistrationHook(hookBeforeRegistration)
-	is.Len(i.opts.HookBeforeRegistration, 1)
-	is.Empty(i.opts.HookAfterRegistration)
-	is.Empty(i.opts.HookBeforeInvocation)
-	is.Empty(i.opts.HookAfterInvocation)
-	is.Empty(i.opts.HookBeforeShutdown)
-	is.Empty(i.opts.HookAfterShutdown)
+	is.Len(i.hooks.beforeRegistration.load(), 1)
+	is.Empty(i.hooks.afterRegistration.load())
+	is.Empty(i.hooks.beforeInvocation.load())
+	is.Empty(i.hooks.afterInvocation.load())
+	is.Empty(i.hooks.beforeShutdown.load())
+	is.Empty(i.hooks.afterShutdown.load())
 
 	//
 	i.AddAfterRegistrationHook(hookAfterRegistration)
-	is.Len(i.opts.HookBeforeRegistration, 1)
-	is.Len(i.opts.HookAfterRegistration, 1)
-	is.Empty(i.opts.HookBeforeInvocation)
-	is.Empty(i.opts.HookAfterInvocation)
-	is.Empty(i.opts.HookBeforeShutdown)
-	is.Empty(i.opts.HookAfterShutdown)
+	is.Len(i.hooks.beforeRegistration.load(), 1)
+	is.Len(i.hooks.afterRegistration.load(), 1)
+	is.Empty(i.hooks.beforeInvocation.load())
+	is.Empty(i.hooks.afterInvocation.load())
+	is.Empty(i.hooks.beforeShutdown.load())
+	is.Empty(i.hooks.afterShutdown.load())
 
 	//
 	i.AddBeforeInvocationHook(hookBeforeInvocation)
-	is.Len(i.opts.HookBeforeRegistration, 1)
-	is.Len(i.opts.HookAfterRegistration, 1)
-	is.Len(i.opts.HookBeforeInvocation, 1)
-	is.Empty(i.opts.HookAfterInvocation)
-	is.Empty(i.opts.HookBeforeShutdown)
-	is.Empty(i.opts.HookAfterShutdown)
+	is.Len(i.hooks.beforeRegistration.load(), 1)
+	is.Len(i.hooks.afterRegistration.load(), 1)
+	is.Len(i.hooks.beforeInvocation.load(), 1)
+	is.Empty(i.hooks.afterInvocation.load())
+	is.Empty(i.hooks.beforeShutdown.load())
+	is.Empty(i.hooks.afterShutdown.load())
 
 	//
 	i.AddAfterInvocationHook(hookAfterInvocation)
-	is.Len(i.opts.HookBeforeRegistration, 1)
-	is.Len(i.opts.HookAfterRegistration, 1)
-	is.Len(i.opts.HookBeforeInvocation, 1)
-	is.Len(i.opts.HookAfterInvocation, 1)
-	is.Empty(i.opts.HookBeforeShutdown)
-	is.Empty(i.opts.HookAfterShutdown)
+	is.Len(i.hooks.beforeRegistration.load(), 1)
+	is.Len(i.hooks.afterRegistration.load(), 1)
+	is.Len(i.hooks.beforeInvocation.load(), 1)
+	is.Len(i.hooks.afterInvocation.load(), 1)
+	is.Empty(i.hooks.beforeShutdown.load())
+	is.Empty(i.hooks.afterShutdown.load())
 
 	//
 	i.AddBeforeShutdownHook(hookBeforeShutdown)
-	is.Len(i.opts.HookBeforeRegistration, 1)
-	is.Len(i.opts.HookAfterRegistration, 1)
-	is.Len(i.opts.HookBeforeInvocation, 1)
-	is.Len(i.opts.HookAfterInvocation, 1)
-	is.Len(i.opts.HookBeforeShutdown, 1)
-	is.Empty(i.opts.HookAfterShutdown)
+	is.Len(i.hooks.beforeRegistration.load(), 1)
+	is.Len(i.hooks.afterRegistration.load(), 1)
+	is.Len(i.hooks.beforeInvocation.load(), 1)
+	is.Len(i.hooks.afterInvocation.load(), 1)
+	is.Len(i.hooks.beforeShutdown.load(), 1)
+	is.Empty(i.hooks.afterShutdown.load())
 
 	//
 	i.AddAfterShutdownHook(hookAfterShutdown)
-	is.Len(i.opts.HookBeforeRegistration, 1)
-	is.Len(i.opts.HookAfterRegistration, 1)
-	is.Len(i.opts.HookBeforeInvocation, 1)
-	is.Len(i.opts.HookAfterInvocation, 1)
-	is.Len(i.opts.HookBeforeShutdown, 1)
-	is.Len(i.opts.HookAfterShutdown, 1)
+	is.Len(i.hooks.beforeRegistration.load(), 1)
+	is.Len(i.hooks.afterRegistration.load(), 1)
+	is.Len(i.hooks.beforeInvocation.load(), 1)
+	is.Len(i.hooks.afterInvocation.load(), 1)
+	is.Len(i.hooks.beforeShutdown.load(), 1)
+	is.Len(i.hooks.afterShutdown.load(), 1)
 }
 
 func TestInjectorOpts_onEvent(t *testing.T) {
@@ -138,12 +138,12 @@ func TestInjectorOpts_onEvent(t *testing.T) {
 		HookAfterShutdown:      []func(scope *Scope, serviceName string, err error){hookAfterShutdown},
 	})
 
-	i.opts.onBeforeRegistration(&Scope{id: "id", name: "name"}, "name")
-	i.opts.onAfterRegistration(&Scope{id: "id", name: "name"}, "name")
-	i.opts.onBeforeInvocation(&Scope{id: "id", name: "name"}, "name")
-	i.opts.onAfterInvocation(&Scope{id: "id", name: "name"}, "name", nil)
-	i.opts.onBeforeShutdown(&Scope{id: "id", name: "name"}, "name")
-	i.opts.onAfterShutdown(&Scope{id: "id", name: "name"}, "name", nil)
+	i.hooks.onBeforeRegistration(&Scope{id: "id", name: "name"}, "name")
+	i.hooks.onAfterRegistration(&Scope{id: "id", name: "name"}, "name")
+	i.hooks.onBeforeInvocation(&Scope{id: "id", name: "name"}, "name")
+	i.hooks.onAfterInvocation(&Scope{id: "id", name: "name"}, "name", nil)
+	i.hooks.onBeforeShutdown(&Scope{id: "id", name: "name"}, "name")
+	i.hooks.onAfterShutdown(&Scope{id: "id", name: "name"}, "name", nil)
 
 	is.Equal("abcdef", result)
 
@@ -156,12 +156,12 @@ func TestInjectorOpts_onEvent(t *testing.T) {
 
 	result = ""
 
-	i.opts.onBeforeRegistration(&Scope{id: "id", name: "name"}, "name")
-	i.opts.onAfterRegistration(&Scope{id: "id", name: "name"}, "name")
-	i.opts.onBeforeInvocation(&Scope{id: "id", name: "name"}, "name")
-	i.opts.onAfterInvocation(&Scope{id: "id", name: "name"}, "name", nil)
-	i.opts.onBeforeShutdown(&Scope{id: "id", name: "name"}, "name")
-	i.opts.onAfterShutdown(&Scope{id: "id", name: "name"}, "name", nil)
+	i.hooks.onBeforeRegistration(&Scope{id: "id", name: "name"}, "name")
+	i.hooks.onAfterRegistration(&Scope{id: "id", name: "name"}, "name")
+	i.hooks.onBeforeInvocation(&Scope{id: "id", name: "name"}, "name")
+	i.hooks.onAfterInvocation(&Scope{id: "id", name: "name"}, "name", nil)
+	i.hooks.onBeforeShutdown(&Scope{id: "id", name: "name"}, "name")
+	i.hooks.onAfterShutdown(&Scope{id: "id", name: "name"}, "name", nil)
 
 	is.Equal("a1b2c3d4e5f6", result)
 }

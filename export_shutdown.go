@@ -49,14 +49,14 @@ func (s *Scope) shutdownWithExports(ctx context.Context, first *hookPanic, isChi
 	pass.shutdownOtherChildren(first)
 
 	if isChild {
-		s.runScopeObserverHooks(ctx, "scope-closing", s.rootScope.opts.HookScopeClosing, first)
+		s.runScopeObserverHooks(ctx, "scope-closing", s.rootScope.hooks.scopeClosing.load(), first)
 	}
 
 	pass.shutdownServices(first)
 	s.logf("shut down services")
 
 	if isChild {
-		s.runScopeObserverHooks(ctx, "scope-closed", s.rootScope.opts.HookScopeClosed, first)
+		s.runScopeObserverHooks(ctx, "scope-closed", s.rootScope.hooks.scopeClosed.load(), first)
 	}
 
 	return pass.root.mergedReport()
@@ -224,7 +224,7 @@ func (p *exportPass) open(ready map[*passScope][]string, first *hookPanic) {
 	for _, member := range p.scopes {
 		if member.run != nil && !member.opened && len(ready[member]) > 0 {
 			member.opened = true
-			member.scope.runScopeObserverHooks(p.ctx, "scope-closing", member.scope.rootScope.opts.HookScopeClosing, first)
+			member.scope.runScopeObserverHooks(p.ctx, "scope-closing", member.scope.rootScope.hooks.scopeClosing.load(), first)
 		}
 	}
 }
@@ -261,12 +261,12 @@ func (p *exportPass) settle(first *hookPanic) {
 		}
 
 		scope := member.scope
-		hooks := scope.rootScope.opts
+		hooks := &scope.rootScope.hooks
 		if !member.opened {
 			member.opened = true
-			scope.runScopeObserverHooks(p.ctx, "scope-closing", hooks.HookScopeClosing, first)
+			scope.runScopeObserverHooks(p.ctx, "scope-closing", hooks.scopeClosing.load(), first)
 		}
-		scope.runScopeObserverHooks(p.ctx, "scope-closed", hooks.HookScopeClosed, first)
+		scope.runScopeObserverHooks(p.ctx, "scope-closed", hooks.scopeClosed.load(), first)
 
 		member.report = member.mergedReport()
 		if member.waitErr != nil {

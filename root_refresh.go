@@ -82,7 +82,7 @@ func (s *RootScope) scopeClosing(scope *Scope) bool {
 // The first error or panic is a veto: the remaining hooks do not run and
 // Scope.Start fails with it.
 func (s *RootScope) runScopeStartingHooks(ctx context.Context, scope *Scope) error {
-	if err := runVetoHooks(ctx, s.opts.HookScopeStarting, scope, startingHookPanicError("scope")); err != nil {
+	if err := runVetoHooks(ctx, s.hooks.scopeStarting.load(), scope, startingHookPanicError("scope")); err != nil {
 		return withAbortCause(ctx, libErrorf("scope `%s` start aborted: %w", scope.Name(), err))
 	}
 
@@ -201,7 +201,7 @@ func (s *Scope) StartWithContext(ctx context.Context) error {
 	// a scope shutting down started nothing: it has no Started hooks
 	if s != s.rootScope.self && !closing {
 		var first hookPanic
-		s.runScopeObserverHooks(ctx, "scope-started", s.rootScope.opts.HookScopeStarted, &first)
+		s.runScopeObserverHooks(ctx, "scope-started", s.rootScope.hooks.scopeStarted.load(), &first)
 		s.rootScope.dispatchFirstPanic(first)
 	}
 

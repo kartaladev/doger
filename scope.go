@@ -507,14 +507,14 @@ func (s *Scope) shutdownWithContext(ctx context.Context, first *hookPanic) (repo
 		rep1 := s.shutdownChildrenInParallel(ctx, first, func(*Scope) bool { return true })
 
 		if isChild {
-			s.runScopeObserverHooks(ctx, "scope-closing", s.rootScope.opts.HookScopeClosing, first)
+			s.runScopeObserverHooks(ctx, "scope-closing", s.rootScope.hooks.scopeClosing.load(), first)
 		}
 
 		rep2 := s.shutdownServicesInParallel(ctx)
 		s.logf("shut down services")
 
 		if isChild {
-			s.runScopeObserverHooks(ctx, "scope-closed", s.rootScope.opts.HookScopeClosed, first)
+			s.runScopeObserverHooks(ctx, "scope-closed", s.rootScope.hooks.scopeClosed.load(), first)
 		}
 
 		report = mergeShutdownReports(rep1, rep2)
@@ -795,7 +795,7 @@ func (s *Scope) clone(root *RootScope, parent *Scope) *Scope {
 		clone.countDefault(clone.services[name], 1)
 		clone.countExport(clone.services[name], 1)
 
-		s.rootScope.opts.onAfterRegistration(clone, name)
+		s.rootScope.hooks.onAfterRegistration(clone, name)
 	}
 
 	for name, index := range childScopes {
@@ -904,7 +904,7 @@ func (s *Scope) serviceGetRec(name string) (any, *Scope, bool) {
 //   - name: The name to register the service under
 //   - service: The service instance to register
 func (s *Scope) serviceSet(name string, service any) {
-	s.RootScope().opts.onBeforeRegistration(s, name)
+	s.RootScope().hooks.onBeforeRegistration(s, name)
 
 	s.mu.Lock()
 	replaced, ok := s.services[name]
@@ -920,7 +920,7 @@ func (s *Scope) serviceSet(name string, service any) {
 		s.RootScope().forget(replaced)
 	}
 
-	s.RootScope().opts.onAfterRegistration(s, name)
+	s.RootScope().hooks.onAfterRegistration(s, name)
 }
 
 // storeLocked stores service as name, in place of replaced (nil when the name
@@ -1094,9 +1094,9 @@ func (s *Scope) serviceShutdown(ctx context.Context, name string) error {
 	if ok {
 		s.logf("requested shutdown for service %s", name)
 
-		s.RootScope().opts.onBeforeShutdown(s, name)
+		s.RootScope().hooks.onBeforeShutdown(s, name)
 		err = service.shutdown(ctx)
-		s.RootScope().opts.onAfterShutdown(s, name, err)
+		s.RootScope().hooks.onAfterShutdown(s, name, err)
 	} else {
 		// Should never happen.
 		panic(libErrorf("service `%s` is not shutdowner", name))

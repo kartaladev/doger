@@ -38,10 +38,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 6. Hook registration is safe at any time
 
-- [ ] 6.1 RED: add `TestContainerOptions_AddHookConcurrent` (8 adder rows, nil hook, same hook twice) and `TestContainerOptions_AddHookAppliesNext` (scenarios "Adding hooks while the container works", "A hook added after Add returns applies to the next operation"); verify `go test -race -run 'TestContainerOptions_AddHook' .` reports `DATA RACE` at the `root_scope.go` adders
-- [ ] 6.2 GREEN: store every hook list copy-on-write behind an `atomic.Pointer` (adders load-copy-append-CAS, readers load once per operation); verify the 6.1 tests pass under `-race` and `make test` is green
-- [ ] 6.3 REFACTOR: Extract a generic `hookList[F]` type with `add`/`load` replacing the 19 hand-written adders; verify `make test` and `make lint` pass
-- [ ] 6.4 Docs: godoc of every `AddXxxHook` and `InjectorOpts` hook field (safe at any time, applies from the next operation; fields for configuration time, adders for plugins); verify `go doc RootScope.AddBeforeInvocationHook` shows the text
+- [x] 6.1 RED: add `TestContainerOptions_AddHookConcurrent` (8 adder rows, nil hook, same hook twice) and `TestContainerOptions_AddHookAppliesNext` (scenarios "Adding hooks while the container works", "A hook added after Add returns applies to the next operation"); verify `go test -race -run 'TestContainerOptions_AddHook' .` reports `DATA RACE` at the `root_scope.go` adders
+- [x] 6.2 GREEN: store every hook list copy-on-write behind an `atomic.Pointer` (adders load-copy-append-CAS, readers load once per operation); verify the 6.1 tests pass under `-race` and `make test` is green
+- [x] 6.3 REFACTOR: Extract a generic `hookList[F]` type with `add`/`load` replacing the 19 hand-written adders; verify `make test` and `make lint` pass
+- [x] 6.4 Docs: godoc of every `AddXxxHook` and `InjectorOpts` hook field (safe at any time, applies from the next operation; fields for configuration time, adders for plugins); verify `go doc RootScope.AddBeforeInvocationHook` shows the text
 
 ## 7. Invocation frames are capped per container
 
