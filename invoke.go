@@ -59,7 +59,7 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 
 	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
 	op := beginInvocation(serviceScope, name)
-	child := newChildVirtualScope(vScope, serviceScope, name)
+	child := invocationInjector(injector, vScope, serviceScope, name, service)
 	instance, err := service.getInstanceAny(child)
 	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, op.elapsed(), err)
 	if err != nil {
@@ -116,7 +116,7 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 
 	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
 	op := beginInvocation(serviceScope, name)
-	child := newChildVirtualScope(vScope, serviceScope, name)
+	child := invocationInjector(injector, vScope, serviceScope, name, service)
 	instance, err := service.getInstance(child)
 	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, op.elapsed(), err)
 
@@ -131,6 +131,20 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 	serviceScope.log(slog.LevelDebug, "service invoked", slog.String("service", name))
 
 	return instance, nil
+}
+
+// invocationInjector returns the injector a service's getInstance gets for
+// an invocation of name, registered in scope: a child virtual scope of
+// vScope, which carries the invoker chain a build needs, or injector itself
+// for a built lazy service. A built lazy service never builds again (it stays
+// built until its shutdown makes it terminal), so its getInstance uses its
+// injector only for the container options, which are the same.
+func invocationInjector(injector Injector, vScope *virtualScope, scope *Scope, name string, service any) Injector {
+	if lazy, ok := service.(interface{ isBuilt() bool }); ok && lazy.isBuilt() {
+		return injector
+	}
+
+	return newChildVirtualScope(vScope, scope, name)
 }
 
 // invokeByGenericType looks for a service by its type and invokes it.
@@ -188,7 +202,7 @@ func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, re
 
 	injector.RootScope().hooks.onBeforeInvocation(scope, hookName)
 	op := beginInvocation(scope, realName)
-	child := newChildVirtualScope(vScope, scope, realName)
+	child := invocationInjector(injector, vScope, scope, realName, service)
 	instance, err := service.(serviceWrapperGetInstanceAny).getInstanceAny(child) //nolint:errcheck,forcetypeassert // service was selected among stored service wrappers
 	injector.RootScope().hooks.onAfterInvocation(scope, hookName, op.elapsed(), err)
 	if err != nil {

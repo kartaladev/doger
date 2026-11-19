@@ -104,6 +104,13 @@ func (s *serviceLazy[T]) getInstance(i Injector) (T, error) {
 	return instance, nil
 }
 
+// isBuilt reports whether the instance was published, without a lock. Once
+// true, the service never needs another build: it stays built until its
+// shutdown makes it terminal.
+func (s *serviceLazy[T]) isBuilt() bool {
+	return s.published.Load() != nil
+}
+
 // instanceOrBuild returns the instance, building it first if needed, and
 // whether this call built it.
 func (s *serviceLazy[T]) instanceOrBuild(i Injector) (instance T, built bool, err error) {
