@@ -402,6 +402,7 @@ func (e *StartError) scopeName() string {
 // service once.
 func (e *StartError) causeText() string {
 	cause := e.Cause
+	//nolint:errorlint // only a direct ServiceError of this very service is shown by its cause; a wrapped one names another layer
 	if serviceErr, ok := cause.(*ServiceError); ok && serviceErr.Service == e.Service && serviceErr.Scope == e.scopeName() {
 		cause = serviceErr.Err
 	}

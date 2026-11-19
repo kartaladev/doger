@@ -169,7 +169,7 @@ func invokeByGenericType[T any](i Injector) (T, error) {
 		return empty[T](), nil
 	}
 
-	return instance.(T), nil //nolint:errcheck,forcetypeassert
+	return instance.(T), nil //nolint:errcheck,forcetypeassert // selected as assignable to T: a failed assertion is a bug and must panic
 }
 
 // invokeServiceInstance invokes a service already selected by type. Hooks

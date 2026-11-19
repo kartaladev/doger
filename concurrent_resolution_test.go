@@ -327,8 +327,8 @@ func TestConcurrentResolution_SharedDependencyNoFalseCycle(t *testing.T) {
 			is := assert.New(t)
 
 			root := New()
-			others := len(tt.deps)
-			var started atomic.Int32
+			others := int64(len(tt.deps))
+			var started atomic.Int64
 			var dCalls atomic.Int32
 			ProvideNamed(root, "d", func(Injector) (int, error) {
 				dCalls.Add(1)
@@ -336,7 +336,7 @@ func TestConcurrentResolution_SharedDependencyNoFalseCycle(t *testing.T) {
 				// some never start concurrently (the diamond's single
 				// goroutine starts them in turn)
 				deadline := time.Now().Add(200 * time.Millisecond)
-				for started.Load() < int32(others) && time.Now().Before(deadline) {
+				for started.Load() < others && time.Now().Before(deadline) {
 					runtime.Gosched()
 				}
 				return 1, nil

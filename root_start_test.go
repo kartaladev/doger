@@ -354,7 +354,7 @@ func TestStart_FamiliarStartNotStarted(t *testing.T) {
 			name: "*exec.Cmd",
 			register: func(t *testing.T, root *RootScope) func() bool {
 				t.Helper()
-				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^$")
+				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^$") //nolint:gosec // G204: re-runs this test binary with a fixed flag
 				ProvideNamedValue(root, "cmd", cmd)
 				return func() bool { return cmd.Process != nil }
 			},

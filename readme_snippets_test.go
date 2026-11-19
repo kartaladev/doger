@@ -82,7 +82,7 @@ func TestReadme_SnippetsCompiled(t *testing.T) {
 	regions := map[string]string{}
 	missing := map[string]bool{} // regions of an absent optional file
 	for path, optional := range readmeSnippetFiles {
-		content, err := os.ReadFile(path)
+		content, err := os.ReadFile(path) //nolint:gosec // G304: path comes from the fixed table of repository files above
 		if optional && errors.Is(err, fs.ErrNotExist) {
 			missing["gocron"] = true
 			continue
