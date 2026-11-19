@@ -56,6 +56,7 @@ Examples:
   | doger.ExportNamed of "svc" from child "ext" to the root       | service exported              | DEBUG | scope=ext service=svc                       |
   | root.Start(ctx) succeeding                                    | container started             | INFO  | scope=[root]                                |
   | root.Start(ctx) reaching PhaseReady                           | container ready               | INFO  | scope=[root]                                |
+  | root.Shutdown() requested, first record of the winning call    | requested shutdown            | DEBUG | scope=[root]                                |
   | root.Shutdown() beginning                                     | container closing             | INFO  | scope=[root]                                |
   | root.Shutdown() completing                                    | container closed              | INFO  | scope=[root]                                |
   | root.Shutdown() where "svc" Shutdown returns errors.New("x")  | service shutdown failed       | ERROR | scope=[root] service=svc error=x            |

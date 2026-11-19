@@ -333,6 +333,12 @@ func TestLogging_Events(t *testing.T) {
 			attrs: map[string]string{"scope": "[root]"},
 		},
 		{
+			name:    "requested_shutdown",
+			trigger: func(_ *testing.T, root *RootScope) { _ = root.Shutdown() },
+			message: "requested shutdown", level: slog.LevelDebug,
+			attrs: map[string]string{"scope": "[root]"},
+		},
+		{
 			name:    "closing",
 			trigger: func(_ *testing.T, root *RootScope) { _ = root.Shutdown() },
 			message: "container closing", level: slog.LevelInfo,

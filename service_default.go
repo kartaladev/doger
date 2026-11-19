@@ -207,6 +207,9 @@ func (s *serviceDefault[T]) getInstance(i Injector) (T, error) {
 	// override of it in the target scope is seen.
 	name := s.getName()
 	target, ok := s.targetScope.serviceGet(name)
+	if _, isDefault := target.(serviceWrapperDefault); isDefault {
+		ok = false // a default never yields to a default
+	}
 	if !ok {
 		return empty[T](), serviceNotFound(s.targetScope, ErrServiceNotFound, []string{name})
 	}

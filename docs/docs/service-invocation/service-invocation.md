@@ -99,9 +99,21 @@ bus, err := doger.InvokeStruct[Bus](injector)
 
 - An empty collection is an empty, non-nil slice or map.
 - Inside a provider, the service that provider builds is not a member.
-- `*` on any other field kind fails with `` doger: tag `*` requires a slice or map[string] field, got `S.F` ``.
+- `*` on any other field kind fails with `` doger: tag `*` requires a slice or map[string] field, got `S.F` ``, an error matching `doger.ErrStructInjection`.
 - A member failure fails `InvokeStruct` with the collection error.
 - It works with a custom tag key too (`inject:"*"`).
+
+### Invalid targets and nil interfaces {#invokestruct-invalid-targets}
+
+A target `InvokeStruct` cannot inject returns the zero value and an error matching `doger.ErrStructInjection`, whose message names the type or field: a type that is not a struct or a pointer chain to one (an interface type or `int`, for example), a recursive pointer type such as `type R *R`, a service not assignable to its field, or `*` on a field that is not a slice or `map[string]`. A dependency that fails to resolve returns its own error instead (for example one matching `doger.ErrServiceNotFound`), which does not match `ErrStructInjection`.
+
+A named pointer type to a struct, such as `type AppPtr *App`, is a valid target.
+
+A service whose value is a nil interface, such as `doger.ProvideNamedValue[io.Reader](i, "reader", nil)`, sets its field to the zero value when the service's type is assignable to the field; otherwise the error is the "not assignable" one. `InvokeAs`, and an alias of such a service, return the zero value and a nil error.
+
+A nil interface has no dynamic type, so it is checked by the service's declared type: a nil `io.ReadWriter` service cannot fill a `*bytes.Buffer` field, even though a non-nil `*bytes.Buffer` value of that same service could.
+
+Inside a provider, `MustInvoke*` turns any failure of a dependency into a panic, which the container reports as an error matching `doger.ErrProviderPanic` for the outer service (the dependency's error still matches with `errors.Is`). Prefer `Invoke*` in providers and return the error, so a missing or failing dependency is not reported as a panic.
 
 ### Implicit aliasing behavior with InvokeStruct {#implicit-aliasing-behavior-with-invokestruct}
 

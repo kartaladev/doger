@@ -222,7 +222,9 @@ func TestScopeShutdown_WaitsForStart(t *testing.T) {
 				tenant := root.Scope("tenant")
 				events := &callRecorder{}
 				w := newGatedStarter(events)
-				provideW := func() { ProvideNamed(tenant, "w", func(Injector) (*gatedStarter, error) { return w, nil }) }
+				provideW := func() {
+					ProvideNamed(tenant, "w", func(Injector) (*gatedStarter, error) { return w, nil }, AsStarter())
+				}
 
 				runErr := make(chan error, 1)
 				go func() { runErr <- tt.run(root, tenant, provideW) }()
@@ -492,7 +494,7 @@ func TestScopeShutdown_CreatedDuringStart(t *testing.T) {
 		}
 		tmpReport = tmp.Shutdown()
 		return &countedStarter{name: "a", starts: starts}, nil
-	})
+	}, AsStarter())
 
 	err := root.Start()
 
@@ -512,7 +514,7 @@ func TestScopeShutdown_WaitBounded(t *testing.T) {
 		tenant := root.Scope("tenant")
 		events := &callRecorder{}
 		w := newGatedStarter(events)
-		ProvideNamed(tenant, "w", func(Injector) (*gatedStarter, error) { return w, nil })
+		ProvideNamed(tenant, "w", func(Injector) (*gatedStarter, error) { return w, nil }, AsStarter())
 		runErr := make(chan error, 1)
 		go func() { runErr <- root.Refresh() }()
 		<-w.entered
@@ -554,7 +556,7 @@ func TestStartError_Incremental(t *testing.T) {
 		{
 			name: "provider returns errBuild, root.Refresh()",
 			setup: func(_ *RootScope, tenant *Scope) {
-				ProvideNamed(tenant, "b", func(Injector) (*startWithErr, error) { return nil, errBuild })
+				ProvideNamed(tenant, "b", func(Injector) (*startWithErr, error) { return nil, errBuild }, AsStarter())
 			},
 			call:    func(root *RootScope, _ *Scope) error { return root.Refresh() },
 			service: "b", op: StartOpBuild, cause: errBuild,
@@ -622,7 +624,7 @@ func TestScopeStart_AncestorsNotStarted(t *testing.T) {
 			return nil, err
 		}
 		return &countedStarter{name: "worker", starts: starts}, nil
-	})
+	}, AsStarter())
 
 	err := tenant.Start()
 
@@ -641,7 +643,7 @@ func TestRootScope_ForgetsOverriddenServices(t *testing.T) {
 	provideCountedStarter(root, starts, "s")
 	require.NoError(t, root.Start())
 	for range 5 {
-		OverrideNamed(root, "s", func(Injector) (*countedStarter, error) { return &countedStarter{name: "s", starts: starts}, nil })
+		OverrideNamed(root, "s", func(Injector) (*countedStarter, error) { return &countedStarter{name: "s", starts: starts}, nil }, AsStarter())
 		require.NoError(t, root.Refresh())
 	}
 
@@ -759,7 +761,7 @@ func TestRefresh_RetriesFailedStarter(t *testing.T) {
 					return nil, errBoom
 				}
 				return late, nil
-			})
+			}, AsStarter())
 
 			is.ErrorIs(tt.run(root, scope), errBoom)
 			is.NoError(tt.run(root, scope))

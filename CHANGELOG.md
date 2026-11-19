@@ -18,7 +18,7 @@ Each entry gives the change and its migration.
 |---|---|---|
 | `As`, `AsNamed`, `MustAs`, `MustAsNamed` | `Alias`, `AliasNamed`, `MustAlias`, `MustAliasNamed` | Rename the calls. `Bind`/`BindNamed` are unchanged. |
 | `ExportAs(name)` | `WithExportName(name)` | Rename the call. |
-| `Flatten()` | `ExtendIntoRoot()` | Rename the call. |
+| `Flatten()` | `ExtendIntoRoot()` | Rename the call. `Extend` with a nil root, typed-nil included, returns `ErrNilInjector`. |
 | `HealthReportOption` (struct) | `type HealthReportOption func(*healthReportOptions)` | None for callers of `MatchHealthTags`/`IgnoreContainerPhase`. A zero value no longer exists. |
 | `Stage` and `DependencySource` start at 0 | Constants start at 1; 0 is invalid, its `String()` is `"unknown"`, and marshalling or using it fails | Use the named constants. |
 | `var Runnable` | `func Runnable() Kind[Runner, struct{}]` | `Runnable.Handle(...)` becomes `Runnable().Handle(...)`, and `Runnable.With(m)` becomes `Runnable().With(m)`. |
@@ -44,6 +44,21 @@ Each entry gives the change and its migration.
 | Typed-nil injector, root or scope | Treated as nil: `ErrNilInjector` | Pass a real container. |
 | std web UI answered any method | GET and HEAD only; other methods get a 4xx | None for browsers. |
 | chi/std wrote `err.Error()` on a render failure | Generic 500 body on every adapter | None. |
+
+### Changed
+
+- New sentinel `ErrStructInjection`: the errors of `InvokeStruct` and
+  `MustInvokeStruct` for an invalid target (not a struct, a recursive
+  pointer type, a service not assignable to its field, `*` on a field that
+  is not a collection) match it. Their messages are unchanged apart from
+  the prefix. A recursive pointer type used to overflow the stack, and an
+  interface target type used to panic; both now return this error.
+- A service whose value is a nil interface no longer panics in `InvokeAs`
+  or `InvokeStruct`, and an alias of it no longer fails with a type
+  mismatch: it gives the zero value, or the "not assignable" error when
+  its declared type does not fit the field.
+- Not-found errors list at most 10 services, sorted, followed by
+  `and N more`; `ExplainInjector` still lists all of them.
 
 ### Release and supply chain
 

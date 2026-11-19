@@ -76,7 +76,7 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
     HealthCheckSingleTimeout: 0,                      // 0: single-service checks keep HealthCheckTimeout
 
     Clock: nil, // nil: the real clock
-    DisableStarterAutoDetection: false, // true: Start only starts AsStarter() services
+    EnableStarterAutoDetection: false, // true: Start also starts every type with a Start method
     StartParallelism: 0, // 0 or 1: sequential; n > 1: up to n Starters at a time
 })
 ```
@@ -87,7 +87,7 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
 
 | Level | Messages |
 | --- | --- |
-| Debug | `service registered`, `service overridden`, `service invoked`, `service exported`, `health check requested`, `health check failed` (with `error`), `property source selected`, `panic value` (with `value`) |
+| Debug | `service registered`, `service overridden`, `service invoked`, `service exported`, `requested shutdown`, `health check requested`, `health check failed` (with `error`), `property source selected`, `panic value` (with `value`) |
 | Info | `container started`, `container ready`, `container closing`, `container closed`, `extension disabled`, `container health changed` back to healthy |
 | Warn | `property source unavailable` (with `source_type`), `properties read after extend`, `container health changed` to another state |
 | Error | `service shutdown failed` (with `error`), `health scheduler failed` (with `error`), `health scheduler stop failed` (with `error`), `panic recovered` (with `point` and `panic_type`) for a recovered panic not passed to `HookContainerPanic`: the first panic of an operation goes to that hook when it is set (logged only when it is not), and later ones are logged |

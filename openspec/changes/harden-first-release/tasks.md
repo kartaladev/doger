@@ -206,22 +206,22 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 30. Start messages carry one doger prefix
 
-- [ ] 30.1 RED: update the expected messages in `TestAbortOutcome`, `TestStartError_ConsumerBuilt`, `TestStart_AsStarterInstanceWithoutStart`, `TestKind_InvalidValues` and `TestKind_InterfaceRegistration` to a single `doger: ` prefix and add a "contains doger: once" assertion to `TestStartError_Fields` (scenarios "The abort outcome rule", "StartError values built by the consumer"); verify `go test -race -run 'TestAbortOutcome|TestStartError_' .` fails on the messages
-- [ ] 30.2 GREEN: switch StartError, abort and kind messages to the shared prefix helper so wrapped sentinel text loses its own prefix (consumer-led abort text stays unprefixed); verify the 30.1 tests pass and `make test` is green
-- [ ] 30.3 REFACTOR: Extract Function for abort-message composition if still duplicated between Start and incremental start; verify `make test` and `make lint` pass
+- [x] 30.1 RED: update the expected messages in `TestAbortOutcome`, `TestStartError_ConsumerBuilt`, `TestStart_AsStarterInstanceWithoutStart`, `TestKind_InvalidValues` and `TestKind_InterfaceRegistration` to a single `doger: ` prefix and add a "contains doger: once" assertion to `TestStartError_Fields` (scenarios "The abort outcome rule", "StartError values built by the consumer"); verify `go test -race -run 'TestAbortOutcome|TestStartError_' .` fails on the messages
+- [x] 30.2 GREEN: switch StartError, abort and kind messages to the shared prefix helper so wrapped sentinel text loses its own prefix (consumer-led abort text stays unprefixed); verify the 30.1 tests pass and `make test` is green
+- [x] 30.3 REFACTOR: Extract Function for abort-message composition if still duplicated between Start and incremental start; verify `make test` and `make lint` pass
 
 ## 31. Root shutdown winner test uses the Logger
 
-- [ ] 31.1 RED: rewrite `TestRootScope_ShutdownWinnerPanic` with a Logger whose handler panics on "requested shutdown" (scenario "A panicking first caller still releases the others"); verify `go test -race -run TestRootScope_ShutdownWinnerPanic .` fails because no record is emitted
-- [ ] 31.2 GREEN: emit the "requested shutdown" record through the Logger; verify the 31.1 test passes and `make test` is green
-- [ ] 31.3 REFACTOR: none needed — only the logging call moves; verify `make test` and `make lint` pass
+- [x] 31.1 RED: rewrite `TestRootScope_ShutdownWinnerPanic` with a Logger whose handler panics on "requested shutdown" (scenario "A panicking first caller still releases the others"); verify `go test -race -run TestRootScope_ShutdownWinnerPanic .` fails because no record is emitted
+- [x] 31.2 GREEN: emit the "requested shutdown" record through the Logger; verify the 31.1 test passes and `make test` is green
+- [x] 31.3 REFACTOR: none needed — only the logging call moves; verify `make test` and `make lint` pass
 
 ## 32. Starter auto-detection is opt-in
 
-- [ ] 32.1 RED: add `TestStart_AutoDetectionOptIn` (replacing `TestStart_DisableAutoDetection`), `TestStart_FamiliarStartNotStarted` and `TestStart_CandidatesWithDefaults`, and add the auto column to `TestStart_Variants` and `TestStart_Detection` (scenarios "Auto-detection toggle", "Familiar Start methods are not started by default", "Each Starter variant is started once", "Which registrations are started", "Start candidates with defaults"); verify `go test -race -run 'TestStart_(AutoDetectionOptIn|FamiliarStartNotStarted|Variants|Detection|CandidatesWithDefaults)' .` fails to compile naming only `EnableStarterAutoDetection`
-- [ ] 32.2 GREEN: replace `DisableStarterAutoDetection` with `EnableStarterAutoDetection` (default false, copied by Clone), gate type-based detection on it, and add `AsStarter()` to fixtures relying on detection (container-start, container/scope lifecycle hooks, extensions, `tests/`, examples) per D19; verify the 32.1 tests pass and `make test` is green
-- [ ] 32.3 REFACTOR: Extract Function `isStartCandidate(opts, svc)` shared by Start, Refresh and Scope.Start discovery; verify `make test` and `make lint` pass
-- [ ] 32.4 Docs: rewrite the `Starter`/`EnableStarterAutoDetection` godoc, add `ExampleAsStarter` and `ExampleInjectorOpts_enableStarterAutoDetection`, update `docs/docs/service-lifecycle/starter.md`, the migration guide and `examples/*`; verify `go test -run 'Example(AsStarter|InjectorOpts_enableStarterAutoDetection)' .` passes and the example modules build
+- [x] 32.1 RED: add `TestStart_AutoDetectionOptIn` (replacing `TestStart_DisableAutoDetection`), `TestStart_FamiliarStartNotStarted` and `TestStart_CandidatesWithDefaults`, and add the auto column to `TestStart_Variants` and `TestStart_Detection` (scenarios "Auto-detection toggle", "Familiar Start methods are not started by default", "Each Starter variant is started once", "Which registrations are started", "Start candidates with defaults"); verify `go test -race -run 'TestStart_(AutoDetectionOptIn|FamiliarStartNotStarted|Variants|Detection|CandidatesWithDefaults)' .` fails to compile naming only `EnableStarterAutoDetection`
+- [x] 32.2 GREEN: replace `DisableStarterAutoDetection` with `EnableStarterAutoDetection` (default false, copied by Clone), gate type-based detection on it, and add `AsStarter()` to fixtures relying on detection (container-start, container/scope lifecycle hooks, extensions, `tests/`, examples) per D19; verify the 32.1 tests pass and `make test` is green
+- [x] 32.3 REFACTOR: Extract Function `isStartCandidate(opts, svc)` shared by Start, Refresh and Scope.Start discovery; verify `make test` and `make lint` pass
+- [x] 32.4 Docs: rewrite the `Starter`/`EnableStarterAutoDetection` godoc, add `ExampleAsStarter` and `ExampleInjectorOpts_enableStarterAutoDetection`, update `docs/docs/service-lifecycle/starter.md`, the migration guide and `examples/*`; verify `go test -run 'Example(AsStarter|InjectorOpts_enableStarterAutoDetection)' .` passes and the example modules build
 
 ## 33. Kinds need an explicit root; Runnable is a function; Stage zero is invalid
 
@@ -239,10 +239,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 35. Extensions: ExtendIntoRoot, explicit root, Logger decline record
 
-- [ ] 35.1 RED: add `TestExtend_NilRootRejected` (the former `TestExtend_NilRoot` is now `TestExtend_UnderRoot`), replace `Flatten()` with `ExtendIntoRoot()` in the placement/repeat/no-rollback/disabled/after-require/health tests, assert one Info record in `TestExtend_Disabled`, and add `AsStarter()` to Starter fixtures of `TestExtend_Phases`/`TestExtend_Lifecycle` (extensions scenarios); verify `go test -race -run 'TestExtend_|TestRequire_' .` fails to compile naming only `ExtendIntoRoot`
-- [ ] 35.2 GREEN: gopls Rename `Flatten`→`ExtendIntoRoot`, `Extend` returns `ErrNilInjector` for nil/typed-nil root, and the decline is logged as one Info record; verify the 35.1 tests pass and `make test` is green
-- [ ] 35.3 REFACTOR: Rename Variable for internals named "flatten" visible in errors or logs; verify `make test` and `make lint` pass
-- [ ] 35.4 Docs: update the extension guide, `ExtendIntoRoot` godoc and example and the migration row (`Flatten` → `ExtendIntoRoot`; nil root); verify `go test -run ExampleExtend .` passes
+- [x] 35.1 RED: add `TestExtend_NilRootRejected` (the former `TestExtend_NilRoot` is now `TestExtend_UnderRoot`), replace `Flatten()` with `ExtendIntoRoot()` in the placement/repeat/no-rollback/disabled/after-require/health tests, assert one Info record in `TestExtend_Disabled`, and add `AsStarter()` to Starter fixtures of `TestExtend_Phases`/`TestExtend_Lifecycle` (extensions scenarios); verify `go test -race -run 'TestExtend_|TestRequire_' .` fails to compile naming only `ExtendIntoRoot`
+- [x] 35.2 GREEN: gopls Rename `Flatten`→`ExtendIntoRoot`, `Extend` returns `ErrNilInjector` for nil/typed-nil root, and the decline is logged as one Info record; verify the 35.1 tests pass and `make test` is green
+- [x] 35.3 REFACTOR: Rename Variable for internals named "flatten" visible in errors or logs; verify `make test` and `make lint` pass
+- [x] 35.4 Docs: update the extension guide, `ExtendIntoRoot` godoc and example and the migration row (`Flatten` → `ExtendIntoRoot`; nil root); verify `go test -run ExampleExtend .` passes
 
 ## 36. Stale spec text follows the API changes
 
@@ -364,13 +364,13 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 53. Close the audit's test-suite gaps (existing behavior, tests only)
 
-- [ ] 53.1 Add `TestShutdownOrder_ThreeLevelChain` (synctest; a→b→c in one scope, c must not stop before b finishes) and `TestDAG_removeDependent`; they pass on arrival, so prove they can fail by temporarily deleting the `removeService` dependents loop (mutant M07, not committed); verify `go test -race -run 'TestShutdownOrder_ThreeLevelChain|TestDAG_removeDependent' .` fails under the mutant and passes without it
-- [ ] 53.2 Add `TestLazyShutdown_ShutdownerWithContext_IsCalled` and ended-context rows for lazy and eager services; prove they can fail by temporarily replacing `instance.Shutdown(ctx)` with `_ = instance` (mutant M29); verify the same red/green check
+- [x] 53.1 Add `TestShutdownOrder_ThreeLevelChain` (synctest; a→b→c in one scope, c must not stop before b finishes) and `TestDAG_removeDependent`; they pass on arrival, so prove they can fail (not committed): deleting the `removeService` dependents loop (mutant M07) fails `TestDAG_removeDependent`, and making `listServicesHavingNoDependent` ignore dependents fails `TestShutdownOrder_ThreeLevelChain`, whose order does not depend on that loop; verify `go test -race -run 'TestShutdownOrder_ThreeLevelChain|TestDAG_removeDependent' .` fails under each mutant and passes without them
+- [x] 53.2 Add `TestLazyShutdown_ShutdownerWithContext_IsCalled` and ended-context rows for lazy and eager services; prove they can fail by temporarily replacing `instance.Shutdown(ctx)` with `_ = instance` (mutant M29); verify the same red/green check
 - [ ] 53.3 Add `TestHealthReport_TimeoutNotOverwrittenByLateResult` (synctest: an unbounded `HealthCheckNamed` holds the check while `HealthReport` times out); prove it can fail by temporarily dropping `&& !call.timedOut` in `finishCall` (mutant M18); verify the same red/green check
-- [ ] 53.4 Add `TestInvokeNamedAny_ListedAsInvoked`; prove it can fail by temporarily removing `onServiceInvoke` from `invokeAnyByNameAs` (mutant M22); verify the same red/green check
+- [x] 53.4 Add `TestInvokeNamedAny_ListedAsInvoked`; prove it can fail by temporarily removing `onServiceInvoke` from `invokeAnyByNameAs` (mutant M22); verify the same red/green check
 - [ ] 53.5 Add `TestHealthCheck_QueuedDeadlineBoundary` (`HealthCheckParallelism: 1`; a queued check returning exactly at its deferred bound reports a timeout) for mutant M15, recording in a comment if the mutant proves equivalent; verify `go test -race -run TestHealthCheck_QueuedDeadlineBoundary .`
 - [ ] 53.6 Cover the uncovered health branches (service left while callers queued, take-over by a fresh check, queue ordering, `keepOnly` pruning, `deliverTransitions` re-panic, scheduler double-start guard) as named subtests in `health_run_test.go`/`health_monitor_test.go`; verify `go test -race -coverprofile=c.out . && go tool cover -func=c.out` shows those blocks covered
-- [ ] 53.7 Cover the virtual-scope pass-through methods called from inside a provider in `virtual_scope_test.go` and the broken alias/export chains of `aliasResolvesTo`; verify the coverage report shows `virtual_scope.go` pass-throughs and `aliasResolvesTo` covered
+- [x] 53.7 Cover the virtual-scope pass-through methods called from inside a provider in `virtual_scope_test.go` and the broken alias/export chains of `aliasResolvesTo`; verify the coverage report shows `virtual_scope.go` pass-throughs and `aliasResolvesTo` covered
 - [ ] 53.8 Add `TestShutdownOnSignals_Default` (SIGUSR1 through a test-only signal set) and give `ExampleRootScope_ShutdownOnSignals` a runnable `// Output:`; verify `go test -race -run ShutdownOnSignals .` passes
 - [x] 53.9 Harden the `tests` package: goleak `TestMain`, a `testWithTimeout` with a 5s floor reporting through `t` instead of `os.Exit`, and real report/error assertions in `TestParallelShutdown`, `TestConcurrentHealthCheckDuringShutdown`, `TestConcurrentBlockingOperations` and `TestRaceConditionShutdownInvocation`; verify `go test -race -count=20 -shuffle=on ./tests` passes
 - [x] 53.10 Replace the `time.Sleep` synchronisation in `scheduler/gocron/scheduler_test.go` with channel handshakes or a fake clock; verify `go test -race -count=50 -shuffle=on ./...` in `scheduler/gocron` passes
@@ -391,8 +391,8 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 - [ ] 55.1 Add `doc.go` with a package overview (quickstart, scopes, lifecycle, health, extensions) and remove the `package-comments` suppression; verify `make lint` passes and `go doc . | head -40` shows the overview
 - [ ] 55.2 Remove the `Play:` links that run samber/do code (or replace them with doger playground links); verify `grep -rn 'go.dev/play' --include=*.go . | wc -l` prints 0 or each remaining link imports `github.com/kartaladev/doger`
 - [ ] 55.3 Rewrite `docs/docs/migrating/migrating-from-samber-do.md` from the D9/D10 tables (every break with before/after code, the variadic `...ProvideOption` changes, all new `InjectorOpts` fields, the Go 1.27 floor and its reason); verify the before/after snippets compile in a `docs_snippets_test.go`
-- [ ] 55.4 README: add a 20-line quickstart, fix the gocron snippet's unused `err`, remove upstream templates and "See also" links, and update the feature list (start lifecycle, extensions, properties, kinds, collections, health reports); verify the snippets compile in `readme_snippets_test.go`
-- [ ] 55.5 Add the missing `Example*` tests with `// Output:` (`Eager`, `Lazy`, `Transient`, `Package`, `Bind`, `ExportNamed`, `MustExport`, `ExtendIntoRoot`, `ExtendScopeName`, `WithHealthTags`, `AsOptionalHealth`, `IgnoreContainerPhase`, `ExtensionProperties`, `HealthScheduler`, `EnableRunnerAutoDetection`, `PropertySource`, `StructTagKey`); verify `go test -run '^Example' .` passes
+- [x] 55.4 README: add a 20-line quickstart, fix the gocron snippet's unused `err`, remove upstream templates and "See also" links, and update the feature list (start lifecycle, extensions, properties, kinds, collections, health reports); verify the snippets compile in `readme_snippets_test.go`
+- [x] 55.5 Add the missing `Example*` tests with `// Output:` (`Eager`, `Lazy`, `Transient`, `Package`, `Bind`, `ExportNamed`, `MustExport`, `ExtendIntoRoot`, `ExtendScopeName`, `WithHealthTags`, `AsOptionalHealth`, `IgnoreContainerPhase`, `ExtensionProperties`, `HealthScheduler`, `EnableRunnerAutoDetection`, `PropertySource`, `StructTagKey`); verify `go test -run '^Example' .` passes
 - [ ] 55.6 Document the Go 1.27 floor and why it exists in README and `docs/docs/getting-started`; verify `grep -n '1.27' README.md` shows it
 
 ## 56. Integration checks

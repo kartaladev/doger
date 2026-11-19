@@ -79,12 +79,16 @@ var (
 	// *runtime.PanicNilError of panic(nil).
 	ErrProviderPanic = errors.New("doger: provider panicked")
 	// ErrStructInjection is matched by the error of InvokeStruct and the
-	// panic value of MustInvokeStruct when the target cannot be injected:
-	// it is not a struct or a pointer chain to one, it is a recursive
-	// pointer type, a resolved service is not assignable to its field, or a
-	// `*` tag is on a field that is not a slice or map[string]. The message
-	// names the type or field. A dependency that fails to resolve does not
-	// match it.
+	// panic value of MustInvokeStruct when the target cannot be injected.
+	// These errors match it, each naming the type or field:
+	//   - "must be a struct or a pointer to a struct, but got `T`"
+	//   - "must be a pointer to a struct"
+	//   - "recursive pointer type `T` cannot be injected"
+	//   - "field is not addressable `S.F`"
+	//   - "`name` is not assignable to field `S.F`", also for a service
+	//     whose value is a nil interface of a type not assignable to F
+	//   - "tag `*` requires a slice or map[string] field, got `S.F`"
+	// A dependency that fails to resolve does not match it.
 	ErrStructInjection = errors.New("doger: invalid struct injection target")
 	// ErrShutdownPanic is matched by the error a shutdown records for a
 	// service whose Shutdown method, or one of its HookBeforeShutdown or
@@ -98,6 +102,9 @@ var (
 
 // libPrefix starts every message the library originates.
 const libPrefix = "doger: "
+
+// nilText stands for a nil cause in a message.
+const nilText = "<nil>"
 
 // libError marks an error the library made with libErrorf, so a message
 // wrapping it can tell the leading libPrefix is the library's own.
@@ -205,6 +212,26 @@ func (e unprefixedError) Unwrap() error {
 // when wrapped with %w; any other argument, including a consumer error
 // whose text starts with libPrefix, is formatted as is.
 func libErrorf(format string, args ...any) error {
+	return &libError{fmt.Errorf(libPrefix+format, unprefixedArgs(args)...)}
+}
+
+// ledErrorf formats a message that starts with lead, the first argument of
+// format. When lead is library-led (see isLibLed), it is libErrorf;
+// otherwise the message is led by the consumer's own error and carries no
+// library prefix. Library-led arguments are shown without their prefix
+// either way, so the message carries libPrefix at most once.
+func ledErrorf(lead error, format string, args ...any) error {
+	args = append([]any{lead}, args...)
+	if isLibLed(lead) {
+		return libErrorf(format, args...)
+	}
+
+	return fmt.Errorf(format, unprefixedArgs(args)...)
+}
+
+// unprefixedArgs returns args with each library-led error shown without its
+// prefix; errors.Is and errors.As still reach it through %w.
+func unprefixedArgs(args []any) []any {
 	unprefixed := make([]any, len(args))
 	for i, arg := range args {
 		if err, ok := arg.(error); ok && isLibLed(err) {
@@ -213,7 +240,7 @@ func libErrorf(format string, args ...any) error {
 		unprefixed[i] = arg
 	}
 
-	return &libError{fmt.Errorf(libPrefix+format, unprefixed...)}
+	return unprefixed
 }
 
 // injectionTargetError is an invalid struct injection target: its message
@@ -257,7 +284,7 @@ type ServiceError struct {
 // Error returns `doger: service "<Service>" in scope "<Scope>": <cause>`,
 // with the library prefix once. A nil Err reads as <nil>.
 func (e *ServiceError) Error() string {
-	cause := "<nil>"
+	cause := nilText
 	if e.Err != nil {
 		cause = unprefixedText(e.Err)
 	}
@@ -339,7 +366,10 @@ func newStartError(op StartOp, scope *Scope, service, kind string, cause error) 
 func (e *StartError) Error() string {
 	switch {
 	case e.unprefixed:
-		return e.causeText()
+		if e.Cause == nil {
+			return nilText
+		}
+		return e.Cause.Error()
 	case e.Op == StartOpHandle:
 		return fmt.Sprintf("doger: kind `%s` failed for service `%s` in scope `%s`: %s", e.Kind, e.Service, e.scopeName(), e.causeText())
 	case e.Op == StartOpStart:
@@ -358,13 +388,20 @@ func (e *StartError) scopeName() string {
 	return e.Scope.Name()
 }
 
-// causeText returns the message of Cause, or "<nil>" when it is nil.
+// causeText returns the message of Cause without its library prefix, or
+// "<nil>" when it is nil. A Cause that is the ServiceError of the same
+// service and scope is shown by its own cause, so the message names the
+// service once.
 func (e *StartError) causeText() string {
-	if e.Cause == nil {
-		return "<nil>"
+	cause := e.Cause
+	if serviceErr, ok := cause.(*ServiceError); ok && serviceErr.Service == e.Service && serviceErr.Scope == e.scopeName() {
+		cause = serviceErr.Err
+	}
+	if cause == nil {
+		return nilText
 	}
 
-	return e.Cause.Error()
+	return unprefixedText(cause)
 }
 
 // Unwrap returns Cause.

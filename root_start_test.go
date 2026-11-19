@@ -5,6 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -69,39 +74,55 @@ func (s *recordingStarter) Start() error {
 	return nil
 }
 
-// provideRecordingStarter registers lazy Starter name in scope.
+// provideRecordingStarter registers lazy Starter name in scope, opted in
+// with AsStarter.
 func provideRecordingStarter(scope Injector, rec *callRecorder, name string, opts ...ProvideOption) {
 	ProvideNamed(scope, name, func(Injector) (*recordingStarter, error) {
 		return &recordingStarter{name: name, rec: rec}, nil
-	}, opts...)
+	}, append([]ProvideOption{AsStarter()}, opts...)...)
 }
 
 func TestStart_Variants(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
+	// register registers the fixture under name with opts and returns its
+	// counter.
+	type register func(root *RootScope, opts ...ProvideOption) *startCounter
+	variants := []struct {
 		name     string
-		register func(root *RootScope) *startCounter
+		register register
 	}{
-		{name: "start", register: func(root *RootScope) *startCounter { return provideCounted(root, "s1", &startPlain{}).counter() }},
-		{name: "start_error", register: func(root *RootScope) *startCounter { return provideCounted(root, "s2", &startWithErr{}).counter() }},
-		{name: "start_context", register: func(root *RootScope) *startCounter { return provideCounted(root, "s3", &startWithCtx{}).counter() }},
-		{name: "start_context_error", register: func(root *RootScope) *startCounter {
-			return provideCounted(root, "s4", &startWithCtxErr{}).counter()
+		{name: "start", register: func(root *RootScope, opts ...ProvideOption) *startCounter {
+			return provideCounted(root, "s1", &startPlain{}, opts...).counter()
+		}},
+		{name: "start_error", register: func(root *RootScope, opts ...ProvideOption) *startCounter {
+			return provideCounted(root, "s2", &startWithErr{}, opts...).counter()
+		}},
+		{name: "start_context", register: func(root *RootScope, opts ...ProvideOption) *startCounter {
+			return provideCounted(root, "s3", &startWithCtx{}, opts...).counter()
+		}},
+		{name: "start_context_error", register: func(root *RootScope, opts ...ProvideOption) *startCounter {
+			return provideCounted(root, "s4", &startWithCtxErr{}, opts...).counter()
 		}},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			testWithTimeout(t, time.Second)
+	for _, auto := range []bool{false, true} {
+		for _, variant := range variants {
+			t.Run(fmt.Sprintf("auto=%t/%s", auto, variant.name), func(t *testing.T) {
+				t.Parallel()
+				testWithTimeout(t, time.Second)
 
-			root := New()
-			counter := tt.register(root)
+				root := NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: auto})
+				var opts []ProvideOption
+				if !auto {
+					opts = append(opts, AsStarter())
+				}
+				counter := variant.register(root, opts...)
 
-			assert.NoError(t, root.StartWithContext(t.Context()))
-			assert.Equal(t, int32(1), counter.starts.Load())
-		})
+				assert.NoError(t, root.StartWithContext(t.Context()))
+				assert.Equal(t, int32(1), counter.starts.Load())
+			})
+		}
 	}
 }
 
@@ -110,37 +131,27 @@ func TestStart_Detection(t *testing.T) {
 
 	tests := []struct {
 		name      string
+		auto      bool
 		register  func(t *testing.T, root *RootScope) *startCounter
 		starts    int32
 		shutdowns int32
 	}{
 		{
-			name: "lazy_type_has_start_ctx_error",
+			name: "auto_off/lazy_type_has_start_ctx_error",
 			register: func(_ *testing.T, root *RootScope) *startCounter {
 				return provideCounted(root, "srv", &startWithCtxErr{}).counter()
-			},
-			starts: 1, shutdowns: 1,
-		},
-		{
-			name: "eager_value_type_has_start_error",
-			register: func(_ *testing.T, root *RootScope) *startCounter {
-				instance := &startWithErr{}
-				ProvideNamedValue(root, "srv", instance)
-				return instance.counter()
-			},
-			starts: 1, shutdowns: 1,
-		},
-		{
-			name: "interface_without_start",
-			register: func(_ *testing.T, root *RootScope) *startCounter {
-				instance := &startPlain{}
-				provideCounted[startLifecycle](root, "life", instance)
-				return instance.counter()
 			},
 			starts: 0, shutdowns: 0,
 		},
 		{
-			name: "interface_without_start_as_starter",
+			name: "auto_off/lazy_type_has_start_ctx_error_as_starter",
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				return provideCounted(root, "srv", &startWithCtxErr{}, AsStarter()).counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_off/interface_without_start_as_starter",
 			register: func(_ *testing.T, root *RootScope) *startCounter {
 				instance := &startPlain{}
 				provideCounted[startLifecycle](root, "life", instance, AsStarter())
@@ -149,7 +160,56 @@ func TestStart_Detection(t *testing.T) {
 			starts: 1, shutdowns: 1,
 		},
 		{
-			name: "interface_without_start_invoked_before_start",
+			name: "auto_off/lazy_as_starter_with_alias",
+			register: func(t *testing.T, root *RootScope) *startCounter {
+				instance := &startWithErr{}
+				Provide(root, func(Injector) (*startWithErr, error) { return instance, nil }, AsStarter())
+				require.NoError(t, Alias[*startWithErr, startStartable](root))
+				return instance.counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_on/lazy_type_has_start_ctx_error",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				return provideCounted(root, "srv", &startWithCtxErr{}).counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_on/eager_value_type_has_start_error",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				instance := &startWithErr{}
+				ProvideNamedValue(root, "srv", instance)
+				return instance.counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_on/interface_without_start",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				instance := &startPlain{}
+				provideCounted[startLifecycle](root, "life", instance)
+				return instance.counter()
+			},
+			starts: 0, shutdowns: 0,
+		},
+		{
+			name: "auto_on/interface_without_start_as_starter",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				instance := &startPlain{}
+				provideCounted[startLifecycle](root, "life", instance, AsStarter())
+				return instance.counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_on/interface_without_start_invoked_before_start",
+			auto: true,
 			register: func(t *testing.T, root *RootScope) *startCounter {
 				instance := &startPlain{}
 				provideCounted[startLifecycle](root, "life", instance)
@@ -160,7 +220,8 @@ func TestStart_Detection(t *testing.T) {
 			starts: 0, shutdowns: 1,
 		},
 		{
-			name: "lazy_with_alias",
+			name: "auto_on/lazy_with_alias",
+			auto: true,
 			register: func(t *testing.T, root *RootScope) *startCounter {
 				instance := &startWithErr{}
 				Provide(root, func(Injector) (*startWithErr, error) { return instance, nil })
@@ -170,14 +231,16 @@ func TestStart_Detection(t *testing.T) {
 			starts: 1, shutdowns: 1,
 		},
 		{
-			name: "lazy_without_start",
+			name: "auto_on/lazy_without_start",
+			auto: true,
 			register: func(_ *testing.T, root *RootScope) *startCounter {
 				return provideCounted(root, "cfg", &startNone{}).counter()
 			},
 			starts: 0, shutdowns: 0,
 		},
 		{
-			name: "transient_with_start",
+			name: "auto_on/transient_with_start",
+			auto: true,
 			register: func(_ *testing.T, root *RootScope) *startCounter {
 				instance := &startWithErr{}
 				ProvideNamedTransient(root, "srv", func(Injector) (*startWithErr, error) { return instance, nil })
@@ -193,7 +256,7 @@ func TestStart_Detection(t *testing.T) {
 			testWithTimeout(t, time.Second)
 			is := assert.New(t)
 
-			root := New()
+			root := NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: tt.auto})
 			counter := tt.register(t, root)
 
 			is.NoError(root.Start())
@@ -205,16 +268,30 @@ func TestStart_Detection(t *testing.T) {
 	}
 }
 
-func TestStart_DisableAutoDetection(t *testing.T) {
+func TestStart_AutoDetectionOptIn(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		disabled bool
-		started  []string
+		name      string
+		root      func() *RootScope
+		container func(root *RootScope) *RootScope
+		started   []string
 	}{
-		{name: "enabled", disabled: false, started: []string{"a", "b"}},
-		{name: "disabled", disabled: true, started: []string{"b"}},
+		{name: "New", root: func() *RootScope { return New() }, started: []string{"b"}},
+		{name: "zero InjectorOpts", root: func() *RootScope { return NewWithOpts(&InjectorOpts{}) }, started: []string{"b"}},
+		{name: "nil InjectorOpts", root: func() *RootScope { return NewWithOpts(nil) }, started: []string{"b"}},
+		{
+			name:    "enabled",
+			root:    func() *RootScope { return NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: true}) },
+			started: []string{"a", "b", "c"},
+		},
+		{
+			name:      "enabled, clone",
+			root:      func() *RootScope { return NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: true}) },
+			container: (*RootScope).Clone,
+			started:   []string{"a", "b", "c"},
+		},
+		{name: "New, clone", root: func() *RootScope { return New() }, container: (*RootScope).Clone, started: []string{"b"}},
 	}
 
 	for _, tt := range tests {
@@ -222,13 +299,109 @@ func TestStart_DisableAutoDetection(t *testing.T) {
 			t.Parallel()
 			testWithTimeout(t, time.Second)
 
-			root := NewWithOpts(&InjectorOpts{DisableStarterAutoDetection: tt.disabled})
+			root := tt.root()
 			rec := &callRecorder{}
-			provideRecordingStarter(root, rec, "a")
-			provideRecordingStarter(root, rec, "b", AsStarter())
+			ProvideNamed(root, "a", func(Injector) (*recordingStarter, error) { return &recordingStarter{name: "a", rec: rec}, nil })
+			provideRecordingStarter(root, rec, "b")
+			ProvideNamed(root, "c", func(Injector) (*recordingCtxStarter, error) {
+				return &recordingCtxStarter{name: "c", rec: rec}, nil
+			})
+			container := root
+			if tt.container != nil {
+				container = tt.container(root)
+			}
+
+			require.NoError(t, container.Start())
+			assert.ElementsMatch(t, tt.started, rec.list())
+		})
+	}
+}
+
+// recordingCtxStarter records its name in rec when started with a context.
+type recordingCtxStarter struct {
+	name string
+	rec  *callRecorder
+}
+
+func (s *recordingCtxStarter) Start(context.Context) error {
+	s.rec.record(s.name)
+	return nil
+}
+
+// startCron is a type with a familiar Start() that starts a goroutine.
+type startCron struct {
+	starts atomic.Int32
+	stop   chan struct{}
+	done   chan struct{}
+}
+
+func (c *startCron) Start() {
+	c.starts.Add(1)
+	go func() {
+		defer close(c.done)
+		<-c.stop
+	}()
+}
+
+func TestStart_FamiliarStartNotStarted(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		register func(t *testing.T, root *RootScope) (started func() bool)
+	}{
+		{
+			name: "*exec.Cmd",
+			register: func(t *testing.T, root *RootScope) func() bool {
+				t.Helper()
+				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^$")
+				ProvideNamedValue(root, "cmd", cmd)
+				return func() bool { return cmd.Process != nil }
+			},
+		},
+		{
+			name: "*httptest.Server",
+			register: func(t *testing.T, root *RootScope) func() bool {
+				t.Helper()
+				srv := httptest.NewUnstartedServer(http.NotFoundHandler())
+				t.Cleanup(srv.Close)
+				ProvideNamed(root, "srv", func(Injector) (*httptest.Server, error) { return srv, nil })
+				return func() bool { return srv.URL != "" }
+			},
+		},
+		{
+			name: "*app.Cron",
+			register: func(t *testing.T, root *RootScope) func() bool {
+				t.Helper()
+				cron := &startCron{stop: make(chan struct{}), done: make(chan struct{})}
+				t.Cleanup(func() {
+					if cron.starts.Load() > 0 {
+						close(cron.stop)
+						<-cron.done
+					}
+				})
+				ProvideNamed(root, "job", func(Injector) (*startCron, error) { return cron, nil })
+				return func() bool { return cron.starts.Load() > 0 }
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+
+			root := New()
+			started := tt.register(t, root)
+			for _, name := range root.ListProvidedServices() {
+				_, err := InvokeNamed[any](root, name.Service)
+				require.NoError(t, err)
+			}
 
 			require.NoError(t, root.Start())
-			assert.Equal(t, tt.started, rec.list())
+			root.Shutdown()
+
+			assert.False(t, started(), "the familiar Start method was not called")
 		})
 	}
 }
@@ -287,7 +460,7 @@ func TestStart_OneShot(t *testing.T) {
 					return nil, errBuild
 				}
 				return instance, nil
-			})
+			}, AsStarter())
 
 			tt.previous(root)
 			err := root.Start()
@@ -333,14 +506,14 @@ func TestStart_Clone(t *testing.T) {
 		{
 			name: "lazy",
 			register: func(root *RootScope, counter *instanceCounter) {
-				ProvideNamed(root, "a", func(Injector) (*cloneStarter, error) { return &cloneStarter{counter: counter}, nil })
+				ProvideNamed(root, "a", func(Injector) (*cloneStarter, error) { return &cloneStarter{counter: counter}, nil }, AsStarter())
 			},
 			calls: []int{1, 1},
 		},
 		{
 			name: "eager_value",
 			register: func(root *RootScope, counter *instanceCounter) {
-				ProvideNamedValue(root, "a", &cloneStarter{counter: counter})
+				ProvideNamedValue(root, "a", &cloneStarter{counter: counter}, AsStarter())
 			},
 			calls: []int{2},
 		},
@@ -379,7 +552,7 @@ func TestStart_LateRegistrationNotStarted(t *testing.T) {
 	root := New()
 	require.NoError(t, root.Start())
 
-	instance := provideCounted(root, "late", &startWithErr{})
+	instance := provideCounted(root, "late", &startWithErr{}, AsStarter())
 	_, err := InvokeNamed[*startWithErr](root, "late")
 
 	is.NoError(err)
@@ -394,7 +567,7 @@ func TestStart_LateScopeNotStarted(t *testing.T) {
 	root := New()
 	require.NoError(t, root.Start())
 	tenant := root.Scope("tenant")
-	instance := provideCounted(tenant, "worker", &startWithErr{})
+	instance := provideCounted(tenant, "worker", &startWithErr{}, AsStarter())
 	_, err := InvokeNamed[*startWithErr](tenant, "worker")
 	require.NoError(t, err)
 
@@ -420,7 +593,7 @@ func TestStart_DependencyOrder(t *testing.T) {
 			}
 			events.record("build " + name)
 			return &recordingStarter{name: "start " + name, rec: events}, nil
-		})
+		}, AsStarter())
 	}
 	starter("http", "db")
 	starter("db")
@@ -492,7 +665,7 @@ func TestStart_ScopeTraversal(t *testing.T) {
 	ProvideNamed(tenant, "worker", func(i Injector) (*recordingStarter, error) {
 		_, err := InvokeNamed[*recordingStarter](i, "db")
 		return &recordingStarter{name: "worker", rec: rec}, err
-	})
+	}, AsStarter())
 	provideRecordingStarter(root, rec, "db")
 
 	require.NoError(t, root.Start())
@@ -550,7 +723,7 @@ func TestStart_RegistrationOrder(t *testing.T) {
 			operation: func(root *RootScope, _ *Scope, rec *callRecorder) *RootScope {
 				OverrideNamed(root, "a", func(Injector) (*recordingStarter, error) {
 					return &recordingStarter{name: "a", rec: rec}, nil
-				})
+				}, AsStarter())
 				return root
 			},
 			order: []string{"a", "c", "b"},
@@ -560,7 +733,7 @@ func TestStart_RegistrationOrder(t *testing.T) {
 			operation: func(root *RootScope, request *Scope, rec *callRecorder) *RootScope {
 				OverrideNamed(request, "a", func(Injector) (*recordingStarter, error) {
 					return &recordingStarter{name: "request/a", rec: rec}, nil
-				})
+				}, AsStarter())
 				return root
 			},
 			order: []string{"a", "c", "b", "request/a"},
@@ -607,7 +780,7 @@ func TestStart_RejectsDeclaredCycle(t *testing.T) {
 	ProvideNamed(root, "job", func(i Injector) (*recordingStarter, error) {
 		_, err := InvokeNamed[*recordingStarter](i, "scheduler")
 		return &recordingStarter{name: "job", rec: rec}, err
-	})
+	}, AsStarter())
 	require.NoError(t, DeclareDependency(root, "scheduler", "job"))
 
 	err := root.Start()
@@ -660,21 +833,21 @@ func TestStart_StarterFailure(t *testing.T) {
 		{
 			name: "start_returns_error",
 			provide: func(root *RootScope) {
-				ProvideNamed(root, "b", func(Injector) (*errorStarter, error) { return &errorStarter{err: errBoom}, nil })
+				ProvideNamed(root, "b", func(Injector) (*errorStarter, error) { return &errorStarter{err: errBoom}, nil }, AsStarter())
 			},
 			check: func(t *testing.T, err error) { assert.ErrorIs(t, err, errBoom) },
 		},
 		{
 			name: "start_panics_with_string",
 			provide: func(root *RootScope) {
-				ProvideNamed(root, "b", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{panicValue: "kaboom"}, nil })
+				ProvideNamed(root, "b", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{panicValue: "kaboom"}, nil }, AsStarter())
 			},
 			check: func(t *testing.T, err error) { assert.ErrorContains(t, err, "kaboom") },
 		},
 		{
 			name: "start_panics_with_error",
 			provide: func(root *RootScope) {
-				ProvideNamed(root, "b", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{panicValue: errBoom}, nil })
+				ProvideNamed(root, "b", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{panicValue: errBoom}, nil }, AsStarter())
 			},
 			check: func(t *testing.T, err error) { assert.ErrorIs(t, err, errBoom) },
 		},
@@ -692,12 +865,12 @@ func TestStart_StarterFailure(t *testing.T) {
 			ProvideNamed(root, "a", func(Injector) (*scriptedStarter, error) {
 				builds.record("a")
 				return &scriptedStarter{name: "a", rec: rec}, nil
-			})
+			}, AsStarter())
 			tt.provide(root)
 			ProvideNamed(root, "c", func(Injector) (*scriptedStarter, error) {
 				builds.record("c")
 				return &scriptedStarter{name: "c", rec: rec}, nil
-			})
+			}, AsStarter())
 
 			err := root.Start()
 
@@ -733,9 +906,9 @@ func TestStart_BuildFailure(t *testing.T) {
 			rec := &callRecorder{}
 			builds := &callRecorder{}
 			for _, name := range []string{"a", "b", "c"} {
-				var opts []ProvideOption
+				opts := []ProvideOption{AsStarter()}
 				if name == "b" {
-					opts = tt.opts
+					opts = append(opts, tt.opts...)
 				}
 				ProvideNamed(root, name, func(Injector) (*scriptedStarter, error) {
 					if name == "b" && tt.fail {
@@ -765,7 +938,7 @@ func TestStart_AsStarterInstanceWithoutStart(t *testing.T) {
 
 	err := root.Start()
 
-	assert.ErrorContains(t, err, "doger: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
+	assert.EqualError(t, err, "doger: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
 }
 
 func TestStart_ShutdownAfterFailure(t *testing.T) {
@@ -776,11 +949,11 @@ func TestStart_ShutdownAfterFailure(t *testing.T) {
 
 	root := New()
 	rec := &callRecorder{}
-	ProvideNamed(root, "a", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{name: "a", rec: rec}, nil })
+	ProvideNamed(root, "a", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{name: "a", rec: rec}, nil }, AsStarter())
 	ProvideNamed(root, "b", func(Injector) (*scriptedStarter, error) {
 		return &scriptedStarter{name: "b", rec: rec, err: errBoom}, nil
-	})
-	ProvideNamed(root, "c", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{name: "c", rec: rec}, nil })
+	}, AsStarter())
+	ProvideNamed(root, "c", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{name: "c", rec: rec}, nil }, AsStarter())
 
 	require.Error(t, root.Start())
 	root.Shutdown()
@@ -848,7 +1021,7 @@ func TestStart_Context(t *testing.T) {
 
 				ProvideNamed(root, "a", func(Injector) (*ctxStarter, error) {
 					return &ctxStarter{fn: func(ctx context.Context) error { return tt.a(ctx, cancel) }}, nil
-				})
+				}, AsStarter())
 				provideRecordingStarter(root, rec, "b")
 
 				err := root.StartWithContext(ctx)
@@ -871,7 +1044,7 @@ func TestStart_NilContext(t *testing.T) {
 			received = ctx
 			return nil
 		}}, nil
-	})
+	}, AsStarter())
 
 	var err error
 	assert.NotPanics(t, func() {
@@ -892,7 +1065,7 @@ func TestStart_ContextEndsWithStart(t *testing.T) {
 			kept = ctx
 			return nil
 		}}, nil
-	})
+	}, AsStarter())
 
 	require.NoError(t, root.Start())
 	require.NotNil(t, kept)
@@ -1021,8 +1194,8 @@ func TestStart_ShutdownCancels(t *testing.T) {
 					aShutdowns, zCalls = a.shutdowns.Load, z.runs.Load
 				} else {
 					a := &blockingStarter{entered: entered, behavior: tt.behavior(release)}
-					ProvideNamed(root, "a", func(Injector) (*blockingStarter, error) { return a, nil })
-					z := provideCounted(root, "z", &startWithCtxErr{})
+					ProvideNamed(root, "a", func(Injector) (*blockingStarter, error) { return a, nil }, AsStarter())
+					z := provideCounted(root, "z", &startWithCtxErr{}, AsStarter())
 					aShutdowns, zCalls = a.shutdowns.Load, z.starts.Load
 				}
 
@@ -1090,7 +1263,7 @@ func TestStart_PanicReleasesShutdown(t *testing.T) {
 			func(*Scope, string) { panic("hook-boom") },
 		},
 	})
-	provideCounted(root, "a", &startWithErr{})
+	provideCounted(root, "a", &startWithErr{}, AsStarter())
 
 	is.PanicsWithValue("hook-boom", func() { _ = root.Start() })
 
@@ -1104,7 +1277,7 @@ func TestStart_Concurrent(t *testing.T) {
 	is := assert.New(t)
 
 	root := New()
-	instance := provideCounted(root, "a", &startWithErr{})
+	instance := provideCounted(root, "a", &startWithErr{}, AsStarter())
 
 	const callers = 10
 	errs := make([]error, callers)
@@ -1143,7 +1316,7 @@ func TestStart_ConcurrentInvoke(t *testing.T) {
 	ProvideNamed(root, "a", func(Injector) (*startWithErr, error) {
 		builds.Add(1)
 		return &startWithErr{}, nil
-	})
+	}, AsStarter())
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -1190,8 +1363,8 @@ func TestStart_Hooks(t *testing.T) {
 		},
 	})
 	root.AddAfterStartHook(func(_ *Scope, name string, _ error) { rec.record("late-after " + name) })
-	ProvideNamed(root, "a", func(Injector) (*errorStarter, error) { return &errorStarter{}, nil })
-	ProvideNamed(root, "b", func(Injector) (*errorStarter, error) { return &errorStarter{err: errBoom}, nil })
+	ProvideNamed(root, "a", func(Injector) (*errorStarter, error) { return &errorStarter{}, nil }, AsStarter())
+	ProvideNamed(root, "b", func(Injector) (*errorStarter, error) { return &errorStarter{err: errBoom}, nil }, AsStarter())
 
 	is.ErrorIs(root.Start(), errBoom)
 	is.Equal([]string{
@@ -1236,10 +1409,10 @@ func TestStartError_Fields(t *testing.T) {
 		{
 			name: "provider returns errBuild",
 			setup: func(root *RootScope) {
-				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return nil, errBuild })
+				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return nil, errBuild }, AsStarter())
 			},
 			service: "b", op: StartOpBuild, cause: errBuild,
-			message: "doger: failed to build service `b` in scope `[root]`: doger: service \"b\" in scope \"[root]\": build failed",
+			message: "doger: failed to build service `b` in scope `[root]`: build failed",
 		},
 		{
 			name: "Start returns errBoom",
@@ -1260,12 +1433,25 @@ func TestStartError_Fields(t *testing.T) {
 			message: "doger: kind `k` failed for service `j` in scope `[root]`: boom",
 		},
 		{
+			name: "dependency's provider returns errBuild",
+			setup: func(root *RootScope) {
+				ProvideNamed(root, "b", func(i Injector) (*startWithErr, error) {
+					_, err := InvokeNamed[int](i, "c")
+					return &startWithErr{}, err
+				}, AsStarter())
+				ProvideNamed(root, "c", func(Injector) (int, error) { return 0, errBuild })
+			},
+			service: "b", op: StartOpBuild, cause: errBuild,
+			// b's own ServiceError layer is dropped from the text; c's stays
+			message: "doger: failed to build service `b` in scope `[root]`: service \"c\" in scope \"[root]\": build failed",
+		},
+		{
 			name: "missing declared dependency",
 			setup: func(root *RootScope) {
-				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return &startWithErr{}, nil }, DependsOnNamed("missing"))
+				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return &startWithErr{}, nil }, DependsOnNamed("missing"), AsStarter())
 			},
 			service: "b", op: StartOpBuild, cause: ErrServiceNotFound,
-			message: "doger: failed to build service `b` in scope `[root]`: doger: service \"b\" in scope \"[root]\": could not find service `missing`, available services: `b`, path: `b` -> `missing`",
+			message: "doger: failed to build service `b` in scope `[root]`: could not find service `missing`, available services: `b`, path: `b` -> `missing`",
 		},
 	}
 
@@ -1288,6 +1474,16 @@ func TestStartError_Fields(t *testing.T) {
 			is.Equal(tt.op, startErr.Op)
 			is.ErrorIs(err, tt.cause)
 			is.EqualError(err, tt.message)
+			is.Equal(1, strings.Count(err.Error(), "doger: "), "the doger prefix appears once")
+			if tt.op == StartOpBuild {
+				// the ServiceError of the same service stays in the chain,
+				// though its text is not repeated
+				var serviceErr *ServiceError
+				if is.ErrorAs(err, &serviceErr) {
+					is.Equal(tt.service, serviceErr.Service)
+					is.Equal("[root]", serviceErr.Scope)
+				}
+			}
 		})
 	}
 }
@@ -1333,7 +1529,7 @@ func TestStartError_NotForGuards(t *testing.T) {
 			testWithTimeout(t, time.Second)
 
 			root := New()
-			ProvideNamedValue(root, "b", &startWithErr{})
+			ProvideNamedValue(root, "b", &startWithErr{}, AsStarter())
 
 			err := tt.start(root)
 
@@ -1390,11 +1586,12 @@ func (s *countedStarter) Start() error {
 	return nil
 }
 
-// provideCountedStarter registers lazy Starter name in scope.
+// provideCountedStarter registers lazy Starter name in scope, opted in with
+// AsStarter.
 func provideCountedStarter(scope Injector, starts *countingStarters, name string, opts ...ProvideOption) {
 	ProvideNamed(scope, name, func(Injector) (*countedStarter, error) {
 		return &countedStarter{name: name, starts: starts}, nil
-	}, opts...)
+	}, append([]ProvideOption{AsStarter()}, opts...)...)
 }
 
 func TestRefresh_StartsNew(t *testing.T) {
@@ -1499,7 +1696,7 @@ func TestIncrementalStart_Phase(t *testing.T) {
 			root := New()
 			starts := &countingStarters{}
 			if tt.failA {
-				ProvideNamed(root, "a", func(Injector) (*countedStarter, error) { return nil, errBuild })
+				ProvideNamed(root, "a", func(Injector) (*countedStarter, error) { return nil, errBuild }, AsStarter())
 			} else {
 				provideCountedStarter(root, starts, "a")
 			}
@@ -1604,7 +1801,7 @@ func TestRefresh_ShutdownCancels(t *testing.T) {
 				time.Sleep(time.Second) // returns 1s after the cancellation
 				return ctx.Err()
 			}}, nil
-		})
+		}, AsStarter())
 
 		refreshErr := make(chan error, 1)
 		go func() { refreshErr <- root.Refresh() }()
@@ -1675,7 +1872,7 @@ func TestStart_Parallel(t *testing.T) {
 							}
 						}
 						return &sleepingStarter{name: name, d: time.Second, rec: rec}, nil
-					})
+					}, AsStarter())
 				}
 
 				begin := time.Now()
@@ -1726,7 +1923,7 @@ func TestStart_ParallelIncremental(t *testing.T) {
 				for _, name := range []string{"a", "b", "c"} {
 					ProvideNamed(scope, name, func(Injector) (*sleepingStarter, error) {
 						return &sleepingStarter{name: name, d: time.Second, rec: rec}, nil
-					})
+					}, AsStarter())
 				}
 
 				begin := time.Now()
@@ -1778,7 +1975,7 @@ func TestStart_ParallelIncrementalDependencyOrder(t *testing.T) {
 							d = 2 * time.Second // b's or c's slot frees before a returns
 						}
 						return &sleepingStarter{name: name, d: d, rec: rec}, nil
-					})
+					}, AsStarter())
 				}
 
 				begin := time.Now()
@@ -1794,9 +1991,14 @@ func TestStart_ParallelIncrementalDependencyOrder(t *testing.T) {
 }
 
 // provideLazy registers value lazily under name, through a provider that
-// returns it, where a scenario says "lazy".
+// returns it, where a scenario says "lazy". A Starter type is opted in with
+// AsStarter, as every Starter of a scenario is (design D19).
 func provideLazy[T any](scope Injector, name string, value T) {
-	ProvideNamed(scope, name, func(Injector) (T, error) { return value, nil })
+	var opts []ProvideOption
+	if typeIsStarter(reflect.TypeFor[T]()) {
+		opts = append(opts, AsStarter())
+	}
+	ProvideNamed(scope, name, func(Injector) (T, error) { return value, nil }, opts...)
 }
 
 func TestStart_ParallelFailure(t *testing.T) {
@@ -2046,7 +2248,7 @@ func TestStart_ParallelHookPanic(t *testing.T) {
 				for _, name := range []string{"a", "b", "c"} {
 					ProvideNamed(root, name, func(Injector) (*sleepyStarter, error) {
 						return &sleepyStarter{running: &running, instant: name == "b"}, nil
-					})
+					}, AsStarter())
 				}
 
 				var recovered any
@@ -2251,14 +2453,20 @@ func TestAbortOutcome(t *testing.T) {
 		want   string
 		same   bool // the result is returned unchanged
 	}{
-		{name: "Shutdown cause, nil", cause: ErrShutdown, want: "doger: start aborted: doger: container is shut down"},
-		{name: "caller cause, nil", want: "doger: start aborted: doger: container is shut down: context canceled"},
-		{name: "Shutdown cause, failure", cause: ErrShutdown, result: errBoom, want: "boom (start aborted: doger: container is shut down)"},
-		{name: "caller cause, failure", result: errBoom, want: "boom (start aborted: doger: container is shut down: context canceled)"},
+		{name: "Shutdown cause, nil", cause: ErrShutdown, want: "doger: start aborted: container is shut down"},
+		{name: "caller cause, nil", want: "doger: start aborted: container is shut down: context canceled"},
+		{name: "Shutdown cause, failure", cause: ErrShutdown, result: errBoom, want: "boom (start aborted: container is shut down)"},
+		{name: "caller cause, failure", result: errBoom, want: "boom (start aborted: container is shut down: context canceled)"},
 		{
 			name:   "caller cause, failure carrying it",
 			result: fmt.Errorf("boom (start aborted: %w)", context.Canceled),
-			want:   "boom (start aborted: context canceled) (start aborted: doger: container is shut down)",
+			want:   "boom (start aborted: context canceled) (start aborted: container is shut down)",
+		},
+		{
+			name:   "Shutdown cause, library failure",
+			cause:  ErrShutdown,
+			result: newStartError(StartOpStart, nil, "db", "", errBoom),
+			want:   "doger: failed to start service `db` in scope ``: boom (start aborted: container is shut down)",
 		},
 		{name: "caller cause, failure already aborted", result: alreadyAborted, want: alreadyAborted.Error(), same: true},
 	}
@@ -2288,11 +2496,12 @@ func TestAbortOutcome(t *testing.T) {
 	}
 }
 
-func TestStart_DefaultCandidates(t *testing.T) {
+func TestStart_CandidatesWithDefaults(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name          string
+		auto          bool // EnableStarterAutoDetection, and no AsStarter()
 		explicit      bool
 		refresh       bool // the root was started, then Refresh is the operation
 		defaultStarts int32
@@ -2301,6 +2510,7 @@ func TestStart_DefaultCandidates(t *testing.T) {
 		{name: "yielded", explicit: true, defaultStarts: 0, rootStarts: 1},
 		{name: "alone", defaultStarts: 1, rootStarts: 0},
 		{name: "refresh", explicit: true, refresh: true, defaultStarts: 0, rootStarts: 1},
+		{name: "yielded, auto-detected", auto: true, explicit: true, defaultStarts: 0, rootStarts: 1},
 	}
 
 	for _, tt := range tests {
@@ -2308,13 +2518,17 @@ func TestStart_DefaultCandidates(t *testing.T) {
 			t.Parallel()
 			testWithTimeout(t, 3*time.Second)
 
-			root := New()
+			root := NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: tt.auto})
 			t.Cleanup(func() { _ = root.Shutdown() })
 			ext := root.Scope("ext")
 			defaultServer, rootServer := &dfPool{}, &dfPool{}
-			Provide(ext, poolProvider(defaultServer), AsDefault())
+			var starter []ProvideOption
+			if !tt.auto {
+				starter = append(starter, AsStarter())
+			}
+			Provide(ext, poolProvider(defaultServer), append([]ProvideOption{AsDefault()}, starter...)...)
 			if tt.explicit {
-				Provide(root, poolProvider(rootServer))
+				Provide(root, poolProvider(rootServer), starter...)
 			}
 
 			require.NoError(t, root.Start())
@@ -2339,9 +2553,9 @@ func TestStart_DefaultDecidedAtDiscovery(t *testing.T) {
 	Provide(ext, func(Injector) (*dfPool, error) {
 		defaultCalls.Add(1)
 		return &dfPool{}, nil
-	}, AsDefault(), AsRunnable())
+	}, AsDefault(), AsRunnable(), AsStarter())
 	rootServer := &dfPool{}
-	Provide(root, poolProvider(rootServer), AsRunnable())
+	Provide(root, poolProvider(rootServer), AsRunnable(), AsStarter())
 
 	require.NoError(t, root.Start())
 
@@ -2356,14 +2570,14 @@ func TestScopeStart_SkipsYieldedDefault(t *testing.T) {
 	root := New()
 	t.Cleanup(func() { _ = root.Shutdown() })
 	rootServer := &dfPool{}
-	Provide(root, poolProvider(rootServer))
+	Provide(root, poolProvider(rootServer), AsStarter())
 	require.NoError(t, root.Start())
 	ext := root.Scope("ext")
 	var defaultCalls atomic.Int32
 	Provide(ext, func(Injector) (*dfPool, error) {
 		defaultCalls.Add(1)
 		return &dfPool{}, nil
-	}, AsDefault())
+	}, AsDefault(), AsStarter())
 
 	require.NoError(t, ext.Start())
 

@@ -458,7 +458,7 @@ func TestExtensionProperties_Injectors(t *testing.T) {
 			name: "flattened",
 			scope: func(t *testing.T, root *RootScope) Injector {
 				t.Helper()
-				require.NoError(t, Extend(root, &testExtension{name: "redis"}, Flatten()))
+				require.NoError(t, Extend(root, &testExtension{name: "redis"}, ExtendIntoRoot()))
 				return root
 			},
 		},

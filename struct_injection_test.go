@@ -129,6 +129,29 @@ type structInjectionAppAll struct {
 	Port int `do:"*"`
 }
 
+// structInjectionNilInt, structInjectionNilString and structInjectionNilWriter
+// have a field the nil io.Reader service "reader" cannot fill.
+type structInjectionNilInt struct {
+	Port int `do:"reader"`
+}
+
+type structInjectionNilString struct {
+	Port string `do:"reader"`
+}
+
+type structInjectionNilWriter struct {
+	Port io.Writer `do:"reader"`
+}
+
+// structInjectionTarget is reached through the named pointer type
+// structInjectionNamedPointer.
+type structInjectionTarget struct {
+	Name string `do:"name"`
+}
+
+// structInjectionNamedPointer is a named pointer-to-struct target type.
+type structInjectionNamedPointer *structInjectionTarget
+
 func TestStructInjection_InvalidTargets(t *testing.T) {
 	t.Parallel()
 
@@ -175,6 +198,27 @@ func TestStructInjection_InvalidTargets(t *testing.T) {
 			message: fmt.Sprintf("doger: `name` is not assignable to field `%s.Port`", NameOf[structInjectionApp]()),
 		},
 		{
+			name: "nil interface service into an int field",
+			invoke: func(root *RootScope) (any, error) {
+				return InvokeStruct[structInjectionNilInt](root)
+			},
+			message: fmt.Sprintf("doger: `reader` is not assignable to field `%s.Port`", NameOf[structInjectionNilInt]()),
+		},
+		{
+			name: "nil interface service into a string field",
+			invoke: func(root *RootScope) (any, error) {
+				return InvokeStruct[structInjectionNilString](root)
+			},
+			message: fmt.Sprintf("doger: `reader` is not assignable to field `%s.Port`", NameOf[structInjectionNilString]()),
+		},
+		{
+			name: "nil interface service into another interface field",
+			invoke: func(root *RootScope) (any, error) {
+				return InvokeStruct[structInjectionNilWriter](root)
+			},
+			message: fmt.Sprintf("doger: `reader` is not assignable to field `%s.Port`", NameOf[structInjectionNilWriter]()),
+		},
+		{
 			name: "tag * on a field that is not a collection",
 			invoke: func(root *RootScope) (any, error) {
 				return InvokeStruct[structInjectionAppAll](root)
@@ -190,6 +234,7 @@ func TestStructInjection_InvalidTargets(t *testing.T) {
 
 			root := New()
 			ProvideNamedValue(root, "name", "x")
+			ProvideNamedValue[io.Reader](root, "reader", nil)
 
 			result, err := tt.invoke(root)
 			is.Zero(result)
@@ -213,4 +258,18 @@ func TestStructInjection_DependencyFailureNotStructError(t *testing.T) {
 	_, err := InvokeStruct[app](New())
 	is.ErrorIs(err, ErrServiceNotFound)
 	is.NotErrorIs(err, ErrStructInjection)
+}
+
+func TestStructInjection_NamedPointerTarget(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+	must := require.New(t)
+
+	root := New()
+	ProvideNamedValue(root, "name", "x")
+
+	target, err := InvokeStruct[structInjectionNamedPointer](root)
+	must.NoError(err)
+	must.NotNil(target)
+	is.Equal("x", (*structInjectionTarget)(target).Name)
 }

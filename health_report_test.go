@@ -1795,7 +1795,7 @@ func healthReportTestInPhase(t *testing.T, i *RootScope, phase ContainerPhase) (
 	case PhaseIdle:
 		close(done)
 	case PhaseStarting:
-		ProvideNamedValue(i, "starter", &healthReportTestStarter{release: gate})
+		ProvideNamedValue(i, "starter", &healthReportTestStarter{release: gate}, AsStarter())
 		go func() { defer close(done); _ = i.Start() }()
 	case PhaseStarted:
 		i.AddContainerStartedHook(func(context.Context, *RootScope) { <-gate })
@@ -1805,7 +1805,7 @@ func healthReportTestInPhase(t *testing.T, i *RootScope, phase ContainerPhase) (
 		close(done)
 	case PhaseFailed:
 		open()
-		ProvideNamedValue(i, "starter", &healthReportTestStarter{release: gate, err: errors.New("boom")})
+		ProvideNamedValue(i, "starter", &healthReportTestStarter{release: gate, err: errors.New("boom")}, AsStarter())
 		require.Error(t, i.Start())
 		close(done)
 	case PhaseClosing:
@@ -2096,7 +2096,7 @@ func TestHealthReport_UnstartedNotChecked(t *testing.T) {
 				defer release()
 
 				late := &healthReportTestLate{}
-				ProvideNamedValue(i, "late", late)
+				ProvideNamedValue(i, "late", late, AsStarter())
 				if tt.refresh {
 					require.NoError(t, i.Refresh())
 				}
@@ -2153,7 +2153,7 @@ func TestHealthReport_UnstartedByCaller(t *testing.T) {
 
 			late := &healthReportTestLate{}
 			late.started.Store(true) // its check returns nil; the container has not started it
-			ProvideNamedValue(i, "late", late)
+			ProvideNamedValue(i, "late", late, AsStarter())
 
 			tt.caller(i, scheduler)
 			is.Equal(tt.calls, late.calls.Load(), "calls of late")

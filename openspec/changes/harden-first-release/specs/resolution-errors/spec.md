@@ -200,7 +200,7 @@ Examples:
 ```gherkin
 Given a root scope with 12 int values named "s00" to "s11" and lazy "a" invoking "missing"
 When the consumer invokes "a"
-Then the error message contains "`s09` and 3 more, path: `a` -> `missing`"
+Then the error message contains "`s08` and 3 more, path: `a` -> `missing`", because `a` sorts before `s00` and is listed too
 ```
 
 <!-- cases: 1 default: the cap of 10 has no option; ExplainInjector lists everything (proposal Defaults & Control) -->

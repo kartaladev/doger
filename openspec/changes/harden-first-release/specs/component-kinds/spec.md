@@ -49,7 +49,7 @@ And the handler received <received>
 Examples:
   | instance                       | result                                                                                      | received |
   | a *CleanupJob (implements Job) | nil                                                                                         | "life"   |
-  | an *app.Plain (no Run method)  | an error containing "doger: service `life` does not implement `doger.Job` required by kind `scheduled`" | nothing  |
+  | an *app.Plain (no Run method)  | the error "doger: failed to build service `life` in scope `[root]`: service `life` does not implement `doger.Job` required by kind `scheduled`" | nothing  |
 ```
 
 #### Scenario: Invalid kind values panic

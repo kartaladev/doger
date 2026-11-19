@@ -69,6 +69,27 @@ func ExampleExtend() {
 	// conflict: true
 }
 
+func ExampleExtendIntoRoot() {
+	root := New()
+
+	// installed into the root's own scope: every service is visible, no
+	// private scope is created
+	err := Extend(root, exampleKVExtensionOf("cache:6379"), ExtendIntoRoot())
+	fmt.Println("installed:", err == nil)
+
+	_, err = Invoke[*exampleKVPool](root)
+	fmt.Println("pool visible from root:", err == nil)
+	fmt.Println("child scopes:", len(root.Children()))
+
+	// there is no default container: a nil root is rejected
+	fmt.Println("nil root:", errors.Is(Extend(nil, exampleKVExtensionOf("cache:6379")), ErrNilInjector))
+	// Output:
+	// installed: true
+	// pool visible from root: true
+	// child scopes: 0
+	// nil root: true
+}
+
 func ExampleExtensionExport() {
 	root := New()
 

@@ -522,8 +522,8 @@ func TestAsDefault_YieldedLifecycle(t *testing.T) {
 			root := New()
 			shutdownOnCleanup(t, root)
 			ext := root.Scope("ext")
-			Provide(root, poolProvider(rootPool))
-			Provide(ext, poolProvider(&dfPool{}), AsDefault(), AsRunnable())
+			Provide(root, poolProvider(rootPool), AsStarter())
+			Provide(ext, poolProvider(&dfPool{}), AsDefault(), AsRunnable(), AsStarter())
 			_, err := Invoke[*dfPool](ext)
 			require.NoError(t, err)
 			if tt.before != nil {
@@ -574,7 +574,7 @@ func TestAsDefault_ChosenLifecycle(t *testing.T) {
 
 	pool := &dfPool{}
 	root := New()
-	Provide(root, poolProvider(pool), AsDefault())
+	Provide(root, poolProvider(pool), AsDefault(), AsStarter())
 	require.NoError(t, root.Start())
 
 	_ = root.Shutdown()
@@ -981,6 +981,21 @@ func TestAsDefault_YieldedFollowsOverride(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, "transient-1", first.label)
 				assert.Equal(t, "transient-2", second.label, "a new value per call")
+			},
+		},
+		{
+			name: "ShutdownNamed removed the root service, then a default replaced it",
+			change: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				require.NoError(t, ShutdownNamed(root, name))
+				Provide(root, dialerProvider("root-default", nil), AsDefault())
+			},
+			check: func(t *testing.T, invoke func() (*dfDialer, error)) {
+				t.Helper()
+				// a yielded default follows non-default services only
+				dialer, err := invoke()
+				assert.Nil(t, dialer)
+				assert.ErrorIs(t, err, ErrServiceNotFound)
 			},
 		},
 		{

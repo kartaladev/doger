@@ -1720,3 +1720,60 @@ func TestInvokeStruct_PrefersNonDefault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "mySource", injected.Src.Source())
 }
+
+// TestInvokeNamedAny_ListedAsInvoked pins that the untyped by-name path
+// (InvokeNamed[any], a struct tag, DependsOn) records the invocation, as
+// the typed path does.
+func TestInvokeNamedAny_ListedAsInvoked(t *testing.T) {
+	t.Parallel()
+
+	type tagged struct {
+		Svc string `do:"svc"`
+	}
+
+	tests := []struct {
+		name   string
+		invoke func(root *RootScope) error
+	}{
+		{
+			name: "InvokeNamed[any]",
+			invoke: func(root *RootScope) error {
+				_, err := InvokeNamed[any](root, "svc")
+				return err
+			},
+		},
+		{
+			name: "struct tag",
+			invoke: func(root *RootScope) error {
+				_, err := InvokeStruct[tagged](root)
+				return err
+			},
+		},
+		{
+			name: "DependsOn",
+			invoke: func(root *RootScope) error {
+				ProvideNamed(root, "dependent", func(Injector) (int, error) { return 1, nil }, DependsOnNamed("svc"))
+				_, err := InvokeNamed[int](root, "dependent")
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := New()
+			ProvideNamed(root, "svc", func(Injector) (string, error) { return "value", nil })
+
+			require.NoError(t, tt.invoke(root))
+
+			invoked := root.ListInvokedServices()
+			names := make([]string, 0, len(invoked))
+			for _, desc := range invoked {
+				names = append(names, desc.Service)
+			}
+			assert.Contains(t, names, "svc")
+		})
+	}
+}

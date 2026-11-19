@@ -126,13 +126,13 @@ Given a root scope created with a Logger whose handler records every record
 And an extension "metrics" with instance key "<instance>" whose Extend registers lazy "*metrics.Exporter" and returns fmt.Errorf("off by config: %w", doger.ErrExtensionDisabled)
 When the consumer calls doger.Extend(root, metricsExt)
 Then it returns nil
-And exactly one recorded record has level INFO and a message containing "<line>"
+And exactly one recorded record has level INFO, message "extension disabled" and attribute extension=<extension>
 And the root has no child scopes
 
 Examples:
-  | instance | line                          |
-  |          | extension metrics disabled    |
-  | eu       | extension metrics/eu disabled |
+  | instance | extension  |
+  |          | metrics    |
+  | eu       | metrics/eu |
 ```
 
 <!-- cases: N/A 2 overrides: whether to disable is the extension author's choice; ExtendIntoRoot is covered by "A declined install that cannot be rolled back cleanly" -->

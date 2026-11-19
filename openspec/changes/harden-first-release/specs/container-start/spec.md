@@ -730,7 +730,7 @@ Examples:
 <!-- cases: 3 zero values: a nil *InjectorOpts and a zero InjectorOpts behave like doger.New() -->
 <!-- cases: N/A 4 boundaries: a boolean option and a per-service opt-in -->
 <!-- cases: N/A 5 errors: AsStarter() on a type with no Start method is covered by registration-options ("Invalid opt-ins panic at registration") -->
-<!-- cases: 6 duplicates: auto-detection plus AsStarter() starts a service once ("Which registrations are started") -->
+<!-- cases: 6 duplicates: auto-detection plus AsStarter() starts a service once ("Auto-detection toggle", the EnableStarterAutoDetection rows: "b" has both and starts once) -->
 <!-- cases: 7 lifecycle: a clone keeps its source's setting (Clone rows) -->
 <!-- cases: N/A 8 concurrency: options are fixed at container creation -->
 <!-- cases: N/A 9 panics: no new panic path -->

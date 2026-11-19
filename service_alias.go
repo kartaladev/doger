@@ -86,6 +86,9 @@ func (s *serviceAlias[Initial, Alias]) getInstance(i Injector) (Alias, error) {
 	}
 
 	switch target := any(instance).(type) {
+	case nil:
+		// a nil-interface target gives the zero value
+		return empty[Alias](), nil
 	case Alias:
 		return target, nil
 	default:

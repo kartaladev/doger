@@ -1180,3 +1180,16 @@ func TestAlias_BindUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, pg, db)
 }
+
+func TestAlias_NilInterfaceTarget(t *testing.T) {
+	t.Parallel()
+
+	root := New()
+	ProvideNamedValue[io.ReadWriter](root, "rw", nil)
+	require.NoError(t, AliasNamed[io.ReadWriter, io.Reader](root, "rw", "alias"))
+
+	reader, err := InvokeNamed[io.Reader](root, "alias")
+
+	assert.NoError(t, err)
+	assert.Nil(t, reader)
+}

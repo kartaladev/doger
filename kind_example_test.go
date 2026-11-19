@@ -44,7 +44,7 @@ func ExampleNewKind() {
 
 	root := New()
 	cron := &exampleCron{}
-	ProvideNamed(root, "cron", func(i Injector) (*exampleCron, error) { return cron, nil })
+	ProvideNamed(root, "cron", func(i Injector) (*exampleCron, error) { return cron, nil }, AsStarter())
 	ProvideNamed(root, "cleanup", func(i Injector) (*exampleCleanup, error) {
 		return &exampleCleanup{}, nil
 	}, scheduled.With(exampleSchedule{Every: time.Hour}))
@@ -77,7 +77,7 @@ func (*exampleMigrator) Run(context.Context) error {
 func ExampleAsRunnable() {
 	root := New()
 
-	Provide(root, func(i Injector) (*exampleHTTPServer, error) { return &exampleHTTPServer{}, nil })
+	Provide(root, func(i Injector) (*exampleHTTPServer, error) { return &exampleHTTPServer{}, nil }, AsStarter())
 	// Runs once, after every Starter has started.
 	Provide(root, func(i Injector) (*exampleMigrator, error) { return &exampleMigrator{}, nil }, AsRunnable())
 

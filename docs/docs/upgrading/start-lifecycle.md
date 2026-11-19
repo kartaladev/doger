@@ -12,11 +12,13 @@ The Start lifecycle release adds container start, registration options, componen
 
 `Provide*`, `Override*` and the `Package` helpers (`Lazy*`, `Eager*`, `Transient*`) gain a trailing variadic parameter, `opts ...doger.ProvideOption`.
 
+Starter auto-detection is opt-in: by default `Start` starts only the services registered with `doger.AsStarter()`, so add the option to each service that must start, or set `InjectorOpts.EnableStarterAutoDetection: true` to also start every non-transient, non-alias service whose registered type implements a Starter variant.
+
 Every existing **call** compiles and behaves unchanged:
 
 ```go
 doger.Provide(injector, NewDatabase)                       // unchanged
-doger.Provide(injector, NewServer, doger.AsStarter())      // new: with an option
+doger.Provide(injector, NewServer, doger.AsStarter())      // new: with an option (Start only starts AsStarter() services by default)
 ```
 
 Code that stores one of these generic functions **as a value** of its old function type no longer compiles, because the function type now ends with `...doger.ProvideOption`:

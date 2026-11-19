@@ -56,7 +56,7 @@ func deepEmptyMakeValue(t reflect.Type, visited []reflect.Type) (reflect.Value, 
 	}
 	p := reflect.New(t.Elem())
 	p.Elem().Set(elem)
-	return p, nil
+	return p.Convert(t), nil // a named pointer type, such as type P *S, is not *S
 }
 
 func must0(err error) {

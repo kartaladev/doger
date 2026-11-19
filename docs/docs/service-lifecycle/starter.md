@@ -10,8 +10,8 @@ Background components such as servers, consumers and schedulers need to be start
 
 ```go
 root := doger.New()
-doger.Provide(root, NewDB)                      // Start(ctx) error -> auto-started
-doger.Provide(root, NewHTTPServer)              // invokes *DB -> started after DB
+doger.Provide(root, NewDB, doger.AsStarter())         // Start(ctx) error, opted in
+doger.Provide(root, NewHTTPServer, doger.AsStarter()) // invokes *DB -> started after DB
 
 if err := root.StartWithContext(ctx); err != nil {
 	_ = root.Shutdown()                         // the caller owns cleanup
@@ -23,7 +23,7 @@ if err := root.StartWithContext(ctx); err != nil {
 
 ## Starter interfaces {#starter-interfaces}
 
-A service is started when it implements one of:
+A service registered with `doger.AsStarter()` is started through one of:
 
 ```go
 type Starter interface{ Start() }
@@ -36,23 +36,22 @@ There is no `Stop` counterpart: a started service is stopped by its [`Shutdown` 
 
 ## Which services are started {#detection}
 
-Unlike `Shutdowner`, which is detected on the built instance, a starter is detected on its **registered type**, so a lazy service is discovered without being built.
+With zero configuration, `Start` starts **only the services registered with `doger.AsStarter()`**, whatever methods their types have. A type with a familiar `Start` method, such as `*exec.Cmd` or `*httptest.Server`, is never started by surprise.
 
 | Registration                                        | Started                                           |
 | --------------------------------------------------- | ------------------------------------------------- |
-| Lazy or eager, registered type has a `Start` method | yes                                               |
-| Registered under an interface type without `Start`  | no, unless registered with `doger.AsStarter()`    |
+| Lazy or eager, with `AsStarter()`                   | yes                                               |
+| Lazy or eager, without `AsStarter()`                | no, unless auto-detection is on (below)           |
+| Under an interface type without `Start`, with `AsStarter()` | yes; the instance is checked when `Start` runs |
 | Transient                                           | never (a factory has no single instance to start) |
 | Alias (`Alias`, `Bind`)                             | no; the target is started once                    |
 | Default (`AsDefault()`) that yields                 | no; the service it yields to is started once      |
 | Default (`AsDefault()`) that does not yield         | as the same registration without `AsDefault()`    |
 
 ```go
-// The interface has no Start method: opt in explicitly.
+// The interface has no Start method: the instance is checked at Start.
 doger.Provide(root, NewLifecycle, doger.AsStarter())
 ```
-
-With `AsStarter()` on an interface-typed registration, the instance is checked when `Start` runs.
 
 :::note Defaults are decided at Start
 
@@ -62,17 +61,19 @@ With `AsStarter()` on an interface-typed registration, the instance is checked w
 
 `Start` covers the root scope and every child scope that exists when it runs. Services registered after `Start`, and scopes created after it, are not started; they stay invokable as usual, and [`Refresh`](#refresh) starts them.
 
-### Disabling auto-detection {#disable-auto-detection}
+### Enabling auto-detection {#enable-auto-detection}
 
 ```go
 root := doger.NewWithOpts(&doger.InjectorOpts{
-	DisableStarterAutoDetection: true, // only AsStarter() services are started
+	EnableStarterAutoDetection: true, // also start every type with a Start method
 })
 ```
 
+Detection then uses the **registered type**, unlike `Shutdowner`, which is detected on the built instance, so a lazy service is discovered without being built; a service registered under an interface type without `Start` still needs `AsStarter()`. A clone keeps the setting.
+
 :::caution Surprising auto-detection
 
-Any registered type with a matching `Start` method is started, including standard-library types such as `*exec.Cmd`. A `*doger.RootScope` registered as a service of another container is started, but never shut down automatically. Code that already calls `Start()` by hand would start such services twice once it calls `root.Start()`. Disable auto-detection, or register the service under an interface type without `Start`.
+Any registered type with a matching `Start` method is then started, including standard-library types such as `*exec.Cmd`. A `*doger.RootScope` registered as a service of another container is started, but never shut down automatically. Code that already calls `Start()` by hand would start such services twice once it calls `root.Start()`. Keep auto-detection off and opt services in with `AsStarter()`.
 
 :::
 

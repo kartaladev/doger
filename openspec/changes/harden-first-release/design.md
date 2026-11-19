@@ -112,7 +112,7 @@ func (e *ServiceError) Unwrap() error
 - **Provider panics (BREAKING, see D10).** An error panic value is no longer returned as is: it is wrapped so it matches both `ErrProviderPanic` and the original via `errors.Is`/`errors.As`.
 - **`ErrScopeAlreadyDeclared`.** A duplicate child-scope name panics with a value matching it. A detached child's name (D3) can be declared again.
 - **Chosen message texts.** `ErrShutdown`: `doger: container is shut down`. Stage: `doger: invalid stage N`, `doger: unknown stage`. DependencySource: `doger: invalid dependency source N`, `doger: unknown dependency source`. Kinds: `doger: kind not created with NewKind`, `doger: nil handler for kind "k"`.
-- **Prefix scope.** Library-authored text carries `doger: ` once. Text led by the consumer's own cause is not prefixed, for example the abort outcome `boom (start aborted: container is shut down)`.
+- **Prefix scope.** Library-authored text carries `doger: ` once. The consumer-led rule is defensive: a message whose lead is the consumer's own error keeps that text first and unprefixed, and library text inside it does not repeat the prefix (`ledErrorf`). No public path produces such a message today, because every service failure of a run is a `*StartError`, which the library leads (``doger: failed to start service `a` in scope `[root]`: boom (start aborted: container is shut down)``); the rule is pinned through `abortOutcome` directly (`TestAbortOutcome`).
 - **Typed nil.** A typed-nil `*RootScope` or `*Scope` behaves exactly like a nil injector (`ErrNilInjector`).
 
 ### D7. Doger-owned Clock
@@ -136,7 +136,7 @@ These three methods are everything the root package uses today.
 
 | Level | Events |
 |---|---|
-| Debug | registration, invocation, build, and the panic value of a recovered panic |
+| Debug | registration, invocation, build, `requested shutdown` (the first record of the winning root Shutdown), and the panic value of a recovered panic |
 | Info | container start, ready, closing and closed |
 | Warn | a fallback to an unmonitored container, a health state change to degraded |
 | Error | a health scheduler failure (a stop failure included), a shutdown error, a recovered panic not passed to `HookContainerPanic` (service name and panic type only): the first panic of an operation goes to that hook when it is set, and is logged only when it is not; later panics are logged |
@@ -233,9 +233,11 @@ Additional breaks and changes found while writing the specs:
 - **Options copy.** `NewWithOpts` and `CloneWithOpts` shallow-copy `*opts` and clone every hook slice. The caller's struct is never written.
 
 ### D15. Struct injection
-- **Nil interface.** A dependency whose value is a nil interface sets the field to its zero value through `memberValue`, as the collection path already does.
-- **Recursive types.** `deepEmptyMakeValue` tracks the types it has visited. A recursive type returns an error matching `ErrStructInjection` that names the field.
-- **InvokeAs.** It uses a comma-ok assertion, so it returns the zero value for a nil interface.
+- **Nil interface.** A dependency whose value is a nil interface sets the field to its zero value through `memberValue`, as the collection path already does, once the service's declared type (`getReflectType()`) is checked assignable to the field: a nil interface has no dynamic type, so an unassignable declared type gives the "not assignable" error matching `ErrStructInjection`.
+- **Named pointer targets.** `deepEmptyMakeValue` converts each allocated pointer to the target type, so `type P *S` is injected like `*S`.
+- **Recursive types.** `deepEmptyMakeValue` tracks the types it has visited. A recursive type returns an error matching `ErrStructInjection` that names the type.
+- **InvokeAs.** A nil instance gives the zero value and a nil error; any other instance was selected as assignable to `T` and is asserted with a forced assertion, so an impossible mismatch panics instead of becoming a silent zero value.
+- **Aliases.** An alias whose target is a nil interface gives the zero value of the alias type.
 
 ### D16. Source tracking
 Frame capture uses one `runtime.Callers` pass into a fixed-size array. It skips frames whose function belongs to package `github.com/kartaladev/doger` (not its sub-packages' tests), so value registrations record the user's call site.
@@ -406,7 +408,8 @@ Hot paths and the tests that cover them:
 | The invoker chain follows the capped list | resolution_errors_test.go: TestResolutionErrors_NotFoundCapWithChain | unit |
 | Injecting a nil-interface service | struct_injection_test.go: TestStructInjection_NilInterfaceDependency | table |
 | MustInvokeStruct with a nil-interface service | struct_injection_test.go: TestStructInjection_MustNilInterfaceDependency | unit |
-| Invalid targets | struct_injection_test.go: TestStructInjection_InvalidTargets | table |
+| Invalid targets | struct_injection_test.go: TestStructInjection_InvalidTargets (incl. the nil-interface rows) | table |
+| A named pointer-to-struct target | struct_injection_test.go: TestStructInjection_NamedPointerTarget | unit |
 | MustInvokeStruct with a recursive pointer type | struct_injection_test.go: TestStructInjection_MustRecursivePointerType | unit (child process before fix) |
 | Dependency failures are not ErrStructInjection | struct_injection_test.go: TestStructInjection_DependencyFailureNotStructError | unit |
 | Provider panic values become invocation errors | invoke_test.go: TestInvoke_ProviderPanic (existing, rows updated) | table |

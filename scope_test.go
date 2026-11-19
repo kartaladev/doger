@@ -2783,7 +2783,7 @@ func TestScopeShutdown_ExportingChildWaitsForStart(t *testing.T) {
 		jobs := tenant.Scope("jobs")
 		events := &callRecorder{}
 		w := newGatedStarter(events)
-		ProvideNamed(jobs, "w", func(Injector) (*gatedStarter, error) { return w, nil })
+		ProvideNamed(jobs, "w", func(Injector) (*gatedStarter, error) { return w, nil }, AsStarter())
 		MustExportNamed[*gatedStarter](jobs, "w")
 		runErr := make(chan error, 1)
 		go func() { runErr <- jobs.Start() }()

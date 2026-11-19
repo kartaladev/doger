@@ -116,7 +116,7 @@ func TestKind_InterfaceRegistration(t *testing.T) {
 		{
 			name:     "instance_without_run",
 			instance: &kindPlain{},
-			errMsg:   "doger: service `life` does not implement `doger.Job` required by kind `scheduled`",
+			errMsg:   "doger: failed to build service `life` in scope `[root]`: service `life` does not implement `doger.Job` required by kind `scheduled`",
 			received: []string{},
 		},
 	}
@@ -138,7 +138,7 @@ func TestKind_InterfaceRegistration(t *testing.T) {
 			if tt.errMsg == "" {
 				is.NoError(err)
 			} else {
-				is.ErrorContains(err, tt.errMsg)
+				is.EqualError(err, tt.errMsg)
 			}
 			is.Equal(tt.received, rec.names())
 		})
@@ -228,7 +228,7 @@ func TestKind_Stage(t *testing.T) {
 			ProvideNamed(root, "server", func(Injector) (*kindServer, error) {
 				events.record("build server")
 				return &kindServer{rec: events}, nil
-			})
+			}, AsStarter())
 			ProvideNamed(root, "job", func(Injector) (*CleanupJob, error) {
 				events.record("build job")
 				return &CleanupJob{}, nil
@@ -251,7 +251,7 @@ func TestKind_ReplaceHandler(t *testing.T) {
 	k := NewKind[Job, Spec]("k")
 	root := New()
 	events := &callRecorder{}
-	ProvideNamed(root, "server", func(Injector) (*kindServer, error) { return &kindServer{rec: events}, nil })
+	ProvideNamed(root, "server", func(Injector) (*kindServer, error) { return &kindServer{rec: events}, nil }, AsStarter())
 	ProvideNamed(root, "job", func(Injector) (*CleanupJob, error) { return &CleanupJob{}, nil }, k.With(Spec{}))
 	k.Handle(root, StageBeforeStart, func(context.Context, Component[Job, Spec]) error {
 		events.record("first")
@@ -383,7 +383,7 @@ func TestKind_HandlerFailure(t *testing.T) {
 
 			k := NewKind[Job, Spec]("k")
 			root := New()
-			server := provideCounted(root, "server", &startWithErr{})
+			server := provideCounted(root, "server", &startWithErr{}, AsStarter())
 			newJob := func(Injector) (*CleanupJob, error) { return &CleanupJob{}, nil }
 			ProvideNamed(root, "a", newJob, k.With(Spec{}))
 			ProvideNamed(root, "b", newJob, k.With(Spec{}))
@@ -434,9 +434,9 @@ func TestKind_DeclareDependencyInHandler(t *testing.T) {
 	root := New()
 	events := &callRecorder{}
 	for _, name := range []string{"scheduler", "job"} {
-		var opts []ProvideOption
+		opts := []ProvideOption{AsStarter()}
 		if name == "job" {
-			opts = []ProvideOption{scheduled.With(Spec{Every: time.Minute})}
+			opts = append(opts, scheduled.With(Spec{Every: time.Minute}))
 		}
 		ProvideNamed(root, name, func(Injector) (*eventService, error) {
 			events.record("build " + name)
@@ -482,7 +482,7 @@ func TestRunnable_RunsAfterStarters(t *testing.T) {
 
 	root := New()
 	events := &callRecorder{}
-	ProvideNamed(root, "server", func(Injector) (*kindServer, error) { return &kindServer{rec: events}, nil })
+	ProvideNamed(root, "server", func(Injector) (*kindServer, error) { return &kindServer{rec: events}, nil }, AsStarter())
 	provideRunner(root, events, "migrate", nil, AsRunnable())
 	provideRunner(root, events, "warmup", nil, AsRunnable())
 

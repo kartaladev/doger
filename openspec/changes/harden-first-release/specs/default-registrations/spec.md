@@ -253,6 +253,7 @@ Examples:
   | doger.OverrideNamedValue(root, "*app.Dialer", "app-dialer-3")                            | "app-dialer-3"  | nil                                    |
   | doger.OverrideNamedTransient(root, "*app.Dialer", provider producing a new value per call) | a new value    | nil                                    |
   | doger.ShutdownNamed(root, "*app.Dialer") removed the root service                        | the zero value  | an error matching doger.ErrServiceNotFound |
+  | doger.ShutdownNamed(root, "*app.Dialer"), then a lazy "*app.Dialer" registered in the root with doger.AsDefault() | the zero value | an error matching doger.ErrServiceNotFound |
 ```
 
 #### Scenario: Yielded default through an alias follows an override

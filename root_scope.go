@@ -363,6 +363,9 @@ func (s *RootScope) waitForClose(ctx context.Context, done <-chan struct{}) *Shu
 func (s *RootScope) shutdownAsWinner(ctx context.Context, ticket closeTicket, first *hookPanic) (report *ShutdownReport) {
 	defer func() { s.finishClose(report) }()
 
+	// the winner's first record: a handler panicking on it still releases
+	// the other callers through finishClose
+	s.self.log(slog.LevelDebug, "requested shutdown")
 	s.self.log(slog.LevelInfo, "container closing")
 	s.self.close() // before the Closing hooks: nothing is registered from now on
 	s.stopScheduling(ctx)

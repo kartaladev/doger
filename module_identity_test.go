@@ -393,9 +393,6 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 		return ""
 	}
 
-	// Rows of the scenario "Messages that used to double the prefix" that
-	// later groups add once their symbols exist:
-	//   - consumer-led start abort outcome: group 30
 	tests := []struct {
 		name    string
 		message func(t *testing.T) string
@@ -462,8 +459,8 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 			name: "start_rejects_dependency_cycle",
 			message: func(t *testing.T) string {
 				root := New()
-				ProvideNamed(root, "a", func(Injector) (prefixOnceStarter, error) { return prefixOnceStarter{}, nil })
-				ProvideNamed(root, "b", func(i Injector) (prefixOnceStarter, error) { return InvokeNamed[prefixOnceStarter](i, "a") })
+				ProvideNamed(root, "a", func(Injector) (prefixOnceStarter, error) { return prefixOnceStarter{}, nil }, AsStarter())
+				ProvideNamed(root, "b", func(i Injector) (prefixOnceStarter, error) { return InvokeNamed[prefixOnceStarter](i, "a") }, AsStarter())
 				require.NoError(t, DeclareDependency(root, "a", "b"))
 				err := root.Start()
 				require.ErrorIs(t, err, ErrCircularDependency)
@@ -471,6 +468,28 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 				return err.Error()
 			},
 			want: "doger: cannot start: circular dependency detected: `a` -> `b` -> `a`",
+		},
+		{
+			name: "consumer_led_start_abort",
+			message: func(t *testing.T) string {
+				root := New()
+				entered := make(chan struct{})
+				ProvideNamed(root, "a", func(Injector) (*prefixOnceAbortStarter, error) {
+					return &prefixOnceAbortStarter{entered: entered}, nil
+				}, AsStarter())
+				startErr := make(chan error, 1)
+				go func() { startErr <- root.StartWithContext(context.Background()) }()
+				<-entered
+				root.ShutdownWithContext(context.Background())
+				err := <-startErr
+				require.ErrorIs(t, err, ErrShutdown)
+
+				return err.Error()
+			},
+			// The Starter's failure is a StartError, so the library leads the
+			// message; the consumer's "boom" follows unprefixed, and the
+			// abort cause does not repeat the prefix.
+			want: "doger: failed to start service `a` in scope `[root]`: boom (start aborted: container is shut down)",
 		},
 		{
 			name: "refresh_after_shutdown",
@@ -667,5 +686,18 @@ func (prefixOnceExtension) Extend(*ExtensionContext) error { return nil }
 
 // prefixOnceStarter is a Starter that does nothing.
 type prefixOnceStarter struct{}
+
+// prefixOnceAbortStarter tells when its Start runs, then returns "boom" once
+// Shutdown cancelled its context.
+type prefixOnceAbortStarter struct {
+	entered chan struct{}
+}
+
+func (s *prefixOnceAbortStarter) Start(ctx context.Context) error {
+	close(s.entered)
+	<-ctx.Done()
+
+	return errors.New("boom")
+}
 
 func (prefixOnceStarter) Start() {}
