@@ -117,6 +117,7 @@ doger adds a trailing `...doger.ProvideOption` parameter to the registration fun
 | `var DefaultRootScope`, and a nil injector falling back to it | Removed. A nil injector, root or scope, including a typed-nil `*RootScope` or `*Scope`, gives `ErrNilInjector` from functions with an error result and panics with a value matching it elsewhere | Create a container with `doger.New()` and pass it explicitly |
 | `InjectorOpts.Logf func(format string, args ...any)` | `InjectorOpts.Logger *slog.Logger`: fixed messages and levels with `scope`/`service` attributes; nil logs nothing; panic values and health-check error text only at Debug | `Logger: slog.Default()`, or any `slog.Handler` |
 | `var MaxInvocationFrames` (package-wide) | `InjectorOpts.MaxInvocationFrames int`, per container: 0 means 100, a negative value turns recording off, and the cap records exactly that many frames | Set the option on each container that needs another cap |
+| `Scope(name)` panicking with a plain error for a name its parent already has | The panic value matches the new sentinel `ErrScopeAlreadyDeclared` (message ``doger: scope `<name>` has already been declared``). A child that was shut down is detached, so its name can be declared again | Match the recovered value with `errors.Is(err, doger.ErrScopeAlreadyDeclared)`, not its text |
 
 ## What stays the same {#what-stays-the-same}
 

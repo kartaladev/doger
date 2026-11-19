@@ -633,6 +633,7 @@ func TestModuleIdentity_AllSentinelsPrefixed(t *testing.T) {
 				"ErrNotStarted":                ErrNotStarted,
 				"ErrNilInjector":               ErrNilInjector,
 				"ErrStructInjection":           ErrStructInjection,
+				"ErrScopeAlreadyDeclared":      ErrScopeAlreadyDeclared,
 				"ErrProviderPanic":             ErrProviderPanic,
 				"ErrShutdownPanic":             ErrShutdownPanic,
 				"ErrInvalidExtension":          ErrInvalidExtension,

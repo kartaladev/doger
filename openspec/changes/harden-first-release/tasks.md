@@ -259,10 +259,10 @@ This group depends on: the error-prefix group (`doger:`), the closed-scope group
 
 This group depends on: the error-prefix group and the "Detach shut-down child scopes" group (for the after-shutdown row).
 
-- [ ] 37.1 RED: add `TestResolutionErrors_DuplicateScope` (rows same, after_shutdown, sibling, grandchild, other_depth) and `TestResolutionErrors_DuplicateScopeConcurrent` (scenarios "Declaring a child scope name twice", "Concurrent declarations of one child scope name"); verify `go test -race -run TestResolutionErrors_DuplicateScope .` fails to compile, naming only `ErrScopeAlreadyDeclared`
-- [ ] 37.2 GREEN: add `ErrScopeAlreadyDeclared`; make the duplicate-child panic in `Scope()` wrap it, with message ``doger: scope `<name>` has already been declared``, decided under the parent's write lock; verify the 37.1 tests pass under `-race` and `make test` is green
-- [ ] 37.3 REFACTOR: Extract Function `duplicateScopeError(name)` next to the duplicate-service error helper; verify `make test` and `make lint` pass
-- [ ] 37.4 Add `ErrScopeAlreadyDeclared` godoc and a row to the migration guide; verify `go doc doger.ErrScopeAlreadyDeclared` shows the doc
+- [x] 37.1 RED: add `TestResolutionErrors_DuplicateScope` (rows same, after_shutdown, sibling, grandchild, other_depth) and `TestResolutionErrors_DuplicateScopeConcurrent` (scenarios "Declaring a child scope name twice", "Concurrent declarations of one child scope name"); verify `go test -race -run TestResolutionErrors_DuplicateScope .` fails to compile, naming only `ErrScopeAlreadyDeclared`
+- [x] 37.2 GREEN: add `ErrScopeAlreadyDeclared`; make the duplicate-child panic in `Scope()` wrap it, with message ``doger: scope `<name>` has already been declared``, decided under the parent's write lock; verify the 37.1 tests pass under `-race` and `make test` is green
+- [x] 37.3 REFACTOR: Extract Function `duplicateScopeError(name)` next to the duplicate-service error helper; verify `make test` and `make lint` pass
+- [x] 37.4 Add `ErrScopeAlreadyDeclared` godoc and a row to the migration guide; verify `go doc doger.ErrScopeAlreadyDeclared` shows the doc
 
 ## 38. HealthCheckTimeout defaults to 10s
 

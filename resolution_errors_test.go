@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -404,4 +407,130 @@ func TestResolutionErrors_NotFoundCapWithChain(t *testing.T) {
 	_, err := InvokeNamed[int](root, "a")
 	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorContains(err, "`s08` and 3 more, path: `a` -> `missing`")
+}
+
+func TestResolutionErrors_DuplicateScope(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// run declares the scopes and returns the one the call creates, or
+		// panics.
+		run      func(root *RootScope) *Scope
+		panicMsg string // empty: the call returns a scope
+		check    func(t *testing.T, root *RootScope, created *Scope)
+	}{
+		{
+			name: "same",
+			run: func(root *RootScope) *Scope {
+				root.Scope("tenant")
+				return root.Scope("tenant")
+			},
+			panicMsg: "doger: scope `tenant` has already been declared",
+		},
+		{
+			name: "after_shutdown",
+			run: func(root *RootScope) *Scope {
+				tenant := root.Scope("tenant")
+				tenant.Shutdown()
+				return root.Scope("tenant")
+			},
+			check: func(t *testing.T, root *RootScope, created *Scope) {
+				t.Helper()
+				assert.Equal(t, "tenant", created.Name())
+				assert.Len(t, root.Children(), 1)
+			},
+		},
+		{
+			name: "sibling",
+			run: func(root *RootScope) *Scope {
+				root.Scope("tenant")
+				return root.Scope("billing")
+			},
+			check: func(t *testing.T, root *RootScope, created *Scope) {
+				t.Helper()
+				assert.Equal(t, "billing", created.Name())
+				assert.Len(t, root.Children(), 2)
+			},
+		},
+		{
+			name: "grandchild",
+			run: func(root *RootScope) *Scope {
+				tenant := root.Scope("tenant")
+				tenant.Scope("jobs")
+				return tenant.Scope("jobs")
+			},
+			panicMsg: "doger: scope `jobs` has already been declared",
+		},
+		{
+			name: "other_depth",
+			run: func(root *RootScope) *Scope {
+				root.Scope("tenant").Scope("jobs")
+				return root.Scope("jobs")
+			},
+			check: func(t *testing.T, root *RootScope, created *Scope) {
+				t.Helper()
+				assert.Equal(t, "jobs", created.Name())
+				assert.Same(t, root.self, created.parentScope)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+
+			root := New()
+			var created *Scope
+			err := panicError(t, func() { created = tt.run(root) })
+
+			if tt.panicMsg != "" {
+				require.Error(t, err, "the call panics")
+				assert.ErrorIs(t, err, ErrScopeAlreadyDeclared)
+				assert.EqualError(t, err, tt.panicMsg)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, created)
+			tt.check(t, root, created)
+		})
+	}
+}
+
+func TestResolutionErrors_DuplicateScopeConcurrent(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	root := New()
+	const callers = 16
+	var (
+		wg      sync.WaitGroup
+		scopes  atomic.Int32
+		dupes   atomic.Int32
+		unknown atomic.Int32
+		start   = make(chan struct{})
+	)
+	for range callers {
+		wg.Go(func() {
+			<-start
+			recovered := recoverPanic(func() { root.Scope("tenant") })
+			switch err, _ := recovered.(error); {
+			case recovered == nil:
+				scopes.Add(1)
+			case errors.Is(err, ErrScopeAlreadyDeclared):
+				dupes.Add(1)
+			default:
+				unknown.Add(1)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	is.Equal(int32(1), scopes.Load(), "one caller got the scope")
+	is.Equal(int32(callers-1), dupes.Load(), "the others recovered ErrScopeAlreadyDeclared")
+	is.Zero(unknown.Load())
+	is.Len(root.Children(), 1)
 }
