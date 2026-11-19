@@ -12,6 +12,8 @@ The Start lifecycle release adds container start, registration options, componen
 
 `Provide*`, `Override*` and the `Package` helpers (`Lazy*`, `Eager*`, `Transient*`) gain a trailing variadic parameter, `opts ...doger.ProvideOption`.
 
+Starter auto-detection is opt-in: by default `Start` starts only the services registered with `doger.AsStarter()`, so add the option to each service that must start, or set `InjectorOpts.EnableStarterAutoDetection: true` to also start every registered type with a `Start` method.
+
 Every existing **call** compiles and behaves unchanged:
 
 ```go

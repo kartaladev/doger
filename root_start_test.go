@@ -2489,6 +2489,7 @@ func TestStart_CandidatesWithDefaults(t *testing.T) {
 
 	tests := []struct {
 		name          string
+		auto          bool // EnableStarterAutoDetection, and no AsStarter()
 		explicit      bool
 		refresh       bool // the root was started, then Refresh is the operation
 		defaultStarts int32
@@ -2497,6 +2498,7 @@ func TestStart_CandidatesWithDefaults(t *testing.T) {
 		{name: "yielded", explicit: true, defaultStarts: 0, rootStarts: 1},
 		{name: "alone", defaultStarts: 1, rootStarts: 0},
 		{name: "refresh", explicit: true, refresh: true, defaultStarts: 0, rootStarts: 1},
+		{name: "yielded, auto-detected", auto: true, explicit: true, defaultStarts: 0, rootStarts: 1},
 	}
 
 	for _, tt := range tests {
@@ -2504,13 +2506,17 @@ func TestStart_CandidatesWithDefaults(t *testing.T) {
 			t.Parallel()
 			testWithTimeout(t, 3*time.Second)
 
-			root := New()
+			root := NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: tt.auto})
 			t.Cleanup(func() { _ = root.Shutdown() })
 			ext := root.Scope("ext")
 			defaultServer, rootServer := &dfPool{}, &dfPool{}
-			Provide(ext, poolProvider(defaultServer), AsDefault(), AsStarter())
+			var starter []ProvideOption
+			if !tt.auto {
+				starter = append(starter, AsStarter())
+			}
+			Provide(ext, poolProvider(defaultServer), append([]ProvideOption{AsDefault()}, starter...)...)
 			if tt.explicit {
-				Provide(root, poolProvider(rootServer), AsStarter())
+				Provide(root, poolProvider(rootServer), starter...)
 			}
 
 			require.NoError(t, root.Start())

@@ -202,7 +202,7 @@ func ExampleScope_Start() {
 	tenant := root.Scope("tenant-a")
 	ProvideNamedValue(tenant, "sync", &exampleWorker{name: "tenant-a sync"}, AsStarter())
 	other := root.Scope("tenant-b")
-	ProvideNamedValue(other, "sync", &exampleWorker{name: "tenant-b sync"})
+	ProvideNamedValue(other, "sync", &exampleWorker{name: "tenant-b sync"}, AsStarter())
 
 	// Starts tenant-a and its descendants only.
 	if err := tenant.Start(); err != nil {
