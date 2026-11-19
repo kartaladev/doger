@@ -3,6 +3,7 @@ package doger
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,7 +15,9 @@ import (
 // 							Templating helpers
 /////////////////////////////////////////////////////////////////////////////
 
-var dirname = must1(os.Getwd())
+// dirname is the test's working directory with forward slashes, as the
+// file paths of runtime frames have them on every OS.
+var dirname = filepath.ToSlash(must1(os.Getwd()))
 
 func fakeProvider1(i Injector) (int, error) {
 	return 42, nil
@@ -334,7 +337,7 @@ Scope name: scope-child
 Service name: SERVICE-E
 Service type: lazy
 Service build time: 1s
-Invoked: ` + dirname + `/di_explain_test.go:fakeProvider5:40
+Invoked: ` + dirname + `/di_explain_test.go:fakeProvider5:43
 
 Dependencies:
 * SERVICE-D from scope scope-child
@@ -358,7 +361,7 @@ Scope name: scope-child
 
 Service name: SERVICE-E
 Service type: lazy
-Invoked: ` + dirname + `/di_explain_test.go:fakeProvider5:40
+Invoked: ` + dirname + `/di_explain_test.go:fakeProvider5:43
 
 Dependencies:
 * SERVICE-D from scope scope-child

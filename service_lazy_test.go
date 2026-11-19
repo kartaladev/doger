@@ -468,10 +468,15 @@ func TestServiceLazy_build(t *testing.T) {
 
 	test := lazyTest{foobar: "foobar"}
 
+	// each successful provider takes 1ms on the container clock: a fast
+	// build on a coarse real clock (Windows) can measure 0
+	clock := newFakeClock()
 	provider1 := func(i Injector) (int, error) {
+		clock.Advance(time.Millisecond)
 		return 42, nil
 	}
 	provider2 := func(i Injector) (lazyTest, error) {
+		clock.Advance(time.Millisecond)
 		return test, nil
 	}
 	provider3 := func(i Injector) (int, error) {
@@ -484,7 +489,7 @@ func TestServiceLazy_build(t *testing.T) {
 		return 42, fmt.Errorf("error")
 	}
 
-	i := New()
+	i := NewWithOpts(&InjectorOpts{Clock: clock})
 
 	tests := []struct {
 		name    string
@@ -507,7 +512,7 @@ func TestServiceLazy_build(t *testing.T) {
 				is.Empty(tt.service.buildTime())
 				err := tt.service.build(i)
 				is.True(tt.service.built())
-				is.NotEmpty(tt.service.buildTime())
+				is.Equal(time.Millisecond, tt.service.buildTime())
 				is.NoError(err)
 				return
 			}
