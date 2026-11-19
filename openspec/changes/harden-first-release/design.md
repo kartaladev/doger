@@ -138,8 +138,8 @@ These three methods are everything the root package uses today.
 |---|---|
 | Debug | registration, invocation, build, and the panic value of a recovered panic |
 | Info | container start, ready, closing and closed |
-| Warn | a fallback to an unmonitored container, panics after the first one of an operation, a health state change to degraded |
-| Error | a health scheduler failure, a shutdown error, a recovered panic (service name and panic type only) |
+| Warn | a fallback to an unmonitored container, a health state change to degraded |
+| Error | a health scheduler failure (a stop failure included), a shutdown error, a recovered panic not passed to `HookContainerPanic` (service name and panic type only): the first panic of an operation goes to that hook when it is set, and is logged only when it is not; later panics are logged |
 
 - **Attributes.** Every record carries the attributes `scope` and `service`, where they apply.
 - **Excluded values.** Panic values and health-check error text are emitted only at Debug, to keep secrets out of default logs (audit R3).
@@ -262,7 +262,7 @@ Each item gets a benchmark in `bench/` that runs before and after, with results 
 - **Dependabot.** Auto-merge is limited to semver patch and minor updates, and is gated on `github.event.pull_request.user.login == 'dependabot[bot]'`. Dependabot also covers `/scheduler/**` and `/clock/**`.
 - **Release.**
   - It requires `github.ref == 'refs/heads/main'`, or a tag that points at a commit on `main`, and the `release` environment.
-  - After stripping tests, it runs `go mod tidy` in every module while the local `replace` is still present, then pins the root version, builds, vets and runs govulncheck.
+  - After stripping tests, it drops from every module the test-only requirements (testify, goleak, clockwork) that its non-test packages do not use on any release platform, then runs `go mod tidy` while the local `replace` is still present (tidy alone keeps a requirement a dependency's graph mentions; a tidy that adds or raises a requirement fails the release), then pins the root version, builds, vets and runs govulncheck.
   - It creates the GitHub release with `generate_release_notes: true`.
 - **Lint.** `.golangci.yml` enables `gosec`, `errorlint` and `noctx`, with each suppression justified inline.
 - **Also released and checked.** The release also tags `clock/clockwork/<semver>`. Three scripts back the `release-integrity` scenarios: `scripts/check-workflows.sh` (pinning, permissions, matrix, provenance, dependabot, policy files; `--self-test`), `scripts/release-dry-run.sh <semver>` (mirrors release post-processing into a file proxy and builds a clean `GOWORK=off` consumer) and `scripts/test-make-targets.sh` (plants failures per module).

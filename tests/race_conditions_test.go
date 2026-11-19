@@ -237,9 +237,29 @@ func TestRaceConditionShutdownInvocation(t *testing.T) {
 
 	wg.Wait()
 
-	// After concurrent shutdown/invocation, the service should no longer be invokable
+	// An invoke racing Shutdown returns the instance, or ErrShutdown once
+	// the root scope is closed.
+	for i := 0; i < numOperations; i += 2 {
+		if invokeErrors[i] != nil {
+			is.ErrorIs(invokeErrors[i], doger.ErrShutdown)
+		}
+	}
+
+	// Root Shutdown runs once: every call gets the same successful report.
+	for i := 1; i < numOperations; i += 2 {
+		if is.NotNil(report[i]) {
+			is.True(report[i].Succeed)
+			is.Empty(report[i].Errors)
+			is.Len(report[i].Services, 1)
+			if len(report[i].Services) == 1 {
+				is.Equal("shutdown-race-service", report[i].Services[0].Service)
+			}
+		}
+	}
+
+	// After concurrent shutdown/invocation, the closed root refuses it
 	_, finalErr := doger.InvokeNamed[*raceShutdowner](root, "shutdown-race-service")
-	is.Error(finalErr)
+	is.ErrorIs(finalErr, doger.ErrShutdown)
 }
 
 // TestRaceConditionSlowServiceInvocation tests race conditions with slow service resolution

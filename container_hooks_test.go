@@ -321,7 +321,7 @@ func TestContainerFailedHook_GuardErrors(t *testing.T) {
 	}{
 		{name: "started", prepare: func(root *RootScope) { _ = root.Start() }, wantErr: ErrAlreadyStarted},
 		{name: "failed after a Starting veto", veto: errVeto, prepare: func(root *RootScope) { _ = root.Start() }, wantErr: ErrAlreadyStarted},
-		{name: "shut down", prepare: func(root *RootScope) { _ = root.Shutdown() }, wantErr: ErrStartAfterShutdown},
+		{name: "shut down", prepare: func(root *RootScope) { _ = root.Shutdown() }, wantErr: ErrShutdown},
 	}
 
 	for _, tt := range tests {
@@ -679,7 +679,7 @@ func TestContainerHooks_HookCallsShutdownWithDeadline(t *testing.T) {
 			},
 			check: func(t *testing.T, root *RootScope, failed *atomic.Int32) {
 				t.Helper()
-				assert.ErrorIs(t, root.Start(), ErrStartAfterShutdown)
+				assert.ErrorIs(t, root.Start(), ErrShutdown)
 				assert.Equal(t, int32(1), failed.Load())
 			},
 		},
@@ -696,7 +696,7 @@ func TestContainerHooks_HookCallsShutdownWithDeadline(t *testing.T) {
 			check: func(t *testing.T, root *RootScope, failed *atomic.Int32) {
 				t.Helper()
 				err := root.Start()
-				assert.ErrorIs(t, err, ErrStartAfterShutdown)
+				assert.ErrorIs(t, err, ErrShutdown)
 				assert.ErrorIs(t, err, errHookVeto)
 				assert.Equal(t, int32(1), failed.Load())
 			},
@@ -796,7 +796,7 @@ func TestContainerHooks_ShutdownDuringStart(t *testing.T) {
 					root.Shutdown()
 				}
 			},
-			wantErr: ErrStartAfterShutdown,
+			wantErr: ErrShutdown,
 			counts:  map[string]int{"started-hook": 0, "ready-hook": 0, "failed-hook": 1},
 			ordering: func(t *testing.T, events []string) {
 				t.Helper()
@@ -824,7 +824,7 @@ func TestContainerHooks_ShutdownDuringStart(t *testing.T) {
 					wg.Wait()
 				}
 			},
-			wantErr: ErrStartAfterShutdown,
+			wantErr: ErrShutdown,
 			counts:  map[string]int{"started-hook": 0, "ready-hook": 0, "failed-hook": 1},
 			ordering: func(t *testing.T, events []string) {
 				t.Helper()
@@ -1223,7 +1223,7 @@ func TestContainerHooks_ObserverPanicDefault(t *testing.T) {
 			},
 			operation:  func(root *RootScope) { root.Shutdown() },
 			phase:      PhaseClosed,
-			laterError: ErrStartAfterShutdown,
+			laterError: ErrShutdown,
 		},
 		{
 			name: "Closed",
@@ -1234,7 +1234,7 @@ func TestContainerHooks_ObserverPanicDefault(t *testing.T) {
 			},
 			operation:  func(root *RootScope) { root.Shutdown() },
 			phase:      PhaseClosed,
-			laterError: ErrStartAfterShutdown,
+			laterError: ErrShutdown,
 		},
 	}
 
@@ -1608,7 +1608,7 @@ func TestContainerHooks_IncrementalStartFiresNone(t *testing.T) {
 }
 
 // TestContainerHooks_ShutdownCauseRace pins that a start whose pipeline
-// returns just as Shutdown begins still fails with ErrStartAfterShutdown.
+// returns just as Shutdown begins still fails with ErrShutdown.
 func TestContainerHooks_ShutdownCauseRace(t *testing.T) {
 	t.Parallel()
 
@@ -1663,13 +1663,13 @@ func TestContainerHooks_ShutdownCauseRace(t *testing.T) {
 				err := tt.operation(t, root, provideJob)
 				<-done
 
-				if err != nil && !errors.Is(err, ErrStartAfterShutdown) {
+				if err != nil && !errors.Is(err, ErrShutdown) {
 					bad++
 					sample = err
 				}
 			}
 
-			assert.Zero(t, bad, "errors not matching ErrStartAfterShutdown, e.g. %v", sample)
+			assert.Zero(t, bad, "errors not matching ErrShutdown, e.g. %v", sample)
 		})
 	}
 }
@@ -1743,7 +1743,7 @@ func TestContainerHooks_ShutdownInterruptsLateStep(t *testing.T) {
 				err := root.Start()
 				shutdowns.Wait()
 
-				is.ErrorIs(err, ErrStartAfterShutdown)
+				is.ErrorIs(err, ErrShutdown)
 				is.Same(err, failedErr)
 				tt.step(t, err)
 			})
@@ -1792,7 +1792,7 @@ func TestContainerFailedHook_PipelinePanicAfterShutdown(t *testing.T) {
 				<-shutdownDone
 
 				is.ErrorIs(failedErr, errBoom)
-				is.ErrorIs(failedErr, ErrStartAfterShutdown, "Failed error: %v", failedErr)
+				is.ErrorIs(failedErr, ErrShutdown, "Failed error: %v", failedErr)
 			})
 		})
 	}

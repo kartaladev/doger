@@ -259,6 +259,35 @@ And the check of "db" is released before the test ends
 <!-- cases: N/A 9 panics: a panic in stop is the next requirement -->
 <!-- cases: N/A 10 backward compatibility: Shutdown without a scheduler is unchanged -->
 
+### Requirement: A shutdown through the root's own *Scope ends health recording
+A Shutdown through the root's own `*Scope` leaves the container phase unchanged, yet after it the container SHALL record no health result and call no health hook again, whichever path runs a check. That scope is closed: a registration on it panics with an error matching `ErrShutdown` (container-shutdown, "A closed scope stays closed").
+
+#### Scenario: A shutdown through the root's own *Scope ends health recording
+```gherkin
+Given an injector that is never started, with a HookServiceHealthChanged hook that records calls
+And the consumer called Shutdown() on the injector a provider received
+When the consumer registers a Healthchecker value "db" returning nil, and then calls <calls>
+Then the registration panics with an error matching ErrShutdown
+And the report lists no service and its Phase is PhaseIdle
+And the hook recorded nothing
+
+Examples:
+  | calls                                                   |
+  | HealthReport() on the root scope                        |
+  | HealthCheck() on the root scope, then HealthReport()    |
+```
+
+<!-- cases: 1 default: zero configuration -->
+<!-- cases: N/A 2 overrides: none -->
+<!-- cases: N/A 3 zero values: not applicable -->
+<!-- cases: N/A 4 boundaries: not applicable -->
+<!-- cases: 5 errors: the refused registration matches ErrShutdown -->
+<!-- cases: N/A 6 not found/duplicate: not applicable -->
+<!-- cases: 7 lifecycle: a registration after that shutdown is refused; reads and forced checks record nothing (W4) -->
+<!-- cases: N/A 8 concurrency: not applicable -->
+<!-- cases: N/A 9 panics: the registration panic is the closed-scope rule -->
+<!-- cases: 10 backward compatibility: BEHAVIOR CHANGE (flagged) - a service could be registered after that shutdown and stayed HealthUnknown; the registration is now refused -->
+
 ### Requirement: Service health changes call the service hooks in order
 Each `HookServiceHealthChanged(scope, serviceName, previous, current ServiceHealth)` SHALL be called once per change of a service's recorded `State`, including from `HealthUnknown` to its first result, whichever path recorded it. Calls SHALL be serialized, in recording order. A new error with an unchanged state SHALL NOT call it. `AddServiceHealthChangedHook` SHALL append to the same list.
 

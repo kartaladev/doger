@@ -196,7 +196,7 @@ Examples:
 <!-- cases: 3 zero values: a panic with nil follows container-shutdown (recovered as *runtime.PanicNilError) -->
 <!-- cases: N/A 4 boundaries: no numeric input -->
 <!-- cases: 5 errors: ErrShutdownPanic rows -->
-<!-- cases: N/A 6 duplicate: several panicking hooks: the first panic stops the remaining hooks of that slot, as today -->
+<!-- cases: N/A 6 duplicate: several panicking invocation or start hooks: the first panic stops the remaining hooks of that slot, as today; shutdown hooks are recovered one by one, so the others still run (container-shutdown, D5) -->
 <!-- cases: 7 lifecycle: shutdown, invocation, start -->
 <!-- cases: N/A 8 concurrency: covered by container-shutdown -->
 <!-- cases: 9 panics: the subject -->

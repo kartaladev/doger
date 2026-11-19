@@ -195,15 +195,15 @@ func TestLibErrorf(t *testing.T) {
 		},
 		{
 			name:    "sentinel_wrapped_with_w",
-			err:     func() error { return libErrorf("cannot start: %w", ErrStartAfterShutdown) },
+			err:     func() error { return libErrorf("cannot start: %w", ErrShutdown) },
 			want:    "doger: cannot start: container is shut down",
-			matches: []error{ErrStartAfterShutdown},
+			matches: []error{ErrShutdown},
 		},
 		{
 			name:     "sentinel_formatted_with_v",
-			err:      func() error { return libErrorf("cannot start: %v", ErrStartAfterShutdown) },
+			err:      func() error { return libErrorf("cannot start: %v", ErrShutdown) },
 			want:     "doger: cannot start: container is shut down",
-			excludes: []error{ErrStartAfterShutdown},
+			excludes: []error{ErrShutdown},
 		},
 		{
 			name:    "library_error_leading_with_a_sentinel",

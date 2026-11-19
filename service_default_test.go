@@ -379,7 +379,7 @@ func TestAsDefault_ProviderRegistersOwnName(t *testing.T) {
 
 	_, err := Invoke[*dfDialer](root)
 
-	require.EqualError(t, err, fmt.Sprintf("doger: service %q in scope \"[root]\": service `%s` has already been declared", NameOf[*dfDialer](), NameOf[*dfDialer]()))
+	require.EqualError(t, err, fmt.Sprintf("doger: service %q in scope \"[root]\": provider panicked: service `%s` has already been declared", NameOf[*dfDialer](), NameOf[*dfDialer]()))
 	require.ErrorIs(t, err, ErrServiceAlreadyDeclared)
 }
 
@@ -888,4 +888,187 @@ func TestScope_DefaultCount(t *testing.T) {
 			assert.Equal(t, tt.child, injectorScope(countedChild).defaultCount())
 		})
 	}
+}
+
+func TestAsDefault_NilInjector(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	err := panicError(t, func() { Provide[*dfDialer](nil, dialerProvider("default-dialer", nil), AsDefault()) })
+	is.ErrorIs(err, ErrNilInjector)
+
+	// no global container received it: a new container has no dialer
+	_, err = Invoke[*dfDialer](New())
+	is.ErrorIs(err, ErrServiceNotFound)
+}
+
+// yieldedDefaultFixture returns a root holding an explicit "app-dialer-1"
+// and its child "ext" holding a default dialer that already yielded to it,
+// with the default provider's call counter.
+func yieldedDefaultFixture(t *testing.T) (*RootScope, *Scope, *atomic.Int32) {
+	t.Helper()
+
+	root := New()
+	ext := root.Scope("ext")
+	var defaultCalls atomic.Int32
+	Provide(root, dialerProvider("app-dialer-1", nil))
+	Provide(ext, dialerProvider("default-dialer", &defaultCalls), AsDefault())
+
+	dialer, err := Invoke[*dfDialer](ext)
+	require.NoError(t, err)
+	require.Equal(t, "app-dialer-1", dialer.label)
+
+	return root, ext, &defaultCalls
+}
+
+func TestAsDefault_YieldedFollowsOverride(t *testing.T) {
+	t.Parallel()
+
+	name := NameOf[*dfDialer]()
+
+	tests := []struct {
+		name   string
+		change func(t *testing.T, root *RootScope)
+		check  func(t *testing.T, invoke func() (*dfDialer, error))
+	}{
+		{
+			name:   "nothing else happened",
+			change: func(*testing.T, *RootScope) {},
+			check: func(t *testing.T, invoke func() (*dfDialer, error)) {
+				t.Helper()
+				dialer, err := invoke()
+				require.NoError(t, err)
+				assert.Equal(t, "app-dialer-1", dialer.label)
+			},
+		},
+		{
+			name: "OverrideNamed",
+			change: func(_ *testing.T, root *RootScope) {
+				OverrideNamed(root, name, dialerProvider("app-dialer-2", nil))
+			},
+			check: func(t *testing.T, invoke func() (*dfDialer, error)) {
+				t.Helper()
+				dialer, err := invoke()
+				require.NoError(t, err)
+				assert.Equal(t, "app-dialer-2", dialer.label)
+			},
+		},
+		{
+			name: "OverrideNamedValue",
+			change: func(_ *testing.T, root *RootScope) {
+				OverrideNamedValue(root, name, &dfDialer{label: "app-dialer-3"})
+			},
+			check: func(t *testing.T, invoke func() (*dfDialer, error)) {
+				t.Helper()
+				dialer, err := invoke()
+				require.NoError(t, err)
+				assert.Equal(t, "app-dialer-3", dialer.label)
+			},
+		},
+		{
+			name: "OverrideNamedTransient",
+			change: func(_ *testing.T, root *RootScope) {
+				var n atomic.Int32
+				OverrideNamedTransient(root, name, func(Injector) (*dfDialer, error) {
+					return &dfDialer{label: fmt.Sprintf("transient-%d", n.Add(1))}, nil
+				})
+			},
+			check: func(t *testing.T, invoke func() (*dfDialer, error)) {
+				t.Helper()
+				first, err := invoke()
+				require.NoError(t, err)
+				second, err := invoke()
+				require.NoError(t, err)
+				assert.Equal(t, "transient-1", first.label)
+				assert.Equal(t, "transient-2", second.label, "a new value per call")
+			},
+		},
+		{
+			name: "ShutdownNamed removed the root service",
+			change: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				require.NoError(t, ShutdownNamed(root, name))
+			},
+			check: func(t *testing.T, invoke func() (*dfDialer, error)) {
+				t.Helper()
+				dialer, err := invoke()
+				assert.Nil(t, dialer)
+				assert.ErrorIs(t, err, ErrServiceNotFound)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+
+			root, ext, defaultCalls := yieldedDefaultFixture(t)
+			tt.change(t, root)
+
+			tt.check(t, func() (*dfDialer, error) { return Invoke[*dfDialer](ext) })
+			assert.Zero(t, defaultCalls.Load(), "the default's provider was never called")
+		})
+	}
+}
+
+func TestAsDefault_YieldedAliasFollowsOverride(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	root := New()
+	ext := root.Scope("ext")
+	Provide(root, dialerProvider("app-dialer-1", nil))
+	Provide(ext, dialerProvider("default-dialer", nil), AsDefault())
+	require.NoError(t, Alias[*dfDialer, dfDialing](ext))
+
+	dialer, err := Invoke[dfDialing](ext)
+	require.NoError(t, err)
+	require.Equal(t, "app-dialer-1", dialer.Label())
+
+	OverrideNamed(root, NameOf[*dfDialer](), dialerProvider("app-dialer-2", nil))
+
+	dialer, err = Invoke[dfDialing](ext)
+	require.NoError(t, err)
+	assert.Equal(t, "app-dialer-2", dialer.Label())
+}
+
+func TestAsDefault_YieldedConcurrentOverride(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 10*time.Second)
+
+	root, ext, _ := yieldedDefaultFixture(t)
+
+	var overridden atomic.Bool
+	var wg sync.WaitGroup
+	errs := make(chan error, 8*100)
+	for range 8 {
+		wg.Go(func() {
+			for range 100 {
+				after := overridden.Load()
+				dialer, err := Invoke[*dfDialer](ext)
+				switch {
+				case err != nil:
+					errs <- err
+				case dialer.label != "app-dialer-1" && dialer.label != "app-dialer-2":
+					errs <- fmt.Errorf("unexpected dialer %q", dialer.label)
+				case after && dialer.label != "app-dialer-2":
+					errs <- fmt.Errorf("dialer %q after the override returned", dialer.label)
+				}
+			}
+		})
+	}
+	wg.Go(func() {
+		OverrideNamed(root, NameOf[*dfDialer](), dialerProvider("app-dialer-2", nil))
+		overridden.Store(true)
+	})
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		assert.NoError(t, err)
+	}
+	dialer, err := Invoke[*dfDialer](ext)
+	require.NoError(t, err)
+	assert.Equal(t, "app-dialer-2", dialer.label)
 }

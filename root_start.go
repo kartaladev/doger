@@ -44,7 +44,7 @@ func (s *RootScope) Start() error {
 //
 // A container starts at most once: any later call returns an error matching
 // [ErrAlreadyStarted], even when the first one failed, and a call after root
-// Shutdown began returns an error matching [ErrStartAfterShutdown]. A clone
+// Shutdown began returns an error matching [ErrShutdown]. A clone
 // starts independently of its source; clones share eager instances, so an
 // eager Starter is started again by the clone.
 //
@@ -67,10 +67,10 @@ func (s *RootScope) Start() error {
 // Start runs the Failed hooks, then re-raises it.
 //
 // Shutdown during Start: a root Shutdown that begins while Start runs
-// cancels the Start-time context with cause [ErrStartAfterShutdown] and waits
+// cancels the Start-time context with cause [ErrShutdown] and waits
 // for Start to return, bounded by its own context. Start stops before its
 // next Starter or handler and returns an error matching
-// ErrStartAfterShutdown, and also ctx's cause when ctx was cancelled before
+// ErrShutdown, and also ctx's cause when ctx was cancelled before
 // Shutdown began. A Starter that ignores its context and finishes
 // after Shutdown stopped waiting is not rolled back: honour ctx.
 //
@@ -155,6 +155,16 @@ type hookPanic struct {
 	point    string // as HookContainerPanic receives it
 	value    any
 	panicked bool
+
+	// services keeps the first service shutdown panic of a shutdown; nil
+	// outside one
+	services *shutdownPanics
+}
+
+// child returns the record of a part of p's operation run separately, such
+// as a child scope shutdown: it shares p's service shutdown panics.
+func (p *hookPanic) child() hookPanic {
+	return hookPanic{services: p.services}
 }
 
 // callObserver calls an observer hook of subject, recovering its panic: the
@@ -176,6 +186,7 @@ func (s *RootScope) keepFirstPanic(first *hookPanic, p hookPanic) {
 		s.logHookPanic(p)
 		return
 	}
+	p.services = first.services // the operation's service panics stay kept
 	*first = p
 }
 
@@ -188,23 +199,35 @@ func (s *RootScope) logHookPanic(p hookPanic) {
 // and the type of its value, and the value itself only in a Debug record,
 // since it could hold a secret. service is "" when it concerns none.
 func (s *RootScope) logRecoveredPanic(point, service string, value any) {
-	s.logRecoveredPanicAs(point, service, fmt.Sprintf("%T", value), value)
+	s.self.logRecoveredPanicAs(point, service, fmt.Sprintf("%T", value), value)
 }
 
 // logRecoveredPanicAs is logRecoveredPanic with panicType in place of the
 // type of value, for an end that is not a panic value, such as
 // runtime.Goexit.
 func (s *RootScope) logRecoveredPanicAs(point, service, panicType string, value any) {
+	s.self.logRecoveredPanicAs(point, service, panicType, value)
+}
+
+// logRecoveredPanic logs a recovered panic on scope s, as
+// RootScope.logRecoveredPanic does.
+func (s *Scope) logRecoveredPanic(point, service string, value any) {
+	s.logRecoveredPanicAs(point, service, fmt.Sprintf("%T", value), value)
+}
+
+// logRecoveredPanicAs is Scope.logRecoveredPanic with panicType in place of
+// the type of value.
+func (s *Scope) logRecoveredPanicAs(point, service, panicType string, value any) {
 	var attrs []slog.Attr
 	if service != "" {
 		attrs = append(attrs, slog.String("service", service))
 	}
 	attrs = append(attrs, slog.String("point", point))
-	if s.self.logEnabled(slog.LevelError) {
-		s.self.log(slog.LevelError, "panic recovered", append(attrs, slog.String("panic_type", panicType))...)
+	if s.logEnabled(slog.LevelError) {
+		s.log(slog.LevelError, "panic recovered", append(attrs, slog.String("panic_type", panicType))...)
 	}
-	if s.self.logEnabled(slog.LevelDebug) {
-		s.self.log(slog.LevelDebug, "panic value", append(attrs, slog.String("value", fmt.Sprint(value)))...)
+	if s.logEnabled(slog.LevelDebug) {
+		s.log(slog.LevelDebug, "panic value", append(attrs, slog.String("value", fmt.Sprint(value)))...)
 	}
 }
 
@@ -287,7 +310,7 @@ func (s *RootScope) beginStart(ctx context.Context) (context.Context, error) {
 	defer s.lifecycleMu.Unlock()
 
 	if s.closePhase != closeOpen {
-		return nil, libErrorf("cannot start: %w", ErrStartAfterShutdown)
+		return nil, libErrorf("cannot start: %w", ErrShutdown)
 	}
 	if s.startPhase != startIdle {
 		return nil, ErrAlreadyStarted
@@ -347,32 +370,32 @@ func (s *RootScope) finishStart(startCtx context.Context, err *error) {
 // abortOutcome is the outcome of a run that Shutdown began during: a run
 // that succeeded after its last abort check is reported as aborted, and a
 // failure also carries the abort cause unless it already does. The abort
-// cause always matches ErrStartAfterShutdown, even when the caller cancelled
+// cause always matches ErrShutdown, even when the caller cancelled
 // first. lifecycleMu must be held, so that beginClose has set the cause.
 func abortOutcome(ctx context.Context, err error) error {
 	cause := shutdownCause(ctx)
 	switch {
 	case err == nil:
 		return fmt.Errorf("doger: start aborted: %w", cause)
-	case errors.Is(err, ErrStartAfterShutdown):
+	case errors.Is(err, ErrShutdown):
 		return err
 	case errors.Is(err, context.Cause(ctx)):
 		// carries the caller's cause already
-		return fmt.Errorf("%w (start aborted: %w)", err, ErrStartAfterShutdown)
+		return fmt.Errorf("%w (start aborted: %w)", err, ErrShutdown)
 	default:
 		return fmt.Errorf("%w (start aborted: %w)", err, cause)
 	}
 }
 
 // shutdownCause returns the cause of the run's cancellation, made to match
-// ErrStartAfterShutdown when the caller cancelled before Shutdown did.
+// ErrShutdown when the caller cancelled before Shutdown did.
 func shutdownCause(ctx context.Context) error {
 	cause := context.Cause(ctx)
-	if errors.Is(cause, ErrStartAfterShutdown) {
+	if errors.Is(cause, ErrShutdown) {
 		return cause
 	}
 
-	return fmt.Errorf("%w: %w", ErrStartAfterShutdown, cause)
+	return fmt.Errorf("%w: %w", ErrShutdown, cause)
 }
 
 // startCandidate is a service discovered by Start.
@@ -827,7 +850,7 @@ func recoverAsError(r any) error {
 }
 
 // checkAbort returns an error wrapping the cause when the Start-time context
-// is done: the caller's ctx.Err(), or ErrStartAfterShutdown when Shutdown
+// is done: the caller's ctx.Err(), or ErrShutdown when Shutdown
 // cancelled Start.
 func checkAbort(startCtx context.Context) error {
 	if startCtx.Err() != nil {

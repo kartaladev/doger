@@ -179,6 +179,44 @@ func (s *loggingScheduler) ScheduleHealthRounds(_ Clock, _ func(context.Context)
 	return func(context.Context) error { return s.stopErr }, nil
 }
 
+// captureDefaultLogs replaces the default slog logger and the output of the
+// log package until the end of t, and returns what they receive.
+func captureDefaultLogs(t *testing.T) (*logRecorder, *bytes.Buffer) {
+	t.Helper()
+
+	// slog.SetDefault redirects the log package and clears its flags, and
+	// restoring the default slog logger does not undo that: restore both
+	writer, flags, prefix, previous := log.Writer(), log.Flags(), log.Prefix(), slog.Default()
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		log.SetOutput(writer)
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+	})
+
+	defaults := newLogRecorder(slog.LevelDebug)
+	slog.SetDefault(defaults.logger())
+	var output bytes.Buffer
+	log.SetOutput(&output)
+
+	return defaults, &output
+}
+
+// TestLogging_CaptureDefaultLogsRestores checks that captureDefaultLogs
+// leaves the log and slog defaults as it found them, so later tests in the
+// binary can log.
+func TestLogging_CaptureDefaultLogsRestores(t *testing.T) { //nolint:paralleltest // replaces the default slog logger and log output
+	is := assert.New(t)
+	writer, flags, prefix, logger := log.Writer(), log.Flags(), log.Prefix(), slog.Default()
+
+	t.Run("capture", func(t *testing.T) { captureDefaultLogs(t) })
+
+	is.Equal(writer, log.Writer(), "log output")
+	is.Equal(flags, log.Flags(), "log flags")
+	is.Equal(prefix, log.Prefix(), "log prefix")
+	is.Same(logger, slog.Default(), "default slog logger")
+}
+
 func TestLogging_OffByDefault(t *testing.T) { //nolint:paralleltest // replaces the default slog logger and log output
 	tests := []struct {
 		name string
@@ -191,13 +229,7 @@ func TestLogging_OffByDefault(t *testing.T) { //nolint:paralleltest // replaces 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			defaults := newLogRecorder(slog.LevelDebug)
-			previous := slog.Default()
-			slog.SetDefault(defaults.logger())
-			t.Cleanup(func() { slog.SetDefault(previous) })
-			var output bytes.Buffer
-			log.SetOutput(&output)
-			t.Cleanup(func() { log.SetOutput(nil) })
+			defaults, output := captureDefaultLogs(t)
 
 			root := tt.root()
 			provideLoggingSvc(root, &loggingSvc{healthErr: errors.New("down"), shutdownErr: errors.New("stuck")})
@@ -342,7 +374,7 @@ func TestLogging_Events(t *testing.T) {
 				require.NoError(t, root.Start())
 				_ = root.Shutdown()
 			},
-			message: "health scheduler stop failed", level: slog.LevelWarn,
+			message: "health scheduler stop failed", level: slog.LevelError,
 			attrs: map[string]string{"error": "busy"},
 		},
 		{
@@ -510,16 +542,21 @@ func TestLogging_Concurrent(t *testing.T) {
 func TestLogging_PanicValueDebugOnly(t *testing.T) {
 	t.Parallel()
 
-	// The second Closing hook panic of one Shutdown is logged; the first
-	// goes to HookContainerPanic. The service-shutdown point is task 13.4's.
+	// closing: the second Closing hook panic of one Shutdown is logged; the
+	// first goes to HookContainerPanic. service-shutdown: with no
+	// HookContainerPanic, a Shutdown panic is logged.
 	tests := []struct {
-		name   string
-		level  slog.Level
-		errors int
-		secret int
+		name    string
+		level   slog.Level
+		point   string
+		service string // the service attribute of the Error record
+		errors  int
+		secret  int
 	}{
-		{name: "debug", level: slog.LevelDebug, errors: 1, secret: 1},
-		{name: "info", level: slog.LevelInfo, errors: 1, secret: 0},
+		{name: "closing_debug", level: slog.LevelDebug, point: "closing", errors: 1, secret: 1},
+		{name: "closing_info", level: slog.LevelInfo, point: "closing", errors: 1, secret: 0},
+		{name: "service_shutdown_debug", level: slog.LevelDebug, point: "service-shutdown", service: "svc", errors: 1, secret: 1},
+		{name: "service_shutdown_info", level: slog.LevelInfo, point: "service-shutdown", service: "svc", errors: 1, secret: 0},
 	}
 
 	for _, tt := range tests {
@@ -527,20 +564,25 @@ func TestLogging_PanicValueDebugOnly(t *testing.T) {
 			t.Parallel()
 
 			recorder := newLogRecorder(tt.level)
-			root := NewWithOpts(&InjectorOpts{
-				Logger:             recorder.logger(),
-				HookContainerPanic: func(*RootScope, string, any) {},
-				HookContainerClosing: []func(context.Context, *RootScope){
+			opts := &InjectorOpts{Logger: recorder.logger()}
+			if tt.point == "closing" {
+				opts.HookContainerPanic = func(*RootScope, string, any) {}
+				opts.HookContainerClosing = []func(context.Context, *RootScope){
 					func(context.Context, *RootScope) { panic("first") },
 					func(context.Context, *RootScope) { panic("token=hunter2") },
-				},
-			})
+				}
+			}
+			root := NewWithOpts(opts)
+			if tt.point == "service-shutdown" {
+				provideBuilt(t, root, "svc", &shutdownTestPanicPlain{value: "token=hunter2"})
+			}
 
 			_ = root.Shutdown()
 
 			var errorRecords []logRecord
 			for _, rec := range recorder.withMessage("panic recovered") {
-				if rec.level == slog.LevelError && rec.attrs["point"] == "closing" && rec.attrs["panic_type"] == "string" {
+				if rec.level == slog.LevelError && rec.attrs["point"] == tt.point && rec.attrs["panic_type"] == "string" &&
+					(tt.service == "" || rec.attrs["service"] == tt.service) {
 					errorRecords = append(errorRecords, rec)
 				}
 			}

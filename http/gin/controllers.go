@@ -55,12 +55,12 @@ func Use(router *gin.RouterGroup, injector doger.Injector, opts ...dogerhttp.Opt
 func use(router *gin.RouterGroup, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
 	base := webui.Base(router.BasePath())
 
-	router.Handle("GET", "", func(c *gin.Context) {
+	router.Match(readMethods, "", func(c *gin.Context) {
 		output, err := pages.index(base, opts...)
 		response(c, output, err, opts)
 	})
 
-	router.Handle("GET", "/scope", func(c *gin.Context) {
+	router.Match(readMethods, "/scope", func(c *gin.Context) {
 		scopeID := c.Query("scope_id")
 		if scopeID == "" {
 			dogerhttp.WriteHeaders(c.Writer.Header())
@@ -72,7 +72,7 @@ func use(router *gin.RouterGroup, injector doger.Injector, pages renderer, opts 
 		response(c, output, err, opts)
 	})
 
-	router.Handle("GET", "/service", func(c *gin.Context) {
+	router.Match(readMethods, "/service", func(c *gin.Context) {
 		scopeID := c.Query("scope_id")
 		serviceName := c.Query("service_name")
 
@@ -109,3 +109,6 @@ var defaultRenderer = renderer{
 	service:     dogerhttp.ServiceHTML,
 	serviceList: dogerhttp.ServiceListHTML,
 }
+
+// readMethods are the methods the UI serves: GET, and HEAD like GET.
+var readMethods = []string{http.MethodGet, http.MethodHead}

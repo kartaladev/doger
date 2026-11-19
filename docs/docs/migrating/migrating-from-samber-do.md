@@ -67,7 +67,7 @@ Names of your own types and explicitly named services do not change.
 
 doger requires Go 1.27 or later. With the go command's default `GOTOOLCHAIN=auto`, building a module that requires doger downloads Go 1.27 automatically; with `GOTOOLCHAIN=local`, an older toolchain refuses the build.
 
-Requiring doger raises your module's `go` line to 1.27, and GODEBUG defaults follow that line. If it was below 1.21, this turns on `panicnil=0`, which changes what an invocation returns when a provider panics with `nil`: it used to return the zero value and a `nil` error; it now returns the zero value and an error matching `*runtime.PanicNilError`. If your `go` line was already 1.21 or later, you already get this error. Other panic values are unchanged.
+Requiring doger raises your module's `go` line to 1.27, and GODEBUG defaults follow that line. If it was below 1.21, this turns on `panicnil=0`, which changes what an invocation returns when a provider panics with `nil`: it used to return the zero value and a `nil` error; it now returns the zero value and an error matching `*runtime.PanicNilError`. If your `go` line was already 1.21 or later, you already get this error. Every provider panic, nil or not, also matches `doger.ErrProviderPanic`, inside a `*doger.ServiceError` naming the service; an error panic value is wrapped, so `errors.Is` and `errors.As` still match it.
 
 ```go
 doger.Provide(injector, func(i doger.Injector) (*Database, error) {

@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -441,16 +442,29 @@ func siteFrame(n int) func() (stacktrace.Frame, bool) {
 func invokeFromSites(t *testing.T, root *RootScope, sites int) int {
 	t.Helper()
 
+	recorded, err := recordFromSites(root, sites)
+	require.NoError(t, err)
+
+	return recorded
+}
+
+// recordFromSites is invokeFromSites without the test: it may run on any
+// goroutine.
+func recordFromSites(root *RootScope, sites int) (int, error) {
 	wrapper, ok := root.self.serviceGet("svc")
-	require.True(t, ok)
+	if !ok {
+		return 0, errors.New(`"svc" is not registered`)
+	}
 	lazy, ok := wrapper.(*serviceLazy[int])
-	require.True(t, ok)
+	if !ok {
+		return 0, fmt.Errorf(`"svc" is a %T, not a lazy int`, wrapper)
+	}
 	for n := range sites {
 		lazy.recordInvocationFrame(invocationFrameCap(root), siteFrame(n))
 	}
 	_, frames := lazy.source()
 
-	return len(frames)
+	return len(frames), nil
 }
 
 func TestContainerOptions_MaxInvocationFrames(t *testing.T) {
@@ -491,11 +505,97 @@ func TestContainerOptions_FramesPerContainer(t *testing.T) {
 	ProvideNamed(b, "svc", func(Injector) (int, error) { return 1, nil })
 
 	var recordedA, recordedB int
+	var errA, errB error
 	var wg sync.WaitGroup
-	wg.Go(func() { recordedA = invokeFromSites(t, a, 5) })
-	wg.Go(func() { recordedB = invokeFromSites(t, b, 5) })
+	wg.Go(func() { recordedA, errA = recordFromSites(a, 5) })
+	wg.Go(func() { recordedB, errB = recordFromSites(b, 5) })
 	wg.Wait()
 
+	require.NoError(t, errA)
+	require.NoError(t, errB)
 	assert.Equal(t, 2, recordedA)
 	assert.Equal(t, 5, recordedB)
+}
+
+// frameCapSvc is the service of TestContainerOptions_FrameCapPerWrapper.
+type frameCapSvc struct{}
+
+func (*frameCapSvc) frameCap() {}
+
+// frameCapIface is the alias type of frameCapSvc.
+type frameCapIface interface{ frameCap() }
+
+func TestContainerOptions_FrameCapPerWrapper(t *testing.T) {
+	t.Parallel()
+
+	kinds := []struct {
+		name string
+		// register makes "svc" of root a wrapper of this kind, and returns
+		// two functions invoking it from distinct call sites
+		register func(t *testing.T, root *RootScope) [2]func() error
+	}{
+		{name: "lazy", register: func(_ *testing.T, root *RootScope) [2]func() error {
+			ProvideNamed(root, "svc", func(Injector) (*frameCapSvc, error) { return &frameCapSvc{}, nil })
+			return [2]func() error{
+				func() error { _, err := InvokeNamed[*frameCapSvc](root, "svc"); return err },
+				func() error { _, err := InvokeNamed[*frameCapSvc](root, "svc"); return err },
+			}
+		}},
+		{name: "eager", register: func(_ *testing.T, root *RootScope) [2]func() error {
+			ProvideNamedValue(root, "svc", &frameCapSvc{})
+			return [2]func() error{
+				func() error { _, err := InvokeNamed[*frameCapSvc](root, "svc"); return err },
+				func() error { _, err := InvokeNamed[*frameCapSvc](root, "svc"); return err },
+			}
+		}},
+		{name: "alias", register: func(t *testing.T, root *RootScope) [2]func() error {
+			t.Helper()
+			ProvideNamed(root, "target", func(Injector) (*frameCapSvc, error) { return &frameCapSvc{}, nil })
+			require.NoError(t, AliasNamed[*frameCapSvc, frameCapIface](root, "target", "svc"))
+			return [2]func() error{
+				func() error { _, err := InvokeNamed[frameCapIface](root, "svc"); return err },
+				func() error { _, err := InvokeNamed[frameCapIface](root, "svc"); return err },
+			}
+		}},
+		{name: "export", register: func(t *testing.T, root *RootScope) [2]func() error {
+			t.Helper()
+			child := root.Scope("child")
+			ProvideNamed(child, "svc", func(Injector) (*frameCapSvc, error) { return &frameCapSvc{}, nil })
+			require.NoError(t, ExportNamed[*frameCapSvc](child, "svc"))
+			return [2]func() error{
+				func() error { _, err := InvokeNamed[*frameCapSvc](root, "svc"); return err },
+				func() error { _, err := InvokeNamed[*frameCapSvc](root, "svc"); return err },
+			}
+		}},
+	}
+	// The off row fails when a wrapper ignores its container's cap. The on
+	// row fails when a wrapper records nothing: in-package callers all
+	// record the same frame, so it cannot tell a cap of 1 from a larger one
+	// (TestContainerOptions_MaxInvocationFrames covers the cap values).
+	caps := []struct {
+		name   string
+		option int
+		want   int // frames "svc" records
+	}{
+		{name: "off", option: -1, want: 0},
+		{name: "on", option: 1, want: 1},
+	}
+
+	for _, kind := range kinds {
+		for _, limit := range caps {
+			t.Run(kind.name+"_"+limit.name, func(t *testing.T) {
+				t.Parallel()
+
+				root := NewWithOpts(&InjectorOpts{MaxInvocationFrames: limit.option})
+				for _, invoke := range kind.register(t, root) {
+					require.NoError(t, invoke())
+				}
+
+				wrapper, ok := root.self.serviceGet("svc")
+				require.True(t, ok)
+				_, frames := wrapper.(serviceWrapperSource).source()
+				assert.Len(t, frames, limit.want)
+			})
+		}
+	}
 }

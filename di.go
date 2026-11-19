@@ -45,6 +45,10 @@ func NameOf[T any]() string {
 // Provide registers a service in the DI container, using type inference.
 // The service will be lazily instantiated when first requested.
 //
+// Once the shutdown of the scope has begun, Provide and the other Provide*
+// and Override* functions panic with an error matching [ErrShutdown]: a
+// container cannot be reused after Shutdown.
+//
 // Example:
 //
 //	doger.Provide(injector, func(i doger.Injector) (*MyService, error) {
@@ -189,6 +193,9 @@ func provide[T any, A any](i Injector, name string, valueOrProvider A, serviceCt
 func tryProvide[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T], opts []ProvideOption) error {
 	_i := mustInjector(i)
 	scope := injectorScope(_i)
+	if err := scope.checkOpen(); err != nil {
+		return err
+	}
 	options := buildServiceOptions(opts)
 
 	// without a default involved, a duplicate fails first, as it always did
@@ -226,6 +233,10 @@ func registerLocked(scope *Scope, name string, incoming serviceWrapperAny) (regi
 	root := scope.rootScope
 
 	scope.mu.Lock()
+	if err := scope.checkOpen(); err != nil {
+		scope.mu.Unlock()
+		return registerDuplicate, err
+	}
 	replaced, outcome := scope.services[name], registerStored
 	if replaced != nil {
 		outcome = sameScopeOutcome(replaced, incoming)
@@ -435,6 +446,11 @@ func override[T any, A any](i Injector, name string, valueOrProvider A, serviceC
 // Invoke retrieves and instantiates a service from the DI container using type inference.
 // The service will be created if it hasn't been instantiated yet (for lazy services).
 //
+// Once the shutdown of the invoking scope has begun, Invoke and the other
+// Invoke* functions return an error matching [ErrShutdown]. A service is
+// never built again after its shutdown: an invocation that looked it up just
+// before gets ErrShutdown too.
+//
 // Example:
 //
 //	service, err := doger.Invoke[*MyService](injector)
@@ -512,6 +528,12 @@ func MustInvokeNamed[T any](i Injector, name string) T {
 // [InvokeAll][E] and a map[string]E field [InvokeAllMap][E]; any other field
 // kind is an error. A service named `*` cannot be injected by tag.
 //
+// A dependency whose value is a nil interface sets its field to the zero
+// value. An invalid target (not a struct or a pointer chain to one, a
+// recursive pointer type, a service not assignable to its field, a `*` tag
+// on another field kind) returns an error matching [ErrStructInjection]; a
+// dependency that fails to resolve returns its own error instead.
+//
 // Example:
 //
 //	type App struct {
@@ -535,7 +557,10 @@ func MustInvokeNamed[T any](i Injector, name string) T {
 //	app, err := doger.InvokeStruct[App](injector)
 func InvokeStruct[T any](i Injector) (T, error) {
 	structName := inferServiceName[T]()
-	output := deepEmpty[T]() // if the struct is hidden behind a pointer, we need to init the struct value deep enough
+	output, err := deepEmpty[T]() // if the struct is hidden behind a pointer, we need to init the struct value deep enough
+	if err != nil {
+		return empty[T](), err
+	}
 	value := reflect.ValueOf(&output)
 
 	for value.Elem().Kind() == reflect.Pointer {
@@ -545,10 +570,10 @@ func InvokeStruct[T any](i Injector) (T, error) {
 	// Check if the empty value is a struct (before passing a pointer to reflect.ValueOf).
 	// It will be checked in invokeByTags, but the error message is different.
 	if value.Kind() != reflect.Pointer || value.Elem().Kind() != reflect.Struct {
-		return empty[T](), libErrorf("must be a struct or a pointer to a struct, but got `%s`", structName)
+		return empty[T](), structInjectionError("must be a struct or a pointer to a struct, but got `%s`", structName)
 	}
 
-	err := invokeByTags(i, structName, value, true)
+	err = invokeByTags(i, structName, value, true)
 	if err != nil {
 		return empty[T](), err
 	}
@@ -658,6 +683,9 @@ func MustAlias[Initial any, Target any](i Injector) {
 func AliasNamed[Initial any, Target any](i Injector, initial string, alias string) error {
 	_i, err := getInjector(i)
 	if err != nil {
+		return err
+	}
+	if err := injectorScope(_i).checkOpen(); err != nil {
 		return err
 	}
 
@@ -783,7 +811,8 @@ func MustInvokeAllMap[T any](i Injector) map[string]T {
 // error matches ErrServiceNotMatch. This holds for an injector a provider
 // stored and uses after it returned too: it still skips that provider's
 // service.
-// Use InvokeNamed to pin a specific service.
+// Use InvokeNamed to pin a specific service. A selected service whose value
+// is a nil interface gives the zero value of T and a nil error.
 //
 // Parameters:
 //   - i: The injector to search for the service

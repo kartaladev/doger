@@ -162,17 +162,17 @@ if startErr, ok := errors.AsType[*doger.StartError](err); ok {
 }
 ```
 
-Errors that are not tied to a service are not `StartError` values: `ErrAlreadyStarted`, `ErrStartAfterShutdown`, a cancelled context and a cycle among the dependency edges checked before the build (for example from `DeclareDependency`). A cycle met while building a service, such as a circular `DependsOn`, is that service's build failure, so it is a `StartError`.
+Errors that are not tied to a service are not `StartError` values: `ErrAlreadyStarted`, `ErrShutdown`, a cancelled context and a cycle among the dependency edges checked before the build (for example from `DeclareDependency`). A cycle met while building a service, such as a circular `DependsOn`, is that service's build failure, so it is a `StartError`.
 
 ## Shutdown during Start {#shutdown-during-start}
 
 A root `Shutdown()` that begins while `Start` runs:
 
-1. cancels the Start-time context with cause `doger.ErrStartAfterShutdown`;
+1. cancels the Start-time context with cause `doger.ErrShutdown`;
 2. waits for `Start` to return, bounded by its own context;
 3. shuts services down.
 
-`Start` stops before its next starter or handler and returns an error matching `doger.ErrStartAfterShutdown`.
+`Start` stops before its next starter or handler and returns an error matching `doger.ErrShutdown`.
 
 If Shutdown's own context ends first (for example a 10-second deadline), its report fails with an error for the root scope wrapping `ctx.Err()`, and shutdown proceeds while `Start` is still running. A starter that ignores its context and finishes after that is **not rolled back**: honour `ctx` in `Start(ctx)`.
 
@@ -191,7 +191,7 @@ A child scope's `Shutdown()` does not cancel anything, but it waits for a runnin
 A container starts at most once:
 
 - any later `Start` returns an error matching `doger.ErrAlreadyStarted`, even if the first one failed;
-- `Start` after root `Shutdown()` began returns an error matching `doger.ErrStartAfterShutdown`.
+- `Start` after root `Shutdown()` began returns an error matching `doger.ErrShutdown`.
 
 A clone starts independently of its source. Clones share eager instances, so starting a clone starts an eager starter a second time.
 
@@ -212,7 +212,7 @@ err := root.Refresh() // starts both workers
 - Each service starts **at most once** per container: a second `Refresh` starts nothing again, and services started by `Start` are never restarted. An `Override` registered after `Start` is a new service, so `Refresh` starts it.
 - Only a success counts. A Starter whose build or `Start` failed during a `Refresh` or `scope.Start`, or a component whose kind handler failed, is tried again by the next `Refresh` or `scope.Start` that covers it. Fix or remove the service before calling it again if a retry is not wanted.
 - `Refresh` fires no [container hook](./container-hooks.md).
-- Before the first successful `Start`, it returns an error matching `doger.ErrNotStarted`, at once, even while that `Start` is still running. Once root `Shutdown` began, it returns an error matching `doger.ErrStartAfterShutdown`, which takes precedence. It starts nothing in either case.
+- Before the first successful `Start`, it returns an error matching `doger.ErrNotStarted`, at once, even while that `Start` is still running. Once root `Shutdown` began, it returns an error matching `doger.ErrShutdown`, which takes precedence. It starts nothing in either case.
 - Concurrent `Refresh` calls run one at a time. Never call `Refresh` synchronously from code that runs during a `Refresh` (a Starter, a kind handler, a provider or a hook): it would wait for itself.
 
 ### Starting one scope {#scope-start}
@@ -226,7 +226,7 @@ doger.Provide(tenant, NewTenantSync)
 err := tenant.Start() // starts tenant-a and its child scopes only
 ```
 
-Services of ancestor scopes that the subtree depends on are built as needed, but `scope.Start` does not start them: `Refresh` does. On the root's own `*Scope` (for example `Component.Scope` of a root service in a kind handler), `Start` behaves as `Refresh`. `scope.Start` follows the same rules as `Refresh`: `ErrNotStarted`, `ErrStartAfterShutdown`, at most once per service, and calls serialized with `Refresh`.
+Services of ancestor scopes that the subtree depends on are built as needed, but `scope.Start` does not start them: `Refresh` does. On the root's own `*Scope` (for example `Component.Scope` of a root service in a kind handler), `Start` behaves as `Refresh`. `scope.Start` follows the same rules as `Refresh`: `ErrNotStarted`, `ErrShutdown`, at most once per service, and calls serialized with `Refresh`.
 
 ## Parallel start {#parallel-start}
 

@@ -387,9 +387,9 @@ func TestScopeHooks_ClosingClosed(t *testing.T) {
 			name: "tenant.Shutdown() then root.Shutdown()",
 			operation: func(root *RootScope, tenant, _ *Scope) {
 				tenant.Shutdown()
-				root.Shutdown()
+				root.Shutdown() // tenant is detached: not reached again
 			},
-			events: append(append([]string{}, nested...), "closing tenant", "closed tenant"),
+			events: nested,
 		},
 	}
 
@@ -564,7 +564,7 @@ func TestScopeHooks_ObserverPanicThroughParent(t *testing.T) {
 
 	is.PanicsWithValue("scope-boom", func() { root.Shutdown() })
 	is.Equal(int32(1), svc.shutdowns.Load())
-	is.ErrorIs(root.Start(), ErrStartAfterShutdown)
+	is.ErrorIs(root.Start(), ErrShutdown)
 }
 
 func TestScopeHooks_NilContext(t *testing.T) {

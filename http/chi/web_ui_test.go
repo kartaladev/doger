@@ -9,11 +9,13 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/kartaladev/doger"
 	dogerhttp "github.com/kartaladev/doger/http"
 	"github.com/kartaladev/doger/http/internal/webuitest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 // mount mounts the UI for root at webuitest.BasePath on a chi router.
@@ -161,4 +163,67 @@ func TestWebUI_RootBasePath(t *testing.T) {
 
 		return webuitest.HandlerDoer(r)
 	})
+}
+
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
+
+func TestWebUI_BehindAuthMiddleware(t *testing.T) {
+	t.Parallel()
+
+	auth := middleware.BasicAuth("debug", map[string]string{webuitest.AuthUser: webuitest.AuthPassword})
+	mounts := []struct {
+		name  string
+		mount webuitest.Mount
+	}{
+		{name: "with", mount: func(t *testing.T, root doger.Injector) webuitest.Doer {
+			t.Helper()
+
+			r := chi.NewRouter()
+			Use(r.With(auth), webuitest.BasePath, root)
+
+			return webuitest.HandlerDoer(r)
+		}},
+		{name: "group", mount: func(t *testing.T, root doger.Injector) webuitest.Doer {
+			t.Helper()
+
+			r := chi.NewRouter()
+			r.Group(func(g chi.Router) {
+				g.Use(auth)
+				Use(g, webuitest.BasePath, root)
+			})
+
+			return webuitest.HandlerDoer(r)
+		}},
+	}
+
+	for _, m := range mounts {
+		t.Run(m.name, func(t *testing.T) {
+			t.Parallel()
+			webuitest.BehindAuthMiddleware(t, m.mount)
+		})
+	}
+}
+
+func TestWebUI_ChiMuxStillAccepted(t *testing.T) {
+	t.Parallel()
+
+	var r *chi.Mux = chi.NewRouter() //nolint:staticcheck // the *chi.Mux type is what this test pins
+	root := doger.New()
+	doger.ProvideNamed(root, "db", func(doger.Injector) (string, error) { return "v", nil })
+	Use(r, webuitest.BasePath, root)
+
+	resp := webuitest.Get(t, webuitest.HandlerDoer(r), webuitest.BasePath+"/service")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestWebUI_ConcurrentViewing(t *testing.T) {
+	t.Parallel()
+	webuitest.ConcurrentViewing(t, mount)
+}
+
+func TestWebUI_LayeredGraphBounded(t *testing.T) {
+	t.Parallel()
+	webuitest.LayeredGraphBounded(t, mount)
 }

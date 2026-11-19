@@ -885,7 +885,7 @@ func callResult(waiter *callWaiter, call *sharedCall, clock Clock, err error) er
 	}
 	// shutdown ends every wait; the starter's bound ending the check's
 	// context does not: the waiter gets what the check returned
-	if cause := contextDone(call.ctx); cause != nil && errors.Is(context.Cause(call.ctx), ErrStartAfterShutdown) {
+	if cause := contextDone(call.ctx); cause != nil && errors.Is(context.Cause(call.ctx), ErrShutdown) {
 		return timeoutError(cause)
 	}
 	err = checkResult(call, clock, err)

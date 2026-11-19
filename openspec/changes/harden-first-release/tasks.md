@@ -46,8 +46,8 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 ## 7. Invocation frames are capped per container
 
 - [x] 7.1 RED: add `TestContainerOptions_MaxInvocationFrames` (6 rows) and `TestContainerOptions_FramesPerContainer` (scenarios "Frame cap per option value", "Two containers keep their own caps"); verify `go test -race -run 'TestContainerOptions_(MaxInvocationFrames|FramesPerContainer)' .` fails to compile naming only `InjectorOpts.MaxInvocationFrames`
-- [x] 7.2 GREEN: add `InjectorOpts.MaxInvocationFrames int` (0→100, negative off), read it per container in lazy/eager/alias/export wrappers and remove the package variable; verify the 7.1 tests pass under `-race` and `make test` is green
-- [x] 7.3 REFACTOR: Extract Function `recordInvocationFrame(cap)` shared by the four wrappers; verify `make test` and `make lint` pass
+- [x] 7.2 GREEN: add `InjectorOpts.MaxInvocationFrames int` (0→100, negative off), read it per container in lazy/eager/alias/export wrappers through a shared `recordInvocationFrame(limit, frame)` extracted here, and remove the package variable; verify the 7.1 tests pass under `-race` and `make test` is green
+- [x] 7.3 REFACTOR: Extract Function `invocationFrameList()` shared by the source methods of the four wrappers (`recordInvocationFrame` is shared since 7.2); verify `make test` and `make lint` pass
 
 ## 8. Levelled logging with slog
 
@@ -75,7 +75,7 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 - [x] 11.1 RED: add `TestHealthScheduler_ReceivesRealClockByDefault` and switch `TestHealthScheduler_CalledAtReady` to a wrapped clock; verify `go test -race -run TestHealthScheduler_ .` fails to compile only on the `ScheduleHealthRounds` signature
 - [x] 11.2 GREEN: change `HealthScheduler.ScheduleHealthRounds(clock Clock, …)` and pass `opts.Clock` (`RealClock()` when nil); verify the 11.1 tests pass and `make test` is green
-- [x] 11.3 RED: update `TestHealthScheduler_Failure`, `TestHealthScheduler_StopReturnedWithError`, `TestHealthScheduler_StopFailure`, `TestHealthHooks_Panic` and `TestHealthHooks_NilSkipped` to assert slog records (Error without the value, Debug with it); verify they fail on the old logging path
+- [x] 11.3 RED: update `TestHealthScheduler_Failure`, `TestHealthScheduler_StopReturnedWithError`, `TestHealthScheduler_StopFailure`, `TestHealthHooks_Panic` and `TestHealthHooks_NilSkipped` to assert slog records (Error without the value, Debug with it); verify they fail on the old logging path (observed: only 2 of the 5 failed on the old path; the other 3 already passed, because group 8 had routed those failures through `Logger`)
 - [x] 11.4 GREEN: route scheduler, stop and health-hook failures through `Logger` at Error with panic values only at Debug; verify the 11.3 tests pass and `make test` is green
 - [x] 11.5 REFACTOR: Extract Function `logSchedulerFailure` shared by the schedule, stop and hook paths; verify `make test` and `make lint` pass
 - [x] 11.6 Docs: update the `HealthScheduler` godoc and the health-scheduling docs page to the doger.Clock signature; verify `go doc HealthScheduler` shows `Clock`
@@ -89,47 +89,47 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 13. Shutdown panic isolation
 
-- [ ] 13.1 RED: regression `TestContainerShutdown_ShutdownPanicDoesNotCrashProcess` (child process) plus `TestContainerShutdown_ServiceShutdownPanic`, `TestContainerShutdown_EagerShutdownPanic` and `TestContainerShutdown_ShutdownHookPanic` (scenarios "A panicking Shutdown method is recorded in the report", "A panicking eager value is recorded in the report", "The crash is gone in a separate process", "A panicking shutdown hook is recorded for its service"); verify `go test -race -run 'TestContainerShutdown_(ShutdownPanicDoesNotCrashProcess|ServiceShutdownPanic|EagerShutdownPanic|ShutdownHookPanic)' .` fails: the child exits 2 and the rest fail to compile only on `ErrShutdownPanic`
-- [ ] 13.2 GREEN: add `ErrShutdownPanic` and recover separately around each before hook, `service.shutdown(ctx)` and each after hook in `serviceShutdown`, joining the errors (D5); verify the 13.1 tests pass and `make test` is green
-- [ ] 13.3 RED: add `TestContainerShutdown_FirstPanicToHook` and `TestContainerShutdown_PanicHookRepanics` (scenarios "The first shutdown panic goes to HookContainerPanic", "A HookContainerPanic that re-panics is the consumer's choice"); verify `go test -race -run 'TestContainerShutdown_(FirstPanicToHook|PanicHookRepanics)' .` fails on hook call count 0
-- [ ] 13.4 GREEN: keep the first shutdown panic of the operation with point `"service-shutdown"`, dispatch it after the Closed hooks and log later ones at Error; add the service-shutdown row to `TestLogging_PanicValueDebugOnly` (a lazy "svc" whose Shutdown() panics with "token=hunter2": one Error `panic recovered` with service=svc, point=service-shutdown, panic_type=string, and "hunter2" only at Debug, moved from 8.1); verify the 13.3 tests and that row pass and `make test` is green
-- [ ] 13.5 REFACTOR: Extract Function `recoverShutdownStep` shared by hook and Shutdown calls and Rename `serviceShutdown`→`shutdownService`; verify `make test` and `make lint` pass
-- [ ] 13.6 Docs: godoc for `ErrShutdownPanic`, the `HookContainerPanic` point list and the Shutdowner docs page ("panics are reported"); verify `go doc doger.ErrShutdownPanic` shows the doc
+- [x] 13.1 RED: regression `TestContainerShutdown_ShutdownPanicDoesNotCrashProcess` (child process) plus `TestContainerShutdown_ServiceShutdownPanic`, `TestContainerShutdown_EagerShutdownPanic` and `TestContainerShutdown_ShutdownHookPanic` (scenarios "A panicking Shutdown method is recorded in the report", "A panicking eager value is recorded in the report", "The crash is gone in a separate process", "A panicking shutdown hook is recorded for its service"); verify `go test -race -run 'TestContainerShutdown_(ShutdownPanicDoesNotCrashProcess|ServiceShutdownPanic|EagerShutdownPanic|ShutdownHookPanic)' .` fails: the child exits 2 and the rest fail to compile only on `ErrShutdownPanic`
+- [x] 13.2 GREEN: add `ErrShutdownPanic` and recover separately around each before hook, `service.shutdown(ctx)` and each after hook in `serviceShutdown`, joining the errors (D5); verify the 13.1 tests pass and `make test` is green
+- [x] 13.3 RED: add `TestContainerShutdown_FirstPanicToHook` and `TestContainerShutdown_PanicHookRepanics` (scenarios "The first shutdown panic goes to HookContainerPanic", "A HookContainerPanic that re-panics is the consumer's choice"); verify `go test -race -run 'TestContainerShutdown_(FirstPanicToHook|PanicHookRepanics)' .` fails on hook call count 0 (run after 13.2's recovery was in the working tree, both in one commit; without 13.2 the panic would crash the test binary instead)
+- [x] 13.4 GREEN: keep the first shutdown panic of the operation with point `"service-shutdown"`, dispatch it after the Closed hooks and log later ones at Error; add the service-shutdown row to `TestLogging_PanicValueDebugOnly` (a lazy "svc" whose Shutdown() panics with "token=hunter2": one Error `panic recovered` with service=svc, point=service-shutdown, panic_type=string, and "hunter2" only at Debug, moved from 8.1); verify the 13.3 tests and that row pass and `make test` is green
+- [x] 13.5 REFACTOR: Extract Function `recoverShutdownStep` shared by hook and Shutdown calls and Rename `serviceShutdown`→`shutdownService`; verify `make test` and `make lint` pass
+- [x] 13.6 Docs: godoc for `ErrShutdownPanic`, the `HookContainerPanic` point list and the Shutdowner docs page ("panics are reported"); verify `go doc doger.ErrShutdownPanic` shows the doc
 
 ## 14. Closed scopes and no resurrection
 
-- [ ] 14.1 RED: regression `TestContainerShutdown_NoResurrection` plus `TestContainerShutdown_InvokeAfterShutdownNamed`, `TestContainerShutdown_ConcurrentInvokeDuringShutdown`, `TestContainerShutdown_ClosedScopeRefuses`, `TestContainerShutdown_SecondShutdownNoop` and `TestContainerShutdown_ScopeDuringShutdownRefused` (container-shutdown closed-scope scenarios); verify `go test -race -run 'TestContainerShutdown_(NoResurrection|InvokeAfterShutdownNamed|ConcurrentInvokeDuringShutdown|ClosedScopeRefuses|SecondShutdownNoop|ScopeDuringShutdownRefused)' .` fails (built 2 vs shut down 1; compile error only on `ErrShutdown`)
-- [ ] 14.2 GREEN: add `ErrShutdown` (replacing `ErrStartAfterShutdown`), a scope close flag set under the write lock before children are listed and checked by Invoke*, registration, Alias*/Export* and `Scope()`, and a Terminal wrapper state so a build after shutdown returns `ErrShutdown` (D2); verify the 14.1 tests pass and `make test` is green
-- [ ] 14.3 REFACTOR: Extract Function `(*Scope).checkOpen` shared by registration, invocation and `Scope()`; verify `make test` and `make lint` pass
-- [ ] 14.4 Docs: godoc for `ErrShutdown`, `Scope()`, `Provide*` and `Invoke*` (closed-scope behavior), migration note "a container cannot be reused after Shutdown" and `ExampleRootScope_Shutdown_closed`; verify `go test -run ExampleRootScope_Shutdown_closed .` passes
+- [x] 14.1 RED: regression `TestContainerShutdown_NoResurrection` plus `TestContainerShutdown_InvokeAfterShutdownNamed`, `TestContainerShutdown_ConcurrentInvokeDuringShutdown`, `TestContainerShutdown_ClosedScopeRefuses`, `TestContainerShutdown_SecondShutdownNoop` and `TestContainerShutdown_ScopeDuringShutdownRefused` (container-shutdown closed-scope scenarios); verify `go test -race -run 'TestContainerShutdown_(NoResurrection|InvokeAfterShutdownNamed|ConcurrentInvokeDuringShutdown|ClosedScopeRefuses|SecondShutdownNoop|ScopeDuringShutdownRefused)' .` fails (built 2 vs shut down 1; compile error only on `ErrShutdown`)
+- [x] 14.2 GREEN: add `ErrShutdown` (replacing `ErrStartAfterShutdown`), a scope close flag set under the write lock before children are listed and checked by Invoke*, registration, Alias*/Export* and `Scope()`, and a Terminal wrapper state so a build after shutdown returns `ErrShutdown` (D2); verify the 14.1 tests pass and `make test` is green
+- [x] 14.3 REFACTOR: Extract Function `(*Scope).checkOpen` shared by registration, invocation and `Scope()`; verify `make test` and `make lint` pass
+- [x] 14.4 Docs: godoc for `ErrShutdown`, `Scope()`, `Provide*` and `Invoke*` (closed-scope behavior), migration note "a container cannot be reused after Shutdown" and `ExampleRootScope_Shutdown_closed`; verify `go test -run ExampleRootScope_Shutdown_closed .` passes
 
 ## 15. Start and health use ErrShutdown, with defined precedence
 
-- [ ] 15.1 RED: rename `ErrStartAfterShutdown`→`ErrShutdown` in `TestStart_OneShot`, `TestIncrementalStart_Phase`, `TestRefresh_ShutdownCancels`, `TestRefresh_QueuedBehindShutdown`, `TestScopeStartingHook_ShutdownCause`, `TestStart_FailureThenShutdown`, `TestStart_CallerCancelThenShutdown`, `TestStartError_NotForGuards`, `TestStart_PanicReleasesShutdown`, `TestExtend_Phases` and `TestHealthScheduler_ShutdownCancelCause`, and add the `TestStart_OneShot` row "failed Start then Shutdown → ErrShutdown, not ErrAlreadyStarted" (scenarios "Repeated and late Start calls", "Incremental start in the wrong phase", "Extend in each phase", "Callers of a check cancelled by Shutdown"); verify `go test -race -run 'TestStart_OneShot|TestIncrementalStart_Phase|TestExtend_Phases|TestHealthScheduler_ShutdownCancelCause' .` fails on the new row
-- [ ] 15.2 GREEN: return and cancel with `ErrShutdown` in root_start.go, root_refresh.go, extension.go and the health cancel cause, and check the shutdown phase before the already-started guard; verify the 15.1 tests pass and `make test` is green
-- [ ] 15.3 REFACTOR: gopls Rename helpers named after the old sentinel and Inline Variable for any leftover alias; verify `make test` and `make lint` pass
-- [ ] 15.4 Docs: godoc of `ErrAlreadyStarted` and `ErrShutdown` states the precedence, plus the migration row; verify `go doc doger.ErrAlreadyStarted` shows it
+- [x] 15.1 RED: rename `ErrStartAfterShutdown`→`ErrShutdown` in `TestStart_OneShot`, `TestIncrementalStart_Phase`, `TestRefresh_ShutdownCancels`, `TestRefresh_QueuedBehindShutdown`, `TestScopeStartingHook_ShutdownCause`, `TestStart_FailureThenShutdown`, `TestStart_CallerCancelThenShutdown`, `TestStartError_NotForGuards`, `TestStart_PanicReleasesShutdown`, `TestExtend_Phases` and `TestHealthScheduler_ShutdownCancelCause`, and add the `TestStart_OneShot` row "failed Start then Shutdown → ErrShutdown, not ErrAlreadyStarted" (scenarios "Repeated and late Start calls", "Incremental start in the wrong phase", "Extend in each phase", "Callers of a check cancelled by Shutdown"); verify `go test -race -run 'TestStart_OneShot|TestIncrementalStart_Phase|TestExtend_Phases|TestHealthScheduler_ShutdownCancelCause' .` fails on the new row
+- [x] 15.2 GREEN: return and cancel with `ErrShutdown` in root_start.go, root_refresh.go, extension.go and the health cancel cause, and check the shutdown phase before the already-started guard; verify the 15.1 tests pass and `make test` is green
+- [x] 15.3 REFACTOR: gopls Rename helpers named after the old sentinel and Inline Variable for any leftover alias; verify `make test` and `make lint` pass
+- [x] 15.4 Docs: godoc of `ErrAlreadyStarted` and `ErrShutdown` states the precedence, plus the migration row; verify `go doc doger.ErrAlreadyStarted` shows it
 
 ## 16. Detach shut-down child scopes
 
-- [ ] 16.1 RED: regression `TestContainerShutdown_ChildDetachNoGrowth` plus `TestContainerShutdown_ChildDetached`, `TestContainerShutdown_ChildDetachConcurrent` and `TestContainerShutdown_GrandchildDetach` (scenarios "A shut-down child is detached and its name reusable", "Per-request scopes do not accumulate", "Concurrent per-request scopes detach", "A grandchild detaches from its own parent only"); verify `go test -race -run 'TestContainerShutdown_(ChildDetach|GrandchildDetach)' .` fails (1000 children left; "already declared" panic)
-- [ ] 16.2 GREEN: the winning child shutdown calls `parent.detachChild(name)` after completion (D3); verify the 16.1 tests pass with goleak clean and `make test` is green
-- [ ] 16.3 REFACTOR: Inline the delete in `shutdownChildrenInParallel` into `detachChild`; verify `make test` and `make lint` pass
-- [ ] 16.4 Docs: godoc for `Scope.ShutdownWithContext`, `Children` and `ChildByName` (detach, name reuse), a per-request scope docs section and `ExampleScope_perRequest`; verify `go test -run ExampleScope_perRequest .` passes
+- [x] 16.1 RED: regression `TestContainerShutdown_ChildDetachNoGrowth` plus `TestContainerShutdown_ChildDetached`, `TestContainerShutdown_ChildDetachConcurrent` and `TestContainerShutdown_GrandchildDetach` (scenarios "A shut-down child is detached and its name reusable", "Per-request scopes do not accumulate", "Concurrent per-request scopes detach", "A grandchild detaches from its own parent only"); verify `go test -race -run 'TestContainerShutdown_(ChildDetach|GrandchildDetach)' .` fails (1000 children left; "already declared" panic)
+- [x] 16.2 GREEN: the winning child shutdown calls `parent.detachChild(name)` after completion (D3); verify the 16.1 tests pass with goleak clean and `make test` is green
+- [x] 16.3 REFACTOR: Inline the delete in `shutdownChildrenInParallel` into `detachChild`; verify `make test` and `make lint` pass
+- [x] 16.4 Docs: godoc for `Scope.ShutdownWithContext`, `Children` and `ChildByName` (detach, name reuse), a per-request scope docs section and `ExampleScope_perRequest`; verify `go test -run ExampleScope_perRequest .` passes
 
 ## 17. Shared eager values and re-entrant root shutdown
 
-- [ ] 17.1 RED: regression `TestContainerShutdown_SharedEagerOnce` plus `TestContainerShutdown_CloneLazyPerContainer` and `TestContainerShutdown_ReentrantRootShutdown` (scenarios "A shared eager value is shut down once", "Lazy services stay per container", "A re-entrant root shutdown returns at once"); verify `go test -race -run 'TestContainerShutdown_(SharedEagerOnce|CloneLazyPerContainer|ReentrantRootShutdown)' .` fails (2 calls; inner deadline error)
-- [ ] 17.2 GREEN: a shared shutdown-once cell on `serviceEager` copied by `clone`, and a private marker key on the context root shutdown hands to services so a marked re-entrant call returns an empty report (D14); verify the 17.1 tests pass and `make test` is green
-- [ ] 17.3 REFACTOR: none needed if the cell is a single `*sync.Once` field, otherwise Introduce Parameter Object for it; verify `make test` and `make lint` pass
-- [ ] 17.4 Docs: godoc for `Clone` (shared eager values) and `RootScope.ShutdownWithContext` (re-entrancy; `Shutdown()` drops the context); verify `go doc doger.RootScope.ShutdownWithContext` shows the text
+- [x] 17.1 RED: regression `TestContainerShutdown_SharedEagerOnce` plus `TestContainerShutdown_CloneLazyPerContainer` and `TestContainerShutdown_ReentrantRootShutdown` (scenarios "A shared eager value is shut down once", "Lazy services stay per container", "A re-entrant root shutdown returns at once"); verify `go test -race -run 'TestContainerShutdown_(SharedEagerOnce|CloneLazyPerContainer|ReentrantRootShutdown)' .` fails (2 calls; inner deadline error)
+- [x] 17.2 GREEN: a shared shutdown-once cell on `serviceEager` copied by `clone`, and a private marker key on the context root shutdown hands to services so a marked re-entrant call returns an empty report (D14); verify the 17.1 tests pass and `make test` is green
+- [x] 17.3 REFACTOR: none needed if the cell is a single `*sync.Once` field, otherwise Introduce Parameter Object for it; verify `make test` and `make lint` pass
+- [x] 17.4 Docs: godoc for `Clone` (shared eager values) and `RootScope.ShutdownWithContext` (re-entrancy; `Shutdown()` drops the context); verify `go doc doger.RootScope.ShutdownWithContext` shows the text
 
 ## 18. ShutdownReport API
 
-- [ ] 18.1 RED: add `TestShutdownReport_ErrUnwrap`, `TestShutdownReport_ErrorsAsServiceError` and regression `TestShutdownReport_MarshalJSON` (scenarios "Err and Unwrap reflect the report", "errors.As finds the failing service", "A report marshals to JSON"); verify `go test -race -run TestShutdownReport_ .` fails to compile only on `Err`/`Unwrap`, then the JSON test fails with "object member name must be a string"
-- [ ] 18.2 GREEN: add `Err()`, `Unwrap() []error` (sorted `*ServiceError`), `MarshalJSON` (lowerCamel keys, sorted arrays, duration string) and the `doger: ` prefix in `Error()` (D11/D14); verify the 18.1 tests pass and `make test` is green
-- [ ] 18.3 REFACTOR: Extract Function `sortedServiceErrors` shared by `Error`, `Err`, `Unwrap` and `MarshalJSON`; verify `make test` and `make lint` pass
-- [ ] 18.4 Docs: fix the `ShutdownReport` doc (`Error()` is "" on success; check `Err()`) and add `ExampleShutdownReport_Err` and `ExampleShutdownReport_MarshalJSON`; verify `go test -run 'ExampleShutdownReport_' .` passes
+- [x] 18.1 RED: add `TestShutdownReport_ErrUnwrap`, `TestShutdownReport_ErrorsAsServiceError` and regression `TestShutdownReport_MarshalJSON` (scenarios "Err and Unwrap reflect the report", "errors.As finds the failing service", "A report marshals to JSON"); verify `go test -race -run TestShutdownReport_ .` fails to compile only on `Err`/`Unwrap`, then the JSON test fails with "object member name must be a string"
+- [x] 18.2 GREEN: add `Err()`, `Unwrap() []error` (sorted `*ServiceError`), `MarshalJSON` (lowerCamel keys, sorted arrays, duration string) and the `doger: ` prefix in `Error()` (D11/D14); verify the 18.1 tests pass and `make test` is green
+- [x] 18.3 REFACTOR: Extract Function `sortedServiceErrors` shared by `Error`, `Err`, `Unwrap` and `MarshalJSON`; verify `make test` and `make lint` pass
+- [x] 18.4 Docs: fix the `ShutdownReport` doc (`Error()` is "" on success; check `Err()`) and add `ExampleShutdownReport_Err` and `ExampleShutdownReport_MarshalJSON`; verify `go test -run 'ExampleShutdownReport_' .` passes
 
 ## 19. Concurrent resolution without deadlocks
 
@@ -150,21 +150,21 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 21. Provider panic errors
 
-- [ ] 21.1 RED: update the `TestInvoke_ProviderPanic` rows and add `TestProviderPanic_NestedProvider` (scenarios "Provider panic values become invocation errors", "Panic in a nested provider"); verify `go test -race -run 'TestInvoke_ProviderPanic$|TestProviderPanic_' .` fails to compile naming only `ErrProviderPanic`, then on the message rows
-- [ ] 21.2 GREEN: add `ErrProviderPanic`; `handleProviderPanic` wraps it with an error panic value (`%w` twice) or formats other values with `%v`, and `ServiceError` adds the service name; keep `TestInvoke_ProviderPanicNil_GODEBUGOverride` green; verify the 21.1 tests pass and `make test` is green
-- [ ] 21.3 REFACTOR: none needed — the change is local to `handleProviderPanic`; verify `make test` and `make lint` pass
+- [x] 21.1 RED: update the `TestInvoke_ProviderPanic` rows and add `TestProviderPanic_NestedProvider` (scenarios "Provider panic values become invocation errors", "Panic in a nested provider"); verify `go test -race -run 'TestInvoke_ProviderPanic$|TestProviderPanic_' .` fails to compile naming only `ErrProviderPanic`, then on the message rows
+- [x] 21.2 GREEN: add `ErrProviderPanic`; `handleProviderPanic` wraps it with an error panic value (`%w` twice) or formats other values with `%v`, and `ServiceError` adds the service name; keep `TestInvoke_ProviderPanicNil_GODEBUGOverride` green; verify the 21.1 tests pass and `make test` is green
+- [x] 21.3 REFACTOR: none needed — the change is local to `handleProviderPanic`; verify `make test` and `make lint` pass
 
 ## 22. InvokeAs and struct injection with nil interfaces and invalid targets
 
-- [ ] 22.1 RED: regression tests `TestInvokeAs_NilInterfaceInstance`, `TestInvokeAs_NonNilInstance`, `TestStructInjection_NilInterfaceDependency`, `TestStructInjection_MustNilInterfaceDependency`, `TestStructInjection_InvalidTargets`, `TestStructInjection_MustRecursivePointerType` (child process for the stack overflow) and `TestStructInjection_DependencyFailureNotStructError`; verify `go test -race -run 'TestInvokeAs_N|TestStructInjection_' .` fails with the interface-conversion/reflect panics and the missing `ErrStructInjection`
-- [ ] 22.2 GREEN: `InvokeAs` uses `typed, _ := instance.(T)`, struct injection uses `memberValue(dependency, fieldValue.Type())`, add `ErrStructInjection` wrapping the invalid-target errors, and `deepEmptyMakeValue` tracks visited types returning an error naming the type; verify the 22.1 tests pass and `make test` is green
-- [ ] 22.3 REFACTOR: Change Function Declaration so `deepEmpty[T]` returns `(T, error)` propagated through `InvokeStruct`, and Extract Function `structInjectionError`; verify `make test` and `make lint` pass
+- [x] 22.1 RED: regression tests `TestInvokeAs_NilInterfaceInstance`, `TestInvokeAs_NonNilInstance`, `TestStructInjection_NilInterfaceDependency`, `TestStructInjection_MustNilInterfaceDependency`, `TestStructInjection_InvalidTargets`, `TestStructInjection_MustRecursivePointerType` (child process for the stack overflow) and `TestStructInjection_DependencyFailureNotStructError`; verify `go test -race -run 'TestInvokeAs_N|TestStructInjection_' .` fails with the interface-conversion/reflect panics and the missing `ErrStructInjection`
+- [x] 22.2 GREEN: `InvokeAs` uses `typed, _ := instance.(T)`, struct injection uses `memberValue(dependency, fieldValue.Type())`, add `ErrStructInjection` wrapping the invalid-target errors, and `deepEmptyMakeValue` tracks visited types returning an error naming the type; verify the 22.1 tests pass and `make test` is green
+- [x] 22.3 REFACTOR: Change Function Declaration so `deepEmpty[T]` returns `(T, error)` propagated through `InvokeStruct`, and Extract Function `structInjectionError`; verify `make test` and `make lint` pass
 
 ## 23. Not-found message cap
 
-- [ ] 23.1 RED: add `TestResolutionErrors_NotFoundCap` (rows 0/1/10/11/2000) and `TestResolutionErrors_NotFoundCapWithChain`; verify `go test -race -run TestResolutionErrors_NotFoundCap .` fails on the 11 and 2000 rows
-- [ ] 23.2 GREEN: keep the first 10 sorted names and append ` and N more` before `, path:` in `serviceNotFound`; verify the 23.1 tests pass and `make test` is green
-- [ ] 23.3 REFACTOR: Extract Function `formatServiceList(names, limit)`; verify `make test` and `make lint` pass
+- [x] 23.1 RED: add `TestResolutionErrors_NotFoundCap` (rows 0/1/10/11/2000) and `TestResolutionErrors_NotFoundCapWithChain`; verify `go test -race -run TestResolutionErrors_NotFoundCap .` fails on the 11 and 2000 rows
+- [x] 23.2 GREEN: keep the first 10 sorted names and append ` and N more` before `, path:` in `serviceNotFound`; verify the 23.1 tests pass and `make test` is green
+- [x] 23.3 REFACTOR: Extract Function `formatServiceList(names, limit)`; verify `make test` and `make lint` pass
 
 ## 24. Explanation is free of data races
 
@@ -193,9 +193,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 28. A yielded default follows its target by name
 
-- [ ] 28.1 RED: add `TestAsDefault_YieldedFollowsOverride` (5 rows), `TestAsDefault_YieldedAliasFollowsOverride` and `TestAsDefault_YieldedConcurrentOverride`, and add `TestAsDefault_NilInjector` (the former test of that name is now `TestAsDefault_ResolvesByType`) plus the `doger:`/`Alias` texts of existing default tests (default-registrations scenarios); verify the override rows fail (`expected app-dialer-2, actual app-dialer-1`)
-- [ ] 28.2 GREEN: each yielded resolution looks the name up in `targetScope` instead of the stored wrapper, returning `ErrServiceNotFound` when gone; verify the 28.1 tests pass under `-race` and `go test -race -run TestAsDefault .` and `make test` are green
-- [ ] 28.3 REFACTOR: Inline Variable to remove the stored `target` field, keeping `targetScope` for Explain; verify `make test` and `make lint` pass
+- [x] 28.1 RED: add `TestAsDefault_YieldedFollowsOverride` (5 rows), `TestAsDefault_YieldedAliasFollowsOverride` and `TestAsDefault_YieldedConcurrentOverride`, and add `TestAsDefault_NilInjector` (the former test of that name is now `TestAsDefault_ResolvesByType`) plus the `doger:`/`Alias` texts of existing default tests (default-registrations scenarios); verify the override rows fail (`expected app-dialer-2, actual app-dialer-1`)
+- [x] 28.2 GREEN: each yielded resolution looks the name up in `targetScope` instead of the stored wrapper, returning `ErrServiceNotFound` when gone; verify the 28.1 tests pass under `-race` and `go test -race -run TestAsDefault .` and `make test` are green
+- [x] 28.3 REFACTOR: Inline Variable to remove the stored `target` field, keeping `targetScope` for Explain; verify `make test` and `make lint` pass
 
 ## 29. Per-service hook signatures with context and elapsed
 
@@ -225,17 +225,17 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 33. Kinds need an explicit root; Runnable is a function; Stage zero is invalid
 
-- [ ] 33.1 RED: add `TestKind_NilRootRejected` (the former `TestKind_NilRootUsesDefault` is now `TestKind_HandlerOnRoot`), a Stage(0) row in `TestKind_InvalidValues`, `TestRunnable_FuncReturnsBuiltIn` (replacing `TestRunnable_ReassignedVariable`), `TestStage_Text` and `TestStage_UnmarshalText`, and call `Runnable().Handle` in `TestRunnable_ReplaceHandler`/`TestKind_CloneCopiesHandlers` (component-kinds scenarios); verify `go test -race -run 'TestKind_|TestRunnable_|TestStage_' .` fails to compile on `Runnable()`/`MarshalText` or on the Stage(0) row
-- [ ] 33.2 GREEN: `Handle` panics with an `ErrNilInjector`-wrapping error on a nil/typed-nil root, Stage constants start at `iota + 1` with `String`/`MarshalText`/`UnmarshalText` (`before-start`/`after-start`), and `var Runnable` becomes `func Runnable() Kind[Runner, struct{}]`; verify the 33.1 tests pass and `make test` is green
-- [ ] 33.3 REFACTOR: Inline Variable (`runnableKind` used by `Runnable()`) and Extract Function `validStage(stage)` shared by `Handle` and `MarshalText`; verify `make test` and `make lint` pass
-- [ ] 33.4 Docs: godoc of `Runnable()`, `Stage` and `Handle`, `ExampleKind_Handle` and `ExampleRunnable`, the component-kinds docs and the migration row (`Runnable.Handle` → `Runnable().Handle`); verify `go test -run 'ExampleKind_Handle|ExampleRunnable' .` passes
+- [x] 33.1 RED: add `TestKind_NilRootRejected` (the former `TestKind_NilRootUsesDefault` is now `TestKind_HandlerOnRoot`), a Stage(0) row in `TestKind_InvalidValues`, `TestRunnable_FuncReturnsBuiltIn` (replacing `TestRunnable_ReassignedVariable`), `TestStage_Text` and `TestStage_UnmarshalText`, and call `Runnable().Handle` in `TestRunnable_ReplaceHandler`/`TestKind_CloneCopiesHandlers` (component-kinds scenarios); verify `go test -race -run 'TestKind_|TestRunnable_|TestStage_' .` fails to compile on `Runnable()`/`MarshalText` or on the Stage(0) row
+- [x] 33.2 GREEN: `Handle` panics with an `ErrNilInjector`-wrapping error on a nil/typed-nil root, Stage constants start at `iota + 1` with `String`/`MarshalText`/`UnmarshalText` (`before-start`/`after-start`), and `var Runnable` becomes `func Runnable() Kind[Runner, struct{}]`; verify the 33.1 tests pass and `make test` is green
+- [x] 33.3 REFACTOR: Inline Variable (`runnableKind` used by `Runnable()`) and Extract Function `validStage(stage)` shared by `Handle` and `MarshalText`; verify `make test` and `make lint` pass
+- [x] 33.4 Docs: godoc of `Runnable()`, `Stage` and `Handle`, `ExampleKind_Handle` and `ExampleRunnable`, the component-kinds docs and the migration row (`Runnable.Handle` → `Runnable().Handle`); verify `go test -run 'ExampleKind_Handle|ExampleRunnable' .` passes
 
 ## 34. DependencySource zero is invalid; DeclareDependency rejects nil
 
-- [ ] 34.1 RED: add nil and typed-nil rows to `TestDeclareDependency`, "unknown"/"" rows to `TestDependencySource_UnmarshalText` and `TestDependencySource_MarshalText` (scenarios "Declaring edges dynamically", "Explained output round-trips through JSON", "Encoding dependency sources"); verify `go test -race -run 'TestDeclareDependency|TestDependencySource_' .` fails on the new rows
-- [ ] 34.2 GREEN: DependencySource constants start at `iota + 1` (zero: `String()` "unknown", `MarshalText` error `doger: invalid dependency source N`) and `DeclareDependency` returns `ErrNilInjector` for nil/typed-nil; verify the 34.1 tests pass, `TestExplain_EdgeSourceCompat` stays green and `make test` is green
-- [ ] 34.3 REFACTOR: Replace Loop with a lookup table for the source texts; verify `make test` and `make lint` pass
-- [ ] 34.4 Docs: godoc of `DependencySource` and `DeclareDependency`; verify `go doc doger.DependencySource` shows the invalid zero value
+- [x] 34.1 RED: add nil and typed-nil rows to `TestDeclareDependency`, "unknown"/"" rows to `TestDependencySource_UnmarshalText` and `TestDependencySource_MarshalText` (scenarios "Declaring edges dynamically", "Explained output round-trips through JSON", "Encoding dependency sources"); verify `go test -race -run 'TestDeclareDependency|TestDependencySource_' .` fails on the new rows
+- [x] 34.2 GREEN: DependencySource constants start at `iota + 1` (zero: `String()` "unknown", `MarshalText` error `doger: invalid dependency source N`) and `DeclareDependency` returns `ErrNilInjector` for nil/typed-nil; verify the 34.1 tests pass, `TestExplain_EdgeSourceCompat` stays green and `make test` is green
+- [x] 34.3 REFACTOR: Replace Loop with a lookup table for the source texts; verify `make test` and `make lint` pass
+- [x] 34.4 Docs: godoc of `DependencySource` and `DeclareDependency`; verify `go doc doger.DependencySource` shows the invalid zero value
 
 ## 35. Extensions: ExtendIntoRoot, explicit root, Logger decline record
 
@@ -312,9 +312,9 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 45. Web UI renders bounded dependency trees
 
-- [ ] 45.1 RED: add `TestPages_TreeSizeFollowsGraph`, `TestPages_ReferenceLinks` and `TestWebUI_LayeredGraphBounded` per adapter (scenarios "Tree size follows the graph shape", "A reference links to the referenced service", "A layered graph renders each service once"); verify they fail (about 26 MB and 121391 entries for svc-23)
-- [ ] 45.2 GREEN: render `Ref` nodes as links with no children via the recursive template block; verify the 45.1 tests pass with the body under 64 KiB within 1s
-- [ ] 45.3 REFACTOR: Extract Function `dependencyTree` template block shared by Dependencies and Dependents; verify the per-module tests and lint pass
+- [x] 45.1 RED: add `TestPages_TreeSizeFollowsGraph`, `TestPages_ReferenceLinks` and `TestWebUI_LayeredGraphBounded` per adapter (scenarios "Tree size follows the graph shape", "A reference links to the referenced service", "A layered graph renders each service once"); verify they fail. Observed after the explain merge: "dependency tree lists 45 entries with 0 references, want 45 with 22" for svc-23 on every adapter (and 0 references for the diamond and ten-layer rows); the size and time bound already held, because group 26's `Ref` nodes bound the explain output, so the failure is the missing reference marking (the 26 MB / 121391 entries figure predates group 26)
+- [x] 45.2 GREEN: render `Ref` nodes as links with no children via the recursive template block; verify the 45.1 tests pass with the body under 64 KiB within 1s
+- [x] 45.3 REFACTOR: Extract Function `dependencyTree` template block shared by Dependencies and Dependents; verify the per-module tests and lint pass
 
 ## 46. Web UI source paths and mount options
 
@@ -324,11 +324,11 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 47. Web UI mounts behind middleware and under concurrency
 
-- [ ] 47.1 RED: add `TestWebUI_BehindAuthMiddleware` per adapter, `TestWebUI_ChiMuxStillAccepted` and `TestWebUI_ConcurrentViewing` (std, chi) (scenarios "Authentication middleware guards the UI", "Existing chi mounts keep compiling", "Viewers race with container churn"); verify the chi `r.With(auth)` rows fail to compile on `*chi.Mux`
-- [ ] 47.2 GREEN: change `dogerchi.Use` to take `chi.Router`; verify the 47.1 tests pass under `-race` with goleak
-- [ ] 47.3 REFACTOR: none needed — only the parameter type changes; verify the per-module tests and lint pass
-- [ ] 47.4 Docs: fix `docs/docs/troubleshooting/web-ui.md` (drop the "health-check status" claim; add headers, bounded trees, `WithFullSourcePaths` and per-adapter middleware examples) and remove `doger.Options{EnableWebUI, WebUIPort}` from `docs/static/llms.txt`; verify `grep -c EnableWebUI docs/static/llms.txt` prints 0 and `cd docs && npm run build` passes
-- [ ] 47.5 Docs: `examples/web-application` mounts the UI with `r.With(basicAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD")))` on a `127.0.0.1` listener, and each adapter gets an `Example` with a middleware mount; verify `go build ./...` in `examples/web-application` and `go test -run Example ./...` in each adapter module pass
+- [x] 47.1 RED: add `TestWebUI_BehindAuthMiddleware` per adapter, `TestWebUI_ChiMuxStillAccepted` and `TestWebUI_ConcurrentViewing` (std, chi) (scenarios "Authentication middleware guards the UI", "Existing chi mounts keep compiling", "Viewers race with container churn"); verify the chi `r.With(auth)` rows fail to compile on `*chi.Mux`
+- [x] 47.2 GREEN: change `dogerchi.Use` to take `chi.Router`; verify the 47.1 tests pass under `-race` with goleak
+- [x] 47.3 REFACTOR: none needed — only the parameter type changes; verify the per-module tests and lint pass
+- [x] 47.4 Docs: fix `docs/docs/troubleshooting/web-ui.md` (drop the "health-check status" claim; add headers, bounded trees, `WithFullSourcePaths` and per-adapter middleware examples) and remove `doger.Options{EnableWebUI, WebUIPort}` from `docs/static/llms.txt`; verify `grep -c EnableWebUI docs/static/llms.txt` prints 0 and `cd docs && npm run build` passes
+- [x] 47.5 Docs: `examples/web-application` mounts the UI with `r.With(basicAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD")))` on a `127.0.0.1` listener, and each adapter gets an `Example` with a middleware mount; verify `go build ./...` in `examples/web-application` and `go test -run Example ./...` in each adapter module pass
 
 ## 48. Make targets for every workspace module
 
@@ -358,7 +358,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 ## 52. Release provenance and dry run
 
 - [x] 52.1 Add `scripts/release-dry-run.sh <semver>` mirroring release.yml post-processing into a file proxy and checking that a clean `GOWORK=off` consumer gets and builds every released module with the root pinned, no `replace` and no test-only requirements; verify it fails on the current tree because `scheduler/gocron` still requires testify and goleak (RED)
-- [ ] 52.2 Change release.yml: job `if: github.ref == 'refs/heads/main'` and `environment: release`, `go mod tidy` in every released module before pinning, `go build`/`go vet` after pinning, `make vuln` before tagging, tag `clock/clockwork`, and `generate_release_notes: true` (scenarios "The release workflow enforces provenance", "A dispatch from another branch is refused", "Test-only requirements are stripped", "Runtime requirements are kept", "Released adapters pin the root release"); verify `scripts/release-dry-run.sh v0.99.0` and the release section of `scripts/check-workflows.sh` pass
+- [x] 52.2 Change release.yml: job `if: github.ref == 'refs/heads/main'` and `environment: release`, `go mod tidy` in every released module before pinning, `go build`/`go vet` after pinning, `make vuln` before tagging, tag `clock/clockwork`, and `generate_release_notes: true` (scenarios "The release workflow enforces provenance", "A dispatch from another branch is refused", "Test-only requirements are stripped", "Runtime requirements are kept", "Released adapters pin the root release"); verify `scripts/release-dry-run.sh v0.99.0` and the release section of `scripts/check-workflows.sh` pass
 - [ ] 52.3 Add a CI job `release-dry-run` in `test.yml` running `scripts/release-dry-run.sh v0.99.0`, its invalid-version rows and `scripts/check-workflows.sh` (scenarios "A clean consumer builds every released module", "The dry run rejects an invalid version"); verify the job is green
 - [x] 52.4 Add CHANGELOG.md with an "Unreleased" section listing every BREAKING row of design.md D10/D9 with its migration, and `.github/CODEOWNERS` (scenario "Policy files are present"); verify the policy section of `scripts/check-workflows.sh` passes
 
@@ -372,8 +372,8 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 - [x] 53.6 Cover the uncovered health branches (service left while callers queued, take-over by a fresh check, queue ordering, `keepOnly` pruning, `deliverTransitions` re-panic, scheduler double-start guard) as named subtests in `health_run_test.go`/`health_monitor_test.go`; verify `go test -race -coverprofile=c.out . && go tool cover -func=c.out` shows those blocks covered
 - [ ] 53.7 Cover the virtual-scope pass-through methods called from inside a provider in `virtual_scope_test.go` and the broken alias/export chains of `aliasResolvesTo`; verify the coverage report shows `virtual_scope.go` pass-throughs and `aliasResolvesTo` covered
 - [ ] 53.8 Add `TestShutdownOnSignals_Default` (SIGUSR1 through a test-only signal set) and give `ExampleRootScope_ShutdownOnSignals` a runnable `// Output:`; verify `go test -race -run ShutdownOnSignals .` passes
-- [ ] 53.9 Harden the `tests` package: goleak `TestMain`, a `testWithTimeout` with a 5s floor reporting through `t` instead of `os.Exit`, and real report/error assertions in `TestParallelShutdown`, `TestConcurrentHealthCheckDuringShutdown`, `TestConcurrentBlockingOperations` and `TestRaceConditionShutdownInvocation`; verify `go test -race -count=20 -shuffle=on ./tests` passes
-- [ ] 53.10 Replace the `time.Sleep` synchronisation in `scheduler/gocron/scheduler_test.go` with channel handshakes or a fake clock; verify `go test -race -count=50 -shuffle=on ./...` in `scheduler/gocron` passes
+- [x] 53.9 Harden the `tests` package: goleak `TestMain`, a `testWithTimeout` with a 5s floor reporting through `t` instead of `os.Exit`, and real report/error assertions in `TestParallelShutdown`, `TestConcurrentHealthCheckDuringShutdown`, `TestConcurrentBlockingOperations` and `TestRaceConditionShutdownInvocation`; verify `go test -race -count=20 -shuffle=on ./tests` passes
+- [x] 53.10 Replace the `time.Sleep` synchronisation in `scheduler/gocron/scheduler_test.go` with channel handshakes or a fake clock; verify `go test -race -count=50 -shuffle=on ./...` in `scheduler/gocron` passes
 - [ ] 53.11 Tighten bare `Error` assertions on hot paths (invoke, shutdown, start, health) to `ErrorIs`/`ErrorAs` with the expected sentinel; verify `make test` passes
 
 ## 54. Performance (behavior-preserving, D17)

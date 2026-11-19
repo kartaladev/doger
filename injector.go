@@ -89,8 +89,8 @@ type Injector interface {
 	serviceForEachRec(func(string, *Scope, any) bool)
 	// serviceHealthCheck performs a health check on a specific service in the current scope.
 	serviceHealthCheck(context.Context, string) error
-	// serviceShutdown gracefully shuts down a specific service in the current scope.
-	serviceShutdown(context.Context, string) error
+	// shutdownService gracefully shuts down a specific service in the current scope.
+	shutdownService(context.Context, string) error
 	// onServiceInvoke is called whenever a service is invoked in this scope.
 	onServiceInvoke(string)
 }
@@ -228,7 +228,7 @@ type InjectorOpts struct {
 	// A Starting hook must not call root Shutdown synchronously without a
 	// deadline: Shutdown waits for the running Start, which waits for the hook.
 	// With a deadline, Shutdown returns a failed report when it expires, and
-	// Start then fails with an error matching ErrStartAfterShutdown.
+	// Start then fails with an error matching ErrShutdown.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddContainerStartingHook] adds a hook later, safely
@@ -361,16 +361,41 @@ type InjectorOpts struct {
 	// scope shutdown, with the points "scope-started", "scope-closing" and
 	// "scope-closed". Default (nil): re-panic with the recovered value.
 	// Panics in Starting hooks are vetoes and never reach it.
+	//
+	// A panic of a service Shutdown method or of a HookBeforeShutdown or
+	// HookAfterShutdown hook is recorded in the shutdown report (see
+	// ErrShutdownPanic) and never raised by the container: the first one of
+	// a root or child shutdown reaches HookContainerPanic with the point
+	// "service-shutdown" once that shutdown is complete, Closed hooks
+	// included, and later ones are logged. With no HookContainerPanic, each
+	// is only recorded and logged. Other points: "healthscheduler" and
+	// "healthchanged" (see HealthScheduler), and "healthcheck".
 	HookContainerPanic func(scope *RootScope, hook string, recovered any)
 
 	// Logger receives the container's log records, each with a fixed
 	// message and level and the attributes "scope" and "service" where they
-	// apply: Debug for registrations, invocations, exports and health check
-	// failures; Info for container start, ready, closing and closed; Warn
-	// for an unavailable property source or a degraded container; Error for
-	// a failed service shutdown, a health scheduler failure and a recovered
-	// panic. A recovered panic's value, and a health check's error text,
-	// appear only in Debug records, since they could hold secrets.
+	// apply:
+	//   - Debug: registrations, overrides, invocations, exports, a health
+	//     check requested or failed, the property source selected, and the
+	//     value of a recovered panic ("panic value");
+	//   - Info: container started, ready, closing and closed, an extension
+	//     disabled, and the container health back to healthy;
+	//   - Warn: an unavailable property source, properties read after
+	//     Extend, and the container health changing to another state;
+	//   - Error: a failed service shutdown, a health scheduler failure or a
+	//     failure of its stop function, and a recovered panic that is not
+	//     passed to HookContainerPanic ("panic recovered", with its point and
+	//     type only): the first panic of an operation goes to
+	//     HookContainerPanic when it is set, and is logged only when it is
+	//     not; later panics of the operation are logged.
+	// A recovered panic's value, and a health check's error text, appear
+	// only in Debug records, since they could hold secrets.
+	//
+	// The Logger's handler must not panic. A panic it raises on the
+	// caller's goroutine propagates to the caller; one raised on a
+	// goroutine the container runs in the background, such as a service
+	// shutdown or a health check, cannot be recovered by the caller and
+	// crashes the process.
 	// Default (nil): nothing is logged, and no record is built.
 	Logger *slog.Logger
 
@@ -643,6 +668,9 @@ type containerHooks struct {
 	scopeStarted       hookList[func(context.Context, *Scope)]
 	scopeClosing       hookList[func(context.Context, *Scope)]
 	scopeClosed        hookList[func(context.Context, *Scope)]
+
+	serviceHealthChanged   hookList[func(*Scope, string, ServiceHealth, ServiceHealth)]
+	containerHealthChanged hookList[func(*RootScope, HealthState, HealthState)]
 }
 
 // take moves the hook lists of opts, the container's own copy, into h.
@@ -685,6 +713,10 @@ func (h *containerHooks) take(opts *InjectorOpts) {
 	opts.HookScopeClosing = nil
 	h.scopeClosed.set(opts.HookScopeClosed)
 	opts.HookScopeClosed = nil
+	h.serviceHealthChanged.set(opts.HookServiceHealthChanged)
+	opts.HookServiceHealthChanged = nil
+	h.containerHealthChanged.set(opts.HookContainerHealthChanged)
+	opts.HookContainerHealthChanged = nil
 }
 
 // optsWith returns a copy of opts holding the current hook lists of h.
@@ -709,6 +741,8 @@ func (h *containerHooks) optsWith(opts *InjectorOpts) *InjectorOpts {
 	c.HookScopeStarted = slices.Clone(h.scopeStarted.load())
 	c.HookScopeClosing = slices.Clone(h.scopeClosing.load())
 	c.HookScopeClosed = slices.Clone(h.scopeClosed.load())
+	c.HookServiceHealthChanged = slices.Clone(h.serviceHealthChanged.load())
+	c.HookContainerHealthChanged = slices.Clone(h.containerHealthChanged.load())
 
 	return c
 }
