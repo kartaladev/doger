@@ -404,7 +404,7 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 				root := New()
 				root.Shutdown()
 				err := root.StartWithContext(context.Background())
-				require.ErrorIs(t, err, ErrStartAfterShutdown)
+				require.ErrorIs(t, err, ErrShutdown)
 
 				return err.Error()
 			},
@@ -482,7 +482,7 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 				<-entered
 				root.ShutdownWithContext(context.Background())
 				err := <-startErr
-				require.ErrorIs(t, err, ErrStartAfterShutdown)
+				require.ErrorIs(t, err, ErrShutdown)
 
 				return err.Error()
 			},
@@ -497,7 +497,7 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 				root := New()
 				root.Shutdown()
 				err := root.Refresh()
-				require.ErrorIs(t, err, ErrStartAfterShutdown)
+				require.ErrorIs(t, err, ErrShutdown)
 
 				return err.Error()
 			},
@@ -510,7 +510,7 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 				tenant := root.Scope("tenant")
 				root.Shutdown()
 				err := tenant.Start()
-				require.ErrorIs(t, err, ErrStartAfterShutdown)
+				require.ErrorIs(t, err, ErrShutdown)
 
 				return err.Error()
 			},
@@ -537,7 +537,7 @@ func TestModuleIdentity_PrefixOnce(t *testing.T) {
 				root := New()
 				root.Shutdown()
 				err := Extend(root, prefixOnceExtension{})
-				require.ErrorIs(t, err, ErrStartAfterShutdown)
+				require.ErrorIs(t, err, ErrShutdown)
 
 				return err.Error()
 			},
@@ -629,11 +629,12 @@ func TestModuleIdentity_AllSentinelsPrefixed(t *testing.T) {
 				"ErrHealthCheckTimeout":        ErrHealthCheckTimeout,
 				"ErrHealthCheckPanic":          ErrHealthCheckPanic,
 				"ErrAlreadyStarted":            ErrAlreadyStarted,
-				"ErrStartAfterShutdown":        ErrStartAfterShutdown,
+				"ErrShutdown":                  ErrShutdown,
 				"ErrNotStarted":                ErrNotStarted,
 				"ErrNilInjector":               ErrNilInjector,
 				"ErrStructInjection":           ErrStructInjection,
 				"ErrProviderPanic":             ErrProviderPanic,
+				"ErrShutdownPanic":             ErrShutdownPanic,
 				"ErrInvalidExtension":          ErrInvalidExtension,
 				"ErrExtensionDisabled":         ErrExtensionDisabled,
 				"ErrRequiredExtensionDisabled": ErrRequiredExtensionDisabled,

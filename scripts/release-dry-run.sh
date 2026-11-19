@@ -74,7 +74,8 @@ make --no-print-directory vuln
 "$steps" pin "$version"
 "$steps" verify
 
-released=". $("$steps" modules | tr '\n' ' ')"
+# every released module, each after the siblings it requires
+released="$("$steps" modules | tr '\n' ' ')"
 
 # module_path prints the module path of released directory $1.
 module_path() {
@@ -90,6 +91,9 @@ requires() {
 # --- released go.mod files ---------------------------------------------------
 
 echo "--- released go.mod files"
+# the module paths of every released module
+sibling_paths="$(for dir in $released; do module_path "$dir"; done)"
+
 for dir in $released; do
 	replaces="$(cd "$src/$dir" && go mod edit -json | jq -r '.Replace // [] | length')"
 	if [ "$replaces" -eq 0 ]; then
@@ -105,24 +109,38 @@ for dir in $released; do
 			fail "$dir requires $root_module ${have:-(none)}, want $version"
 		fi
 	fi
+	# every released sibling it requires, at the release version
+	while IFS=$'\t' read -r dep have; do
+		[ -n "$dep" ] && [ "$dep" != "$root_module" ] || continue
+		if [ "$have" = "$version" ]; then
+			pass "$dir requires sibling $dep $version"
+		else
+			fail "$dir requires sibling $dep $have, want $version"
+		fi
+	done < <(cd "$src/$dir" && go mod edit -json |
+		jq -r --arg paths "$sibling_paths" '($paths | split("\n")) as $s
+			| .Require // [] | .[] | select(.Path as $p | $s | index($p)) | [.Path, .Version] | @tsv')
 done
 
-# released module | dependency that must not be required
-for row in \
-	". github.com/stretchr/testify" \
-	". go.uber.org/goleak" \
-	". github.com/jonboulle/clockwork"; do
-	read -r dir dep <<<"$row"
-	if have="$(requires "$dir" "$dep")"; then
-		fail "$dir requires test-only $dep $have"
-	else
-		pass "$dir does not require $dep"
-	fi
-done
-# no adapter requires testify or goleak
+# scenario row: scheduler/gocron requires clock/clockwork at the release
+sib_dir="scheduler/gocron"
+sib_dep="github.com/kartaladev/doger/clock/clockwork"
+have="$(requires "$sib_dir" "$sib_dep" || true)"
+if [ "$have" = "$version" ]; then
+	pass "$sib_dir requires $sib_dep $version"
+else
+	fail "$sib_dir requires $sib_dep ${have:-(none)}, want $version"
+fi
+
+# test-only requirements: testify and goleak in no released module;
+# clockwork only where non-test code uses it (clock/clockwork and
+# scheduler/gocron), which "runtime dependency that must stay" checks
 for dir in $released; do
-	[ "$dir" != "." ] || continue
-	for dep in github.com/stretchr/testify go.uber.org/goleak; do
+	for dep in github.com/stretchr/testify go.uber.org/goleak github.com/jonboulle/clockwork; do
+		if [ "$dep" = github.com/jonboulle/clockwork ] &&
+			{ [ "$dir" = clock/clockwork ] || [ "$dir" = scheduler/gocron ]; }; then
+			continue
+		fi
 		if have="$(requires "$dir" "$dep")"; then
 			fail "$dir requires test-only $dep $have"
 		else
@@ -135,7 +153,8 @@ done
 for row in \
 	". github.com/samber/go-type-to-string" \
 	"scheduler/gocron github.com/go-co-op/gocron/v2" \
-	"clock/clockwork github.com/jonboulle/clockwork"; do
+	"clock/clockwork github.com/jonboulle/clockwork" \
+	"scheduler/gocron github.com/jonboulle/clockwork"; do
 	read -r dir dep <<<"$row"
 	if [ ! -f "$src/$dir/go.mod" ] || ! grep -qw "$dir" <<<"$released"; then
 		fail "$dir is not released"
@@ -170,6 +189,7 @@ publish() {
 	echo "$version" >>"$proxy/$path/@v/list"
 }
 
+# in dependency order: a module is published after the siblings it requires
 echo "--- publishing to a file proxy"
 for dir in $released; do
 	publish "$dir"

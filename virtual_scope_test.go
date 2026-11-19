@@ -130,10 +130,10 @@ func TestVirtualScope_PassThrough(t *testing.T) {
 			},
 		},
 		{
-			name: "serviceShutdown",
+			name: "shutdownService",
 			check: func(t *testing.T, _ *RootScope, tenant *Scope, vs *virtualScope) {
 				t.Helper()
-				require.NoError(t, vs.serviceShutdown(context.Background(), "probe"))
+				require.NoError(t, vs.shutdownService(context.Background(), "probe"))
 				assert.False(t, tenant.serviceExist("probe"))
 			},
 		},

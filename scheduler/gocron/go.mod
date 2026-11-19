@@ -7,6 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
+	github.com/kartaladev/doger/clock/clockwork v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 )
@@ -18,3 +19,5 @@ require (
 )
 
 replace github.com/kartaladev/doger => ../../
+
+replace github.com/kartaladev/doger/clock/clockwork => ../../clock/clockwork

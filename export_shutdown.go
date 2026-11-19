@@ -12,8 +12,9 @@ import (
 // recursively) in one dependency-ordered pass, whatever scope each belongs to.
 type exportPass struct {
 	ctx    context.Context
-	root   *passScope   // the scope shut down
-	scopes []*passScope // root first, each scope before its exporting children
+	panics *shutdownPanics // the first service shutdown panic of the operation
+	root   *passScope      // the scope shut down
+	scopes []*passScope    // root first, each scope before its exporting children
 }
 
 // passScope is a scope taking part in an export pass.
@@ -41,7 +42,7 @@ type passScope struct {
 func (s *Scope) shutdownWithExports(ctx context.Context, first *hookPanic, isChild bool) *ShutdownReport {
 	// first is passed to the methods running hooks, never stored in the
 	// pass: the caller's panic record then stays off the heap
-	pass := &exportPass{ctx: ctx}
+	pass := &exportPass{ctx: ctx, panics: first.services}
 	pass.root = pass.add(s, nil, nil)
 	defer pass.release()
 
@@ -117,6 +118,9 @@ func (p *exportPass) release() {
 func (p *exportPass) shutdownOtherChildren(first *hookPanic) {
 	reports := make([]*ShutdownReport, len(p.scopes))
 	panics := make([]hookPanic, len(p.scopes))
+	for index := range panics {
+		panics[index] = first.child()
+	}
 
 	ctx := p.ctx // captured instead of p, so the pass stays off the heap
 	var wg sync.WaitGroup
@@ -236,11 +240,11 @@ func (p *exportPass) shutdownRound(ready map[*passScope][]string) {
 	}
 	reports := make([]*ShutdownReport, len(members))
 
-	ctx := p.ctx // captured instead of p, as in shutdownOtherChildren
+	ctx, panics := p.ctx, p.panics // captured instead of p, as in shutdownOtherChildren
 	var wg sync.WaitGroup
 	for index, member := range members {
 		wg.Go(func() {
-			reports[index] = member.scope.shutdownServicesWithoutDependenciesInParallel(ctx, ready[member])
+			reports[index] = member.scope.shutdownServicesWithoutDependenciesInParallel(ctx, ready[member], panics)
 		})
 	}
 	wg.Wait()

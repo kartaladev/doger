@@ -249,7 +249,7 @@ check_release() {
 	vuln="$(first_line '^[[:space:]]+run:[[:space:]]+make vuln' "$f")"
 	tags="$(first_line '^[[:space:]]+- name: Create tags' "$f")"
 	[ "$strip" -gt 0 ] || fail "$r: no step strips the tests (release-steps.sh strip)"
-	[ "$pin" -gt 0 ] || fail "$r: no step pins the adapters (release-steps.sh pin \"\$SEMVER\")"
+	[ "$pin" -gt 0 ] || fail "$r: no step pins the released modules (release-steps.sh pin \"\$SEMVER\")"
 	[ "$tags" -gt 0 ] || fail "$r: no 'Create tags' step"
 	{ [ "$tidy" -gt "$strip" ] && [ "$tidy" -lt "$pin" ]; } ||
 		fail "$r: no 'go mod tidy' step (release-steps.sh tidy) between stripping and pinning"
@@ -267,18 +267,51 @@ check_release() {
 		fail "$sr is missing"
 		return
 	fi
-	grep -Eq 'for dir in http/\*/ scheduler/\*/ clock/\*/' "$s" ||
-		fail "$sr: the released modules must cover http/*/ scheduler/*/ clock/*/"
 	step_body() { awk -v fn="$1" '$0 ~ "^" fn "\\(\\) \\{" {on=1} on {print} on && /^}/ {exit}' "$s"; }
-	{ step_body released | grep -qx '	echo \.' && step_body released | grep -qx '	adapters'; } ||
-		fail "$sr: released does not list the root and every adapter"
-	{ step_body tidy | grep -q 'go mod tidy' && step_body tidy | grep -q '< <(released)'; } ||
-		fail "$sr: tidy does not run 'go mod tidy' in the root and every adapter"
-	step_body pin | grep -q -- '-dropreplace' ||
-		fail "$sr: pin does not drop the adapters' replace directives"
-	{ step_body verify | grep -q 'go build \./\.\.\.' && step_body verify | grep -q 'go vet \./\.\.\.' &&
-		step_body verify | grep -q '< <(released)'; } ||
-		fail "$sr: verify does not run 'go build ./...' and 'go vet ./...' in every released module"
+	# the released modules come from the go.mod files, in dependency order
+	step_body module_dirs | grep -q -- '-name go.mod' ||
+		fail "$sr: the released modules are not derived from the go.mod files (module_dirs)"
+	step_body modules | grep -q 'sibling_requirements' ||
+		fail "$sr: modules does not order the released modules by their sibling requirements"
+	local step
+	for step in tidy pin verify tags; do
+		step_body "$step" | grep -q '< <(modules)' ||
+			fail "$sr: $step does not run over every released module (< <(modules))"
+	done
+	step_body tidy | grep -q 'tidy_module' ||
+		fail "$sr: tidy does not run tidy_module (drop test-only requirements, then go mod tidy)"
+	# tidy alone keeps a test-only requirement a dependency's graph mentions:
+	# the drop (the go mod edit of the collected -droprequire flags) comes
+	# before the first go mod tidy
+	local tm dep drop_line tidy_line
+	tm="$(step_body tidy_module)"
+	# shellcheck disable=SC2016 # matches the literal "${drops[@]}" of the script
+	drop_line="$(grep -n 'go mod edit "\${drops\[@\]}"' <<<"$tm" | head -1 | cut -d: -f1 || true)"
+	tidy_line="$(grep -n '^[[:space:]]*go mod tidy' <<<"$tm" | head -1 | cut -d: -f1 || true)"
+	{ [ -n "$drop_line" ] && [ -n "$tidy_line" ] && [ "$drop_line" -lt "$tidy_line" ]; } ||
+		fail "$sr: tidy_module does not drop the test-only requirements (go mod edit \"\${drops[@]}\") before 'go mod tidy'"
+	# a used one is never dropped: tidy would re-resolve it at its latest
+	# shellcheck disable=SC2016 # matches literal $dep and $used in the script
+	# version, with that version's requirements and go line
+	{ step_body used_modules | grep -q 'go list -deps' && step_body used_modules | grep -q 'release_platforms' &&
+		grep -q 'used_modules' <<<"$tm" && grep -q 'grep -qxF "\$dep" <<<"\$used" && continue' <<<"$tm"; } ||
+		fail "$sr: tidy_module does not keep the test-only requirements the non-test packages use on every release platform"
+	grep -q 'added or raised' <<<"$tm" ||
+		fail "$sr: tidy_module does not fail when go mod tidy adds or raises a requirement"
+	for dep in github.com/stretchr/testify go.uber.org/goleak; do
+		awk '/^test_only=\(/{on=1; next} on && /^\)/{exit} on' "$s" | grep -qx "[[:space:]]*$dep" ||
+			fail "$sr: test_only does not list $dep"
+	done
+	# every sibling requirement is pinned, and every replace goes
+	# shellcheck disable=SC2016 # matches literal $dep and $1 in the script
+	{ step_body pin | grep -q 'sibling_requirements' && step_body pin | grep -q -- '-require=\$dep@\$1'; } ||
+		fail "$sr: pin does not pin every released sibling requirement to the release version"
+	{ step_body pin | grep -q -- '-dropreplace=' && step_body pin | grep -q '\.Replace'; } ||
+		fail "$sr: pin does not drop every replace directive"
+	# shellcheck disable=SC2016 # matches a literal $sib_path in the script
+	{ step_body verify | grep -q 'go build ' && step_body verify | grep -q 'go vet ' &&
+		step_body verify | grep -q -- '-replace=\$sib_path='; } ||
+		fail "$sr: verify does not build and vet every module with its released siblings resolved locally"
 }
 
 # --- dependabot --------------------------------------------------------------
@@ -586,7 +619,41 @@ jobs: {}'
 	expect "$fx" release fail "lacks the condition github\.ref == 'refs/heads/main'"
 	expect "$fx" release fail "does not declare 'environment: release'"
 	expect "$fx" release fail "must set 'persist-credentials: false'"
-	expect "$fx" release fail "no step pins the adapters"
+	expect "$fx" release fail "no step pins the released modules"
+
+	# release: steps that hard-code the adapters and pin only the root
+	fixture
+	cp "$script_dir/../.github/workflows/release.yml" "$fx/.github/workflows/release.yml"
+	put scripts/release-steps.sh 'module_dirs() {
+	for dir in http/*/ scheduler/*/ clock/*/; do echo "${dir%/}"; done
+}
+pin() {
+	while IFS= read -r dir; do
+		(cd "$dir" && go mod edit -require="$root_module@$1" -dropreplace="$root_module")
+	done < <(modules)
+}'
+	expect "$fx" release fail 'not derived from the go\.mod files'
+	expect "$fx" release fail 'pin does not pin every released sibling requirement'
+	expect "$fx" release fail 'pin does not drop every replace directive'
+
+	# release: a tidy that keeps test-only requirements gin's graph mentions
+	put scripts/release-steps.sh 'test_only=(
+	go.uber.org/goleak
+)
+tidy_module() {
+	drops+=("-droprequire=go.uber.org/goleak")
+	go mod tidy
+	go mod edit "${drops[@]}"
+}
+tidy() {
+	while IFS= read -r dir; do
+		(cd "$dir" && tidy_module)
+	done < <(modules)
+}'
+	expect "$fx" release fail 'tidy_module does not drop the test-only requirements \(go mod edit .* before .go mod tidy.'
+	expect "$fx" release fail 'tidy_module does not keep the test-only requirements the non-test packages use'
+	expect "$fx" release fail 'tidy_module does not fail when go mod tidy adds or raises a requirement'
+	expect "$fx" release fail 'test_only does not list github\.com/stretchr/testify'
 
 	# dependabot: a widened job or step condition, and no module list
 	fixture

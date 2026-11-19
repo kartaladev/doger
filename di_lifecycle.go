@@ -3,8 +3,6 @@ package doger
 import (
 	"context"
 	"time"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // Healthchecker is an interface that services can implement to provide health checking capabilities.
@@ -25,7 +23,7 @@ import (
 //	}
 //
 // A check may run while its service shuts down: root Shutdown cancels the
-// context of a check in flight, with the cause [ErrStartAfterShutdown], but
+// context of a check in flight, with the cause [ErrShutdown], but
 // does not wait for it, so a service whose Shutdown releases what its check
 // uses must guard against a check still running. A caller still waiting
 // for that check gets an error matching [ErrHealthCheckTimeout] and
@@ -316,13 +314,13 @@ func (o *InjectorOpts) singleHealthCheckTimeout() time.Duration {
 
 // healthCheckContextWithin bounds ctx by timeout on clock when timeout is
 // greater than zero, and leaves it unbounded otherwise.
-func healthCheckContextWithin(ctx context.Context, clock clockwork.Clock, timeout time.Duration) (context.Context, context.CancelFunc) {
+func healthCheckContextWithin(ctx context.Context, clock Clock, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
 		return ctx, func() {}
 	}
 
 	ctx = withHealthCheckDeadline(ctx, clock.Now().Add(timeout))
-	return clockwork.WithTimeout(ctx, clock, timeout)
+	return withClockTimeout(ctx, clock, timeout)
 }
 
 // Shutdown stops a service, using type inference to determine the service name.
@@ -421,7 +419,7 @@ func ShutdownNamedWithContext(ctx context.Context, i Injector, name string) erro
 		return err
 	}
 
-	return injector.serviceShutdown(ctx, name)
+	return injector.shutdownService(ctx, name)
 }
 
 // MustShutdown stops a service, using type inference to determine the service name. It panics on error.

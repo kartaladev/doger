@@ -14,7 +14,9 @@ import (
 // your DI container through a web browser using the Chi framework.
 //
 // Parameters:
-//   - router: The Chi router to add the debugging routes to
+//   - router: Any chi.Router to add the debugging routes to: a *chi.Mux, the
+//     router r.With(auth) returns, or the one r.Group passes, so the UI can
+//     sit behind your middleware
 //   - basePath: The base URL path for the debugging interface
 //   - injector: The injector instance to debug
 //
@@ -50,19 +52,25 @@ import (
 //
 // opts configure the pages, such as [dogerhttp.WithFullSourcePaths] and
 // [dogerhttp.WithErrorHandler].
-func Use(router *chi.Mux, basePath string, injector doger.Injector, opts ...dogerhttp.Option) {
+func Use(router chi.Router, basePath string, injector doger.Injector, opts ...dogerhttp.Option) {
 	use(router, basePath, injector, defaultRenderer, opts)
 }
 
-func use(router *chi.Mux, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
+func use(router chi.Router, basePath string, injector doger.Injector, pages renderer, opts []dogerhttp.Option) {
 	base := webui.Base(basePath)
 
-	router.Get(webui.HomeRoute(base), func(w http.ResponseWriter, r *http.Request) {
+	// get serves pattern for GET, and for HEAD like GET.
+	get := func(pattern string, handler http.HandlerFunc) {
+		router.Get(pattern, handler)
+		router.Head(pattern, handler)
+	}
+
+	get(webui.HomeRoute(base), func(w http.ResponseWriter, r *http.Request) {
 		output, err := pages.index(base, opts...)
 		response(w, r, output, err, opts)
 	})
 
-	router.Get(base+"/scope", func(w http.ResponseWriter, r *http.Request) {
+	get(base+"/scope", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		if scopeID == "" {
 			dogerhttp.WriteHeaders(w.Header())
@@ -74,7 +82,7 @@ func use(router *chi.Mux, basePath string, injector doger.Injector, pages render
 		response(w, r, output, err, opts)
 	})
 
-	router.Get(base+"/service", func(w http.ResponseWriter, r *http.Request) {
+	get(base+"/service", func(w http.ResponseWriter, r *http.Request) {
 		scopeID := r.URL.Query().Get("scope_id")
 		serviceName := r.URL.Query().Get("service_name")
 

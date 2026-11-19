@@ -55,17 +55,34 @@ If no signal is passed to `injector.ShutdownOnSignals(...)`, both `syscall.SIGTE
 - The first caller does the work. Concurrent and later callers wait for it and return a **copy** of its report, so they see the same errors. Changing a copy affects no other caller.
 - A caller that arrives after the shutdown has completed always gets the first report, even when its own context has already ended.
 - A caller still waiting when its own context ends returns a failed report with a single error, keyed by the root scope with an empty service name, wrapping `ctx.Err()`. The first caller's shutdown keeps running.
-- If the first caller panics before producing a report (for example in a custom `Logger` handler), the panic reaches that caller and every other caller gets a failed report containing `DI: root shutdown did not complete`.
+- If the first caller panics before producing a report (for example in a custom `Logger` handler), the panic reaches that caller and every other caller gets a failed report containing `doger: root shutdown did not complete`.
 - A `nil` context is treated as `context.Background()`.
-- Services registered on the root after the first shutdown are not shut down by a later root `Shutdown()`.
+- A container cannot be reused after `Shutdown`: once its shutdown begins, the scope is closed. `Invoke*`, collection reads, `Alias*` and `Export*` return an error matching `doger.ErrShutdown`, and `Provide*`, `Override*` and `Scope()` panic with one, also from a Closing hook. Build a new container instead.
 
-Child scopes follow a similar rule while a shutdown of them runs: a concurrent `scope.Shutdown()`, or root `Shutdown()` reaching that scope, waits for the running shutdown (bounded by its context) and gets a copy of its report. Once that shutdown has finished, a later `scope.Shutdown()` runs again.
+Child scopes follow a similar rule while a shutdown of them runs: a concurrent `scope.Shutdown()`, or root `Shutdown()` reaching that scope, waits for the running shutdown (bounded by its context) and gets a copy of its report. Once that shutdown has finished, the scope is closed: a later `scope.Shutdown()` succeeds with nothing to do.
 
 :::caution
 
 Only the root scope methods follow this rule. `Shutdown()` on a child scope, and a shutdown reached through the root's `*Scope` (for example the injector a provider receives), run the per-scope shutdown directly, as before.
 
 :::
+
+### Panics are reported {#panics-are-reported}
+
+A panic in a service's `Shutdown` method, or in a `HookBeforeShutdown` or `HookAfterShutdown` hook, never crashes the process:
+
+- The panic is recovered, and the report holds an error for that service matching `doger.ErrShutdownPanic`. When the panic value is an error, the recorded error also matches it with `errors.Is` and `errors.As`.
+- Every other service still shuts down, and every other hook still runs. A panicking before hook does not skip `Shutdown`. When a hook panics and `Shutdown` returns an error, the recorded error matches both.
+- The first such panic of a root or child shutdown is passed to `HookContainerPanic` with the point `"service-shutdown"`, once the shutdown is complete (Closed hooks included). Later panics are logged at Error level. Without `HookContainerPanic`, each panic is only recorded and logged; its value is logged at Debug level only.
+
+```go
+report := injector.Shutdown()
+for service, err := range report.Errors {
+    if errors.Is(err, doger.ErrShutdownPanic) {
+        log.Printf("%s panicked while shutting down: %v", service.Service, err)
+    }
+}
+```
 
 ### Shutdown with a deadline {#shutdown-with-a-deadline}
 

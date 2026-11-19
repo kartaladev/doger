@@ -138,8 +138,8 @@ func (s *virtualScope) serviceHealthCheck(ctx context.Context, n string) error {
 	return s.self.serviceHealthCheck(ctx, n)
 }
 
-func (s *virtualScope) serviceShutdown(ctx context.Context, name string) error {
-	return s.self.serviceShutdown(ctx, name)
+func (s *virtualScope) shutdownService(ctx context.Context, name string) error {
+	return s.self.shutdownService(ctx, name)
 }
 func (s *virtualScope) onServiceInvoke(name string) { s.self.onServiceInvoke(name) }
 

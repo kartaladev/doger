@@ -61,7 +61,7 @@ Examples:
   | root.Shutdown() completing                                    | container closed              | INFO  | scope=[root]                                |
   | root.Shutdown() where "svc" Shutdown returns errors.New("x")  | service shutdown failed       | ERROR | scope=[root] service=svc error=x            |
   | a HealthScheduler whose ScheduleHealthRounds returns errors.New("no cron") | health scheduler failed | ERROR | error=no cron                     |
-  | a health scheduler stop function returning errors.New("busy") | health scheduler stop failed  | WARN  | error=busy                                  |
+  | a health scheduler stop function returning errors.New("busy") | health scheduler stop failed  | ERROR | error=busy                                  |
   | a PropertySource whose read fails with a *fs.PathError        | property source unavailable   | WARN  | source_type=*fs.PathError                   |
   | an extension declining with ErrExtensionDisabled              | extension disabled            | INFO  | extension=<its name>                        |
   | the container health changing from healthy to degraded        | container health changed      | WARN  | previous=healthy current=degraded           |
@@ -111,7 +111,7 @@ And the handler recorded exactly 8000 "service invoked" records
 <!-- cases: 10 compatibility: BREAKING: messages change from "DI: ..." printf strings to fixed slog messages -->
 
 ### Requirement: Panic values and health error text stay at Debug level
-A recovered panic SHALL be logged at Error level with message `panic recovered` and attributes `scope`, `service` (when it concerns one), `point` and `panic_type` (the `%T` of the value), and the value itself SHALL appear only in a separate Debug record `panic value`. Health-check error text SHALL appear only in Debug records.
+A recovered panic that is not passed to `HookContainerPanic` SHALL be logged at Error level with message `panic recovered`; the first panic of an operation goes to `HookContainerPanic` when that option is set and is logged only when it is not, and later panics of the operation are logged. The record SHALL carry the attributes `scope`, `service` (when it concerns one), `point` and `panic_type` (the `%T` of the value), and the value itself SHALL appear only in a separate Debug record `panic value`. Health-check error text SHALL appear only in Debug records.
 
 #### Scenario: A panic value is not logged above Debug
 ```gherkin
@@ -147,7 +147,7 @@ Examples:
 <!-- cases: N/A 3 zero values: a nil panic value is recovered as *runtime.PanicNilError and logged by type like any value -->
 <!-- cases: N/A 4 boundaries: no numeric input -->
 <!-- cases: 5 errors: health check error text -->
-<!-- cases: N/A 6 duplicate: panics after the first of one operation follow the same rule (WARN for later panics per design D8, value at Debug only) -->
+<!-- cases: N/A 6 duplicate: panics after the first of one operation follow the same rule (ERROR for later panics too, per design D8, value at Debug only) -->
 <!-- cases: 7 lifecycle: shutdown panic; start and hook panics follow the same rule -->
 <!-- cases: N/A 8 concurrency: covered by "Concurrent logging" -->
 <!-- cases: 9 panics: the subject -->

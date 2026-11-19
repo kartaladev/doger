@@ -35,6 +35,9 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 	if err != nil {
 		return nil, err
 	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
+		return nil, err
+	}
 
 	vScope, isVirtualScope := injector.(*virtualScope)
 
@@ -49,10 +52,6 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 		}
 	}
 
-	if isVirtualScope {
-		vScope.addDependency(injector, name, serviceScope, source)
-	}
-
 	service, ok := serviceAny.(serviceWrapperAny)
 	if !ok {
 		return nil, serviceNotFound(injector, ErrServiceNotFound, chainTo(vScope, name))
@@ -65,6 +64,8 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 	if err != nil {
 		return nil, err
 	}
+
+	recordDependencyOnSuccess(injector, vScope, name, serviceScope, source)
 
 	serviceScope.onServiceInvoke(name)
 
@@ -90,6 +91,9 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 	if err != nil {
 		return empty[T](), err
 	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
+		return empty[T](), err
+	}
 
 	vScope, isVirtualScope := injector.(*virtualScope)
 
@@ -102,10 +106,6 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 		if err := vScope.detectCircularDependency(name, serviceScope); err != nil {
 			return empty[T](), err
 		}
-	}
-
-	if isVirtualScope {
-		vScope.addDependency(injector, name, serviceScope, DependencySourceInvoked)
 	}
 
 	service, ok := serviceAny.(serviceWrapper[T])
@@ -121,6 +121,8 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 	if err != nil {
 		return empty[T](), err
 	}
+
+	recordDependencyOnSuccess(injector, vScope, name, serviceScope, DependencySourceInvoked)
 
 	serviceScope.onServiceInvoke(name)
 
@@ -142,6 +144,9 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 func invokeByGenericType[T any](i Injector) (T, error) {
 	injector, err := getInjector(i)
 	if err != nil {
+		return empty[T](), err
+	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
 		return empty[T](), err
 	}
 	serviceAliasName := inferServiceName[T]()
@@ -187,15 +192,23 @@ func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, re
 		return nil, err
 	}
 
-	if vScope != nil {
-		vScope.addDependency(injector, realName, scope, DependencySourceInvoked)
-	}
+	recordDependencyOnSuccess(injector, vScope, realName, scope, DependencySourceInvoked)
 
 	scope.onServiceInvoke(realName)
 
 	scope.log(slog.LevelDebug, "service invoked", slog.String("service", hookName))
 
 	return instance, nil
+}
+
+// recordDependencyOnSuccess records the edge from the service whose provider
+// runs in vScope to the service name of scope, with source. Every resolution
+// path calls it only once that dependency built, so a failed resolution
+// records no edge. vScope is nil outside a provider: nothing is recorded.
+func recordDependencyOnSuccess(injector Injector, vScope *virtualScope, name string, scope *Scope, source DependencySource) {
+	if vScope != nil {
+		vScope.addDependency(injector, name, scope, source)
+	}
 }
 
 // collectionSource is where a collection read finds and builds its members.
@@ -240,6 +253,10 @@ type collectionMember struct {
 // source, in default order. When ordered is true, a separate stable pass
 // then sorts them by WithOrder or Order(), once every member is built.
 func invokeCollection(source collectionSource, target reflect.Type, ordered bool) ([]collectionMember, error) {
+	if err := injectorScope(source.from).checkOpen(); err != nil {
+		return nil, err
+	}
+
 	candidates := collectionCandidatesFor(source, target)
 	members := make([]collectionMember, 0, len(candidates))
 	err := buildMembers(source, candidates, func(candidate collectionCandidate, instance any) {

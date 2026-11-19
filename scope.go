@@ -2,14 +2,14 @@ package doger
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // newScope creates a new Scope instance with the provided parameters.
@@ -85,6 +85,10 @@ type Scope struct {
 	// in its allocation size class (see the phase fields there).
 	defaults atomic.Int32
 	exports  atomic.Int32
+
+	// closed is set, under mu as a writer, once the scope's shutdown began;
+	// it is never cleared (see checkOpen)
+	closed atomic.Bool
 }
 
 // scopeClosing is the shutdown state of a child scope.
@@ -121,10 +125,16 @@ func (s *Scope) Name() string {
 //
 // Play: https://go.dev/play/p/pao_03UdGE2
 //
-// Panics if a scope with the same name already exists in the parent.
+// Panics if a scope with the same name already exists in the parent, and
+// with an error matching [ErrShutdown] once the shutdown of s has begun,
+// including from its Closing hooks: a scope is never left behind a shutdown.
 func (s *Scope) Scope(name string, packages ...func(Injector)) *Scope {
 	s.mu.Lock()
 
+	if err := s.checkOpen(); err != nil {
+		s.mu.Unlock()
+		panic(err)
+	}
 	if _, ok := s.childScopes[name]; ok {
 		s.mu.Unlock()
 		panic(libErrorf("scope `%s` has already been declared", name))
@@ -143,6 +153,27 @@ func (s *Scope) Scope(name string, packages ...func(Injector)) *Scope {
 	return child
 }
 
+// checkOpen returns an error matching ErrShutdown once the shutdown of s
+// began, and nil before. A nil s, the scope of an Injector implemented
+// outside this package, is open.
+func (s *Scope) checkOpen() error {
+	if s != nil && s.closed.Load() {
+		return libErrorMatching(ErrShutdown, "scope `%s` is shut down", s.name)
+	}
+
+	return nil
+}
+
+// close marks s as closed, under its write lock, so a registration or a
+// child scope creation holding the lock either completed before or is
+// refused.
+func (s *Scope) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.closed.Store(true)
+}
+
 // hasChild reports whether s has a direct child scope named name.
 func (s *Scope) hasChild(name string) bool {
 	return s.directChild(name) != nil
@@ -154,6 +185,22 @@ func (s *Scope) directChild(name string) *Scope {
 	defer s.mu.RUnlock()
 
 	return s.childScopes[name]
+}
+
+// detachChildScope removes child from the children of s, unless s already
+// holds another scope under its name. Detaching twice is a no-op.
+func (s *Scope) detachChildScope(child *Scope) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.detachChildLocked(child)
+}
+
+// detachChildLocked is detachChildScope with s.mu held as a writer.
+func (s *Scope) detachChildLocked(child *Scope) {
+	if s.childScopes[child.name] == child {
+		delete(s.childScopes, child.name)
+	}
 }
 
 // detachChild removes the child scope name from s, without shutting it
@@ -209,7 +256,7 @@ func (s *Scope) RootScope() *RootScope {
 }
 
 // clock returns the time source of the container.
-func (s *Scope) clock() clockwork.Clock {
+func (s *Scope) clock() Clock {
 	return s.rootScope.opts.Clock
 }
 
@@ -240,6 +287,7 @@ func (s *Scope) Ancestors() []*Scope {
 // This method only returns direct children, not grandchildren or deeper descendants.
 //
 // Returns a slice of child scopes. The order is not guaranteed to be stable.
+// A child whose shutdown has completed is detached: it is no longer listed.
 //
 // Play: https://go.dev/play/p/pao_03UdGE2
 func (s *Scope) Children() []*Scope {
@@ -286,6 +334,8 @@ func (s *Scope) ChildByID(id string) (*Scope, bool) {
 
 // ChildByName searches for a child scope by its name across the entire scope hierarchy.
 // This method performs a recursive search through all descendant scopes.
+// A scope whose shutdown has completed is detached from its parent, and not
+// found.
 //
 // Parameters:
 //   - name: The name of the scope to find
@@ -450,8 +500,15 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // scope), it stops health scheduling as root Shutdown does, without the
 // Closing and Closed hooks, and leaves the container phase unchanged. Health
 // recording and the health hooks end there for good: a check run afterwards,
-// by any path, records no result and calls no hook, so services registered
-// later stay HealthUnknown in reports.
+// by any path, records no result and calls no hook.
+//
+// A scope is closed once its shutdown begins: from then on, registrations
+// and Scope() on it panic, and invocations return, with an error matching
+// [ErrShutdown]. A second Shutdown of a closed scope succeeds with nothing to
+// do. Once the shutdown of a child scope completed, whether called on it or
+// reached through an ancestor, the child is detached from its parent: it
+// leaves Children and ChildByName, and its name can be used again, so
+// per-request scopes created and shut down repeatedly do not accumulate.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
@@ -469,9 +526,10 @@ func (s *Scope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 		s.rootScope.stopScheduling(ctx)
 	}
 
-	var first hookPanic
+	panics := &shutdownPanics{}
+	first := hookPanic{services: panics}
 	report := s.shutdownWithContext(ctx, &first)
-	s.rootScope.dispatchFirstPanic(first)
+	s.rootScope.dispatchShutdownPanics(first, panics)
 
 	return report
 }
@@ -480,6 +538,10 @@ func (s *Scope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 // first scope hook panic in first instead of raising it.
 func (s *Scope) shutdownWithContext(ctx context.Context, first *hookPanic) (report *ShutdownReport) {
 	start := s.clock().Now()
+
+	// closed before its children are listed: a scope created from now on is
+	// refused instead of left running
+	s.close()
 
 	// child scopes only: the root's own scope fires no scope hook and follows
 	// root Shutdown's model
@@ -493,6 +555,9 @@ func (s *Scope) shutdownWithContext(ctx context.Context, first *hookPanic) (repo
 			return s.waitForScopeClose(ctx, run)
 		}
 		defer func() { s.finishScopeClose(run, report) }()
+		// once the shutdown completed, the parent forgets the scope, and its
+		// name can be used again
+		defer s.parentScope.detachChildScope(s)
 		waitErr = s.waitForStartingRun(ctx)
 	}
 
@@ -505,7 +570,7 @@ func (s *Scope) shutdownWithContext(ctx context.Context, first *hookPanic) (repo
 			s.runScopeObserverHooks(ctx, "scope-closing", s.rootScope.hooks.scopeClosing.load(), first)
 		}
 
-		rep2 := s.shutdownServicesInParallel(ctx)
+		rep2 := s.shutdownServicesInParallel(ctx, first.services)
 
 		if isChild {
 			s.runScopeObserverHooks(ctx, "scope-closed", s.rootScope.hooks.scopeClosed.load(), first)
@@ -633,16 +698,19 @@ func (s *Scope) shutdownChildrenInParallel(ctx context.Context, first *hookPanic
 	// Snapshot children under lock
 	s.mu.Lock()
 	children := make([]*Scope, 0, len(s.childScopes))
-	for name, c := range s.childScopes {
+	for _, c := range s.childScopes {
 		if selected(c) {
 			children = append(children, c)
-			delete(s.childScopes, name) // scopes are removed from DI container
+			s.detachChildLocked(c) // scopes are removed from DI container
 		}
 	}
 	s.mu.Unlock()
 
 	reports := make([]*ShutdownReport, len(children))
 	panics := make([]hookPanic, len(children))
+	for index := range panics {
+		panics[index] = first.child()
+	}
 
 	var wg sync.WaitGroup
 	for index, child := range children {
@@ -671,7 +739,7 @@ func (s *Scope) shutdownChildrenInParallel(ctx context.Context, first *hookPanic
 //   - ctx: Context for cancellation and timeout control
 //
 // Returns a ShutdownReport containing any errors from service shutdowns.
-func (s *Scope) shutdownServicesInParallel(ctx context.Context) *ShutdownReport {
+func (s *Scope) shutdownServicesInParallel(ctx context.Context, panics *shutdownPanics) *ShutdownReport {
 	report := &ShutdownReport{
 		Succeed:             true,
 		Services:            []ServiceDescription{},
@@ -699,12 +767,12 @@ func (s *Scope) shutdownServicesInParallel(ctx context.Context) *ShutdownReport 
 		servicesToShutdown := s.rootScope.dag.listServicesHavingNoDependent(s.id, s.name, services)
 
 		if len(servicesToShutdown) > 0 {
-			r := s.shutdownServicesWithoutDependenciesInParallel(ctx, servicesToShutdown)
+			r := s.shutdownServicesWithoutDependenciesInParallel(ctx, servicesToShutdown, panics)
 			report = mergeShutdownReports(report, r)
 		} else {
 			// In this branch, we expect that there is a circular dependency. We shutdown all services, without taking care of order.
 			// This is a fallback mechanism to ensure all services are eventually shut down.
-			r := s.shutdownServicesWithoutDependenciesInParallel(ctx, services)
+			r := s.shutdownServicesWithoutDependenciesInParallel(ctx, services, panics)
 			report = mergeShutdownReports(report, r)
 		}
 	}
@@ -721,7 +789,7 @@ func (s *Scope) shutdownServicesInParallel(ctx context.Context) *ShutdownReport 
 //   - serviceNames: List of service names to shut down
 //
 // Returns a ShutdownReport containing any errors from the shutdown operations.
-func (s *Scope) shutdownServicesWithoutDependenciesInParallel(ctx context.Context, serviceNames []string) *ShutdownReport {
+func (s *Scope) shutdownServicesWithoutDependenciesInParallel(ctx context.Context, serviceNames []string, panics *shutdownPanics) *ShutdownReport {
 	if len(serviceNames) == 0 {
 		return &ShutdownReport{Succeed: true, Services: []ServiceDescription{}, Errors: map[ServiceDescription]error{}, ShutdownTime: 0, ServiceShutdownTime: map[ServiceDescription]time.Duration{}}
 	}
@@ -737,7 +805,7 @@ func (s *Scope) shutdownServicesWithoutDependenciesInParallel(ctx context.Contex
 		wg.Go(func() {
 			desc := newServiceDescription(s.id, s.name, name)
 			start := s.clock().Now()
-			e := s.serviceShutdown(ctx, name)
+			e := s.shutdownServiceOf(ctx, name, panics)
 			dt := s.clock().Since(start)
 
 			mu.Lock()
@@ -896,9 +964,17 @@ func (s *Scope) serviceGetRec(name string) (any, *Scope, bool) {
 //   - name: The name to register the service under
 //   - service: The service instance to register
 func (s *Scope) serviceSet(name string, service any) {
+	if err := s.checkOpen(); err != nil {
+		panic(err)
+	}
+
 	s.RootScope().hooks.onBeforeRegistration(s, name)
 
 	s.mu.Lock()
+	if err := s.checkOpen(); err != nil {
+		s.mu.Unlock()
+		panic(err)
+	}
 	replaced, ok := s.services[name]
 	// readers holding an unresolved default resolve its name again
 	previous, isDefault := replaced.(serviceWrapperSupersede)
@@ -1059,7 +1135,7 @@ func (s *Scope) serviceForEachRec(cb func(name string, scope *Scope, service any
 	}
 }
 
-// serviceShutdown gracefully shuts down a specific service in the current scope.
+// shutdownService gracefully shuts down a specific service in the current scope.
 // This method checks if the service implements the Shutdowner interface and calls
 // its shutdown method. The service is then removed from the scope.
 //
@@ -1069,7 +1145,13 @@ func (s *Scope) serviceForEachRec(cb func(name string, scope *Scope, service any
 //
 // Returns an error if the shutdown fails, or nil if the shutdown was successful.
 // Panics if the service doesn't implement the Shutdowner interface.
-func (s *Scope) serviceShutdown(ctx context.Context, name string) error {
+func (s *Scope) shutdownService(ctx context.Context, name string) error {
+	return s.shutdownServiceOf(ctx, name, nil)
+}
+
+// shutdownServiceOf shuts the service name down as part of a shutdown whose
+// first panic panics keeps (nil for none).
+func (s *Scope) shutdownServiceOf(ctx context.Context, name string, panics *shutdownPanics) error {
 	s.mu.Lock()
 	serviceAny, ok := s.removeLocked(name)
 	s.mu.Unlock()
@@ -1080,22 +1162,162 @@ func (s *Scope) serviceShutdown(ctx context.Context, name string) error {
 
 	s.RootScope().forget(serviceAny)
 
-	var err error
-
 	service, ok := serviceAny.(serviceWrapperShutdown)
-	if ok {
-		s.RootScope().hooks.onBeforeShutdown(s, name)
-		err = service.shutdown(ctx)
-		s.RootScope().hooks.onAfterShutdown(s, name, err)
-		if err != nil {
-			s.log(slog.LevelError, "service shutdown failed", slog.String("service", name), slog.Any("error", err))
-		}
-	} else {
+	if !ok {
 		// Should never happen.
 		panic(libErrorf("service `%s` is not shutdowner", name))
 	}
 
-	return err
+	// each hook and the Shutdown call are recovered one by one: a panic is
+	// recorded as an error and never skips the steps after it. A returned
+	// error is logged as a failed shutdown; a panic is kept for
+	// HookContainerPanic or logged, its value at Debug level only.
+	var errs, failures []error
+	run := func(step func() error) error {
+		recovered, panicked, err := recoverShutdownStep(step)
+		if panicked {
+			s.recordShutdownPanic(panics, name, recovered)
+		} else {
+			failures = append(failures, err)
+		}
+		errs = append(errs, err)
+		return err
+	}
+
+	hooks := &s.RootScope().hooks
+	for _, hook := range hooks.beforeShutdown.load() {
+		_ = run(func() error { hook(s, name); return nil })
+	}
+	shutdownErr := run(func() error { return service.shutdown(ctx) })
+	for _, hook := range hooks.afterShutdown.load() {
+		_ = run(func() error { hook(s, name, shutdownErr); return nil })
+	}
+
+	if failure := joinErrors(failures); failure != nil {
+		s.log(slog.LevelError, "service shutdown failed", slog.String("service", name), slog.Any("error", failure))
+	}
+
+	return joinErrors(errs)
+}
+
+// shutdownPanics keeps the first panic a shutdown recovered from a service
+// Shutdown or a shutdown hook, for HookContainerPanic.
+type shutdownPanics struct {
+	mu       sync.Mutex
+	scope    *Scope // of the service that panicked
+	service  string
+	value    any
+	panicked bool
+}
+
+// keepFirst keeps the panic value of the service name of scope when it is
+// the first panic, and reports whether it did. A nil p keeps nothing.
+func (p *shutdownPanics) keepFirst(scope *Scope, name string, value any) bool {
+	if p == nil {
+		return false
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.panicked {
+		return false
+	}
+	p.scope, p.service, p.value, p.panicked = scope, name, value, true
+	return true
+}
+
+// kept returns the panic p kept, if any.
+func (p *shutdownPanics) kept() (scope *Scope, service string, value any, panicked bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.scope, p.service, p.value, p.panicked
+}
+
+// recordShutdownPanic handles a panic recovered from the shutdown of the
+// service name: the first one of a shutdown is kept in panics for
+// HookContainerPanic when that option is set; any other is logged. panics
+// is nil for a single service shut down by name.
+func (s *Scope) recordShutdownPanic(panics *shutdownPanics, name string, value any) {
+	if s.rootScope.opts.HookContainerPanic != nil && panics.keepFirst(s, name, value) {
+		return
+	}
+
+	s.logRecoveredPanic("service-shutdown", name, value)
+}
+
+// dispatchShutdownPanic passes the first panic panics kept to
+// HookContainerPanic, with the point "service-shutdown". Call it once the
+// shutdown is complete; a panic HookContainerPanic raises propagates.
+func (s *RootScope) dispatchShutdownPanic(panics *shutdownPanics) {
+	_, _, value, panicked := panics.kept()
+	if panicked && s.opts.HookContainerPanic != nil {
+		s.opts.HookContainerPanic(s, "service-shutdown", value)
+	}
+}
+
+// dispatchShutdownPanics dispatches, once a root or child shutdown is
+// complete, its first observer hook panic, then its first service shutdown
+// panic. When the first dispatch raises a panic, the service panic is
+// logged instead of dispatched, so it is never lost.
+func (s *RootScope) dispatchShutdownPanics(first hookPanic, panics *shutdownPanics) {
+	dispatched := false
+	defer func() {
+		if dispatched {
+			return
+		}
+		if scope, service, value, panicked := panics.kept(); panicked {
+			scope.logRecoveredPanic("service-shutdown", service, value)
+		}
+	}()
+
+	s.dispatchFirstPanic(first)
+	dispatched = true
+	s.dispatchShutdownPanic(panics)
+}
+
+// recoverShutdownStep calls step, a hook or a Shutdown call, and returns its
+// error; a panic is recovered, reported with its value, and returned as an
+// error matching ErrShutdownPanic.
+func recoverShutdownStep(step func() error) (recovered any, panicked bool, err error) {
+	recovered, panicked = callHookSafely(func() { err = step() })
+	if panicked {
+		err = shutdownPanicError(recovered)
+	}
+
+	return recovered, panicked, err
+}
+
+// shutdownPanicError returns the error recorded for a shutdown step that
+// panicked with value: it matches ErrShutdownPanic and, for an error value
+// (such as a *runtime.PanicNilError), that error too.
+func shutdownPanicError(value any) error {
+	if err, ok := value.(error); ok {
+		return fmt.Errorf("%w: %w", ErrShutdownPanic, err)
+	}
+
+	return fmt.Errorf("%w: %v", ErrShutdownPanic, value)
+}
+
+// joinErrors returns nil when errs holds no error, the error itself when it
+// holds one, and errors.Join of them otherwise.
+func joinErrors(errs []error) error {
+	var found []error
+	for _, err := range errs {
+		if err != nil {
+			found = append(found, err)
+		}
+	}
+
+	switch len(found) {
+	case 0:
+		return nil
+	case 1:
+		return found[0]
+	default:
+		return errors.Join(found...)
+	}
 }
 
 /**********************************

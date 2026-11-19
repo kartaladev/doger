@@ -15,7 +15,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -618,7 +617,7 @@ func TestHealthCheck_JoinerOwnBound(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				i := NewWithOpts(&InjectorOpts{
 					Clock:                    fc,
 					HealthCheckTimeout:       tt.timeout,
@@ -696,7 +695,7 @@ var healthRunTestJoinedChecks = []struct {
 func healthRunTestJoinAfterStarterBound(t *testing.T, check healthRunTestJoinedCheck) (*RootScope, error) {
 	t.Helper()
 
-	fc := clockwork.NewFakeClock()
+	fc := newFakeClock()
 	i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckGlobalTimeout: 30 * time.Millisecond})
 	ProvideNamedValue(i, "db", check.service)
 
@@ -1300,7 +1299,7 @@ func TestHealthCheck_BoundStartsAtSlot(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckParallelism: 1, HealthCheckTimeout: tt.timeout})
 				for n, takes := range tt.takes {
 					ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), &healthCheckTestOnClock{clock: fc, duration: takes})
@@ -1354,7 +1353,7 @@ func TestHealthCheck_GlobalTimeoutBoundsSlotWait(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				i := NewWithOpts(&InjectorOpts{
 					Clock:                    fc,
 					HealthCheckParallelism:   1,
@@ -1694,7 +1693,7 @@ func healthRunTestReportErrWithContext(ctx context.Context, i *RootScope, name s
 // goroutine when called.
 type healthRunTestGoroutineScheduler struct{}
 
-func (healthRunTestGoroutineScheduler) ScheduleHealthRounds(_ clockwork.Clock, _ func(context.Context)) (func(context.Context) error, error) {
+func (healthRunTestGoroutineScheduler) ScheduleHealthRounds(_ Clock, _ func(context.Context)) (func(context.Context) error, error) {
 	done := make(chan struct{})
 	go func() { <-done }()
 	return func(context.Context) error { close(done); return nil }, nil

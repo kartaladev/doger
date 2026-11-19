@@ -1,6 +1,8 @@
 package doger
 
 import (
+	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -44,14 +46,24 @@ var (
 	ErrHealthCheckPanic = errors.New("doger: health check panic")
 
 	// ErrAlreadyStarted is returned by a Start call after the first one, whether
-	// the first one succeeded or failed.
+	// the first one succeeded or failed, as long as root Shutdown has not
+	// begun: once it has, a Start returns [ErrShutdown] instead, never
+	// ErrAlreadyStarted.
 	ErrAlreadyStarted = errors.New("doger: container already started")
-	// ErrStartAfterShutdown is matched by the error of Start, Refresh and
-	// Scope.Start once root Shutdown has begun. It is also the cause Shutdown gives the context
-	// of a running Start, Refresh or Scope.Start, so the error a run that
-	// Shutdown interrupted returns matches it, and the cause of the context of
-	// a health check in flight (see [context.Cause]).
-	ErrStartAfterShutdown = errors.New("doger: container is shut down")
+	// ErrShutdown is matched once a scope's shutdown has begun: by the error
+	// of Invoke*, Alias* and Export* on that scope, by the panic value of
+	// Provide*, Override* and Scope() on it, and by the error of an
+	// invocation that looked a service up before its shutdown and would
+	// have built it again. A container cannot be reused after Shutdown:
+	// build a new one.
+	//
+	// It is also matched by the error of Start, Refresh and Scope.Start once
+	// root Shutdown has begun, which takes precedence over
+	// [ErrAlreadyStarted]. Shutdown gives it as the cause of the context of a
+	// running Start, Refresh or Scope.Start, so the error of a run Shutdown
+	// interrupted matches it, and of the context of a health check in flight
+	// (see [context.Cause]). It replaces ErrStartAfterShutdown.
+	ErrShutdown = errors.New("doger: container is shut down")
 	// ErrNotStarted is returned by Refresh and Scope.Start while the
 	// container's first Start has not succeeded.
 	ErrNotStarted = errors.New("doger: container not started")
@@ -78,6 +90,14 @@ var (
 	//   - "tag `*` requires a slice or map[string] field, got `S.F`"
 	// A dependency that fails to resolve does not match it.
 	ErrStructInjection = errors.New("doger: invalid struct injection target")
+	// ErrShutdownPanic is matched by the error a shutdown records for a
+	// service whose Shutdown method, or one of its HookBeforeShutdown or
+	// HookAfterShutdown hooks, panicked: the panic is recovered, never
+	// raised, and the other services and hooks still run. The panic value
+	// follows it in the message; an error value is wrapped, so errors.Is and
+	// errors.As also match it, including the *runtime.PanicNilError of
+	// panic(nil).
+	ErrShutdownPanic = errors.New("doger: shutdown panicked")
 )
 
 // libPrefix starts every message the library originates.
@@ -107,8 +127,8 @@ var libSentinels = []error{
 	ErrServiceNotFound, ErrServiceNotMatch, ErrServiceTypeMismatch,
 	ErrServiceAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
-	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted, ErrNilInjector,
-	ErrStructInjection, ErrProviderPanic,
+	ErrAlreadyStarted, ErrShutdown, ErrNotStarted, ErrNilInjector,
+	ErrStructInjection, ErrProviderPanic, ErrShutdownPanic,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
 	ErrExtensionCycle, ErrExtensionConflict,
 }
@@ -393,8 +413,13 @@ func (e *StartError) Unwrap() error {
 // It includes overall success, the list of services that were shut down,
 // any errors encountered, total shutdown time, and per-service shutdown durations.
 //
-// It implements the error interface, returning a formatted description of errors
-// when any occurred, or a "no shutdown errors" message otherwise.
+// To tell whether the shutdown failed, check report.Err() != nil (or
+// Succeed): Err returns nil on success and an error matching every service
+// error otherwise, and Unwrap lists them as *ServiceError values. The report
+// also implements the error interface: Error returns "" on success and a
+// "doger: shutdown errors:" description otherwise, ordered by scope name,
+// then service name. A report is never nil, so do not compare it with nil.
+// It marshals to JSON (see MarshalJSON).
 type ShutdownReport struct {
 	Succeed             bool
 	Services            []ServiceDescription
@@ -403,18 +428,17 @@ type ShutdownReport struct {
 	ServiceShutdownTime map[ServiceDescription]time.Duration
 }
 
-// Error implements the error interface for ShutdownReport.
-// If there are errors, it returns a multiline description. Otherwise a friendly message.
+// Error implements the error interface for ShutdownReport. It returns "" when
+// the report holds no error, and a multiline "doger: shutdown errors:"
+// description otherwise. Check Err to tell success from failure.
 func (r ShutdownReport) Error() string {
 	if len(r.Errors) == 0 {
 		return ""
 	}
 
 	lines := []string{}
-	for k, v := range r.Errors {
-		if v != nil {
-			lines = append(lines, fmt.Sprintf("  - %s > %s: %s", k.ScopeName, k.Service, v.Error()))
-		}
+	for _, e := range r.sortedServiceErrors() {
+		lines = append(lines, fmt.Sprintf("  - %s > %s: %s", e.Scope, e.Service, e.Err.Error()))
 	}
 
 	if len(lines) == 0 {
@@ -422,6 +446,105 @@ func (r ShutdownReport) Error() string {
 	}
 
 	return "doger: shutdown errors:\n" + strings.Join(lines, "\n")
+}
+
+// Err returns nil when the report holds no error, and otherwise an error
+// matching every service error with errors.Is and errors.As:
+//
+//	if err := injector.Shutdown().Err(); err != nil {
+//	    log.Printf("shutdown: %v", err)
+//	}
+//
+// Check Err, not the report itself, against nil: a *ShutdownReport is never
+// nil.
+func (r ShutdownReport) Err() error {
+	errs := r.Unwrap()
+	if len(errs) == 0 {
+		return nil
+	}
+
+	return errors.Join(errs...)
+}
+
+// Unwrap returns one *ServiceError per failed service, ordered by scope
+// name, then service name; nil when the report holds no error.
+func (r ShutdownReport) Unwrap() []error {
+	serviceErrs := r.sortedServiceErrors()
+	if len(serviceErrs) == 0 {
+		return nil
+	}
+
+	errs := make([]error, 0, len(serviceErrs))
+	for _, e := range serviceErrs {
+		errs = append(errs, e)
+	}
+
+	return errs
+}
+
+// sortedServiceErrors returns one *ServiceError per error of the report
+// that is not nil, ordered by scope name, then service name, then scope ID.
+func (r ShutdownReport) sortedServiceErrors() []*ServiceError {
+	keys := make([]ServiceDescription, 0, len(r.Errors))
+	for k, v := range r.Errors {
+		if v != nil {
+			keys = append(keys, k)
+		}
+	}
+	slices.SortFunc(keys, compareServiceDescriptions)
+
+	errs := make([]*ServiceError, 0, len(keys))
+	for _, k := range keys {
+		errs = append(errs, &ServiceError{Scope: k.ScopeName, Service: k.Service, Err: r.Errors[k]})
+	}
+
+	return errs
+}
+
+// MarshalJSON encodes the report as an object with "succeed",
+// "shutdownTime" (a Go duration string), "services" ([{"scope", "service"}])
+// and "errors" ([{"scope", "service", "error"}]); both arrays are ordered by
+// scope name, then service name, and are [] when empty.
+func (r ShutdownReport) MarshalJSON() ([]byte, error) {
+	type service struct {
+		Scope   string `json:"scope"`
+		Service string `json:"service"`
+	}
+	type serviceError struct {
+		Scope   string `json:"scope"`
+		Service string `json:"service"`
+		Error   string `json:"error"`
+	}
+
+	described := slices.Clone(r.Services)
+	slices.SortFunc(described, compareServiceDescriptions)
+	services := make([]service, 0, len(described))
+	for _, d := range described {
+		services = append(services, service{Scope: d.ScopeName, Service: d.Service})
+	}
+
+	serviceErrs := r.sortedServiceErrors()
+	errs := make([]serviceError, 0, len(serviceErrs)) // [] when empty, never null
+	for _, e := range serviceErrs {
+		errs = append(errs, serviceError{Scope: e.Scope, Service: e.Service, Error: e.Err.Error()})
+	}
+
+	return json.Marshal(struct {
+		Succeed      bool           `json:"succeed"`
+		ShutdownTime string         `json:"shutdownTime"`
+		Services     []service      `json:"services"`
+		Errors       []serviceError `json:"errors"`
+	}{r.Succeed, r.ShutdownTime.String(), services, errs})
+}
+
+// compareServiceDescriptions orders by scope name, then service name, then
+// scope ID.
+func compareServiceDescriptions(a, b ServiceDescription) int {
+	return cmp.Or(
+		strings.Compare(a.ScopeName, b.ScopeName),
+		strings.Compare(a.Service, b.Service),
+		strings.Compare(a.ScopeID, b.ScopeID),
+	)
 }
 
 // mergeShutdownReports merges multiple ShutdownReport values into a single report.

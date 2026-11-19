@@ -614,7 +614,7 @@ func TestScope_ShutdownWithContext(t *testing.T) {
 				t.Run(service, func(t *testing.T) {
 					is := assert.New(t)
 
-					err := tt.from.serviceShutdown(ctx, service)
+					err := tt.from.shutdownService(ctx, service)
 					want, owned := tt.owned[service]
 					switch {
 					case !owned:
@@ -1129,7 +1129,7 @@ func TestScope_serviceShutdown(t *testing.T) {
 				t.Run(service, func(t *testing.T) {
 					is := assert.New(t)
 
-					err := tt.from.serviceShutdown(ctx, service)
+					err := tt.from.shutdownService(ctx, service)
 					want, owned := tt.owned[service]
 					switch {
 					case !owned:
@@ -1184,7 +1184,7 @@ func TestScope_serviceShutdown(t *testing.T) {
 
 			ctx, cancel := tt.ctx()
 			defer cancel()
-			is.ErrorContains(child2a.serviceShutdown(ctx, tt.service), "could not find service")
+			is.ErrorContains(child2a.shutdownService(ctx, tt.service), "could not find service")
 		})
 	}
 
@@ -1192,7 +1192,7 @@ func TestScope_serviceShutdown(t *testing.T) {
 	nonShutdownableScope := rootScope.Scope("non-shutdownable")
 	nonShutdownableScope.serviceSet("non-shutdownable-a", newServiceLazy("non-shutdownable-a", func(i Injector) (int, error) { return 42, nil }))
 	_, _ = invokeByName[int](nonShutdownableScope, "non-shutdownable-a")
-	is.NoError(nonShutdownableScope.serviceShutdown(ctx, "non-shutdownable-a"))
+	is.NoError(nonShutdownableScope.shutdownService(ctx, "non-shutdownable-a"))
 }
 
 func TestScope_onServiceRegistration(t *testing.T) {
@@ -1345,7 +1345,7 @@ func TestScope_onServiceShutdown(t *testing.T) {
 	is.NoError(err2)
 
 	// Test successful shutdown
-	err := rootScope.serviceShutdown(ctx, "shutdown-ok")
+	err := rootScope.shutdownService(ctx, "shutdown-ok")
 	is.NoError(err)
 
 	// Verify service is removed from scope
@@ -1353,7 +1353,7 @@ func TestScope_onServiceShutdown(t *testing.T) {
 	is.False(found)
 
 	// Test failed shutdown
-	err = rootScope.serviceShutdown(ctx, "shutdown-ko")
+	err = rootScope.shutdownService(ctx, "shutdown-ko")
 	is.Equal(assert.AnError, err)
 
 	// Verify service is still removed from scope even if shutdown fails
@@ -1361,7 +1361,7 @@ func TestScope_onServiceShutdown(t *testing.T) {
 	is.False(found)
 
 	// Test shutdown of non-existent service
-	err = rootScope.serviceShutdown(ctx, "non-existent")
+	err = rootScope.shutdownService(ctx, "non-existent")
 	is.ErrorContains(err, "could not find service")
 
 	// Test shutdown of service that doesn't implement Shutdowner
@@ -1370,7 +1370,7 @@ func TestScope_onServiceShutdown(t *testing.T) {
 	is.NoError(err3)
 
 	// This should not panic because the service wrapper handles non-shutdowner services gracefully
-	err = rootScope.serviceShutdown(ctx, "non-shutdownable")
+	err = rootScope.shutdownService(ctx, "non-shutdownable")
 	is.NoError(err)
 
 	// Test shutdown with different context scenarios
@@ -1383,14 +1383,14 @@ func TestScope_onServiceShutdown(t *testing.T) {
 	// Test with canceled context
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err = rootScope.serviceShutdown(canceledCtx, "shutdown-test")
+	err = rootScope.shutdownService(canceledCtx, "shutdown-test")
 	is.Equal(context.Canceled, err)
 
 	// Test with timeout context
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
 	time.Sleep(2 * time.Millisecond)
-	err = rootScope.serviceShutdown(timeoutCtx, "shutdown-test")
+	err = rootScope.shutdownService(timeoutCtx, "shutdown-test")
 	is.ErrorContains(err, "could not find service")
 }
 
@@ -1434,7 +1434,7 @@ func TestScope_logs(t *testing.T) {
 	_, err = invokeByName[*lazyTestShutdownerOK](injector, "shutdown-service")
 	is.NoError(err)
 
-	_ = injector.serviceShutdown(ctx, "shutdown-service")
+	_ = injector.shutdownService(ctx, "shutdown-service")
 
 	// Verify that log messages were generated
 	is.NotEmpty(logs.list())

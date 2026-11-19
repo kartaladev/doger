@@ -100,7 +100,7 @@ func main() {
 
 This library is v0 and follows SemVer: until v1.0.0, a minor release may contain breaking changes.
 
-Besides the Go std lib, this library depends only on [`samber/go-type-to-string`](https://github.com/samber/go-type-to-string) and [`jonboulle/clockwork`](https://github.com/jonboulle/clockwork).
+Besides the Go std lib, this library depends only on [`samber/go-type-to-string`](https://github.com/samber/go-type-to-string). The opt-in `clock/clockwork` and `scheduler/gocron` modules add [`jonboulle/clockwork`](https://github.com/jonboulle/clockwork).
 
 ### 🩺 Scheduled health checks
 

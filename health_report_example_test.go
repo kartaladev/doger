@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // healthReportExampleDatabase is a health check that counts its calls.
@@ -22,7 +20,7 @@ func ExampleScope_HealthReport() {
 	// Without a HealthScheduler, a read checks the services whose result is
 	// missing or older than HealthReportCacheTTL (1s by default), and reuses
 	// the others: many readers cost the same as one.
-	clock := clockwork.NewFakeClock()
+	clock := newExampleClock()
 	injector := NewWithOpts(&InjectorOpts{
 		Clock:                clock,
 		HealthReportCacheTTL: 5 * time.Second,
@@ -87,7 +85,7 @@ func ExampleMatchHealthTags() {
 // the example runs it at will; dogergocron.New() runs it every 30s.
 type healthReportExampleScheduler struct{ round func(context.Context) }
 
-func (s *healthReportExampleScheduler) ScheduleHealthRounds(_ clockwork.Clock, round func(context.Context)) (func(context.Context) error, error) {
+func (s *healthReportExampleScheduler) ScheduleHealthRounds(_ Clock, round func(context.Context)) (func(context.Context) error, error) {
 	s.round = round
 	return func(context.Context) error { return nil }, nil
 }

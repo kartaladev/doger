@@ -2,11 +2,7 @@ package doger
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"slices"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // schedState is where a container's HealthScheduler is.
@@ -25,9 +21,13 @@ const (
 // github.com/kartaladev/doger/scheduler/gocron module provides one.
 //
 // The container calls ScheduleHealthRounds once, when it reaches PhaseReady
-// and before the Ready hooks run, with the injector clock and the round to
-// run. Each call of round checks every eligible health checker once and
-// returns once each result is recorded or its bound elapsed; it honors ctx.
+// and before the Ready hooks run, with the injector clock (InjectorOpts.Clock,
+// RealClock() when it is nil) and the round to run. A scheduler that needs a
+// github.com/jonboulle/clockwork clock gets one from a clock made by
+// dogerclockwork.Wrap with dogerclockwork.Unwrap, in the
+// github.com/kartaladev/doger/clock/clockwork module. Each call of round
+// checks every eligible health checker once and returns once each result is
+// recorded or its bound elapsed; it honors ctx.
 // The returned stop function is called once, when root Shutdown begins and
 // before the Closing hooks run, with a context Shutdown's context cannot
 // cancel: it must stop scheduling and return once no round of this schedule
@@ -43,7 +43,7 @@ const (
 // reads check stale services on demand. A stop function returned together
 // with an error is called at once, before Start returns, and not again.
 type HealthScheduler interface {
-	ScheduleHealthRounds(clock clockwork.Clock, round func(ctx context.Context)) (stop func(ctx context.Context) error, err error)
+	ScheduleHealthRounds(clock Clock, round func(ctx context.Context)) (stop func(ctx context.Context) error, err error)
 }
 
 // startScheduling calls the HealthScheduler, if any, for a container that
@@ -111,7 +111,7 @@ func (s *RootScope) stopScheduling(ctx context.Context) {
 	m.sched = schedStopped
 	cancel, scheduling := m.roundCancel, m.scheduling
 	for _, call := range m.inflight {
-		call.cancel(ErrStartAfterShutdown) // cancelled, not waited for
+		call.cancel(ErrShutdown) // cancelled, not waited for
 	}
 	m.mu.Unlock()
 
@@ -137,19 +137,41 @@ func (s *RootScope) stopScheduling(ctx context.Context) {
 // cancel. Its error is logged; its panic is passed to HookContainerPanic when
 // it is set, and logged otherwise.
 func (s *RootScope) callStop(ctx context.Context, stop func(context.Context) error) {
-	recovered, panicked := callHookSafely(func() {
-		if err := stop(context.WithoutCancel(ctx)); err != nil {
-			s.self.log(slog.LevelWarn, "health scheduler stop failed", slog.Any("error", err))
-		}
-	})
+	var err error
+	recovered, panicked := callHookSafely(func() { err = stop(context.WithoutCancel(ctx)) })
 	switch {
-	case !panicked:
-	case s.opts.HookContainerPanic != nil:
-		s.opts.HookContainerPanic(s, "healthscheduler", recovered)
-	default:
-		s.logRecoveredPanic("healthscheduler", "", recovered)
+	case panicked:
+		s.logSchedulerFailure("healthscheduler", recovered, "health scheduler stop failed", errSchedulerStopPanicked)
+	case err != nil:
+		// logged outside the recovered call: a panic of the Logger is not
+		// one of the scheduler
+		s.self.log(slog.LevelError, "health scheduler stop failed", slog.Any("error", err))
 	}
 }
+
+// logSchedulerFailure handles a panic recovered at point by the health
+// scheduling or a health hook: it is passed to HookContainerPanic when that
+// option is set. Otherwise it is logged, the value at Debug level only, and
+// then message, when not empty, at Error level with err.
+func (s *RootScope) logSchedulerFailure(point string, recovered any, message string, err error) {
+	if s.opts.HookContainerPanic != nil {
+		s.opts.HookContainerPanic(s, point, recovered)
+		return
+	}
+
+	s.logRecoveredPanic(point, "", recovered)
+	if message != "" {
+		s.self.log(slog.LevelError, message, slog.Any("error", err))
+	}
+}
+
+// errSchedulerPanicked and errSchedulerStopPanicked are logged for a
+// recovered panic of the HealthScheduler and of its stop function: the panic
+// value itself is logged at Debug level only.
+var (
+	errSchedulerPanicked     = libErrorf("health scheduler panicked")
+	errSchedulerStopPanicked = libErrorf("health scheduler stop panicked")
+)
 
 // callScheduler calls scheduler, recovering its panic: an error or a panic is
 // logged, or a panic is passed to HookContainerPanic when it is set, and
@@ -166,20 +188,15 @@ func (s *RootScope) callScheduler(scheduler HealthScheduler) (stop func(context.
 		stop, err = scheduler.ScheduleHealthRounds(s.opts.Clock, s.healthRound)
 	}()
 
-	switch {
-	case panicked && s.opts.HookContainerPanic != nil:
-		s.opts.HookContainerPanic(s, "healthscheduler", recovered)
-		return nil, libErrorf("health scheduler panicked: %v", recovered)
-	case panicked:
-		s.logRecoveredPanic("healthscheduler", "", recovered)
-		err = fmt.Errorf("%v", recovered)
-	case err == nil && stop == nil:
+	if panicked {
+		s.logSchedulerFailure("healthscheduler", recovered, "health scheduler failed", errSchedulerPanicked)
+		return nil, errSchedulerPanicked
+	}
+	if err == nil && stop == nil {
 		stop = func(context.Context) error { return nil }
 	}
 	if err != nil {
-		if !panicked {
-			s.self.log(slog.LevelError, "health scheduler failed", slog.Any("error", err))
-		}
+		s.self.log(slog.LevelError, "health scheduler failed", slog.Any("error", err))
 		if stop != nil {
 			// a schedule partly started is stopped at once
 			s.callStop(context.Background(), stop)
@@ -297,7 +314,7 @@ func (s *RootScope) deliverTransitions() {
 	for len(m.transitions) > 0 && !m.closing {
 		transition := m.transitions[0]
 		m.transitions = m.transitions[1:]
-		serviceHooks, containerHooks := s.opts.HookServiceHealthChanged, s.opts.HookContainerHealthChanged
+		serviceHooks, containerHooks := s.hooks.serviceHealthChanged.load(), s.hooks.containerHealthChanged.load()
 		m.mu.Unlock()
 
 		s.deliverTransition(transition, serviceHooks, containerHooks)
@@ -339,33 +356,37 @@ func (s *RootScope) deliverTransition(transition healthTransition, serviceHooks 
 // to HookContainerPanic with the point "healthchanged" when it is set, and
 // is logged otherwise.
 func (s *RootScope) callHealthHook(call func()) {
-	recovered, panicked := callHookSafely(call)
-	if !panicked {
-		return
+	if recovered, panicked := callHookSafely(call); panicked {
+		s.logSchedulerFailure("healthchanged", recovered, "", nil)
 	}
-
-	if s.opts.HookContainerPanic != nil {
-		s.opts.HookContainerPanic(s, "healthchanged", recovered)
-		return
-	}
-	s.logRecoveredPanic("healthchanged", "", recovered)
 }
 
 // AddServiceHealthChangedHook adds a hook called when a service's recorded
-// health state changes; see [InjectorOpts.HookServiceHealthChanged].
+// health state changes. A nil hook is ignored. See
+// [InjectorOpts.HookServiceHealthChanged].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown, Clone and other adders. The
+// hook applies to the changes delivered after this call returned; whether a
+// delivery already running sees it is unspecified.
 func (s *RootScope) AddServiceHealthChangedHook(hook func(scope *Scope, serviceName string, previous, current ServiceHealth)) {
-	s.health.mu.Lock()
-	defer s.health.mu.Unlock()
-
-	s.opts.HookServiceHealthChanged = append(slices.Clone(s.opts.HookServiceHealthChanged), hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.serviceHealthChanged.add(hook)
 }
 
 // AddContainerHealthChangedHook adds a hook called when the overall health
-// state of the container changes; see
+// state of the container changes. A nil hook is ignored. See
 // [InjectorOpts.HookContainerHealthChanged].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown, Clone and other adders. The
+// hook applies to the changes delivered after this call returned; whether a
+// delivery already running sees it is unspecified.
 func (s *RootScope) AddContainerHealthChangedHook(hook func(root *RootScope, previous, current HealthState)) {
-	s.health.mu.Lock()
-	defer s.health.mu.Unlock()
-
-	s.opts.HookContainerHealthChanged = append(slices.Clone(s.opts.HookContainerHealthChanged), hook)
+	if hook == nil {
+		return
+	}
+	s.hooks.containerHealthChanged.add(hook)
 }

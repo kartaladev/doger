@@ -11,7 +11,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	typetostring "github.com/samber/go-type-to-string"
 )
 
@@ -177,7 +176,7 @@ func newUUID() (string, error) {
 // done, or once clock has reached the deadline the container set for the
 // check, the check counts as timed out, whatever it returned; before that,
 // the check keeps its own result.
-func healthCheckResult(ctx context.Context, clock clockwork.Clock, err error) error {
+func healthCheckResult(ctx context.Context, clock Clock, err error) error {
 	if cause := contextDone(ctx); cause != nil {
 		return timeoutError(cause)
 	}
@@ -224,8 +223,8 @@ func timeoutError(cause error) error {
 }
 
 // contextDone returns ctx.Err() once ctx is done, and nil while it is live.
-// It never calls Err() on a live context, which blocks on a clockwork
-// fake-clock context.
+// It never calls Err() on a live context, which a consumer's context may
+// block on.
 func contextDone(ctx context.Context) error {
 	select {
 	case <-ctx.Done():

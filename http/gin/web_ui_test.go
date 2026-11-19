@@ -168,3 +168,21 @@ func TestWebUI_RootBasePath(t *testing.T) {
 		return webuitest.HandlerDoer(r)
 	})
 }
+
+func TestWebUI_BehindAuthMiddleware(t *testing.T) {
+	t.Parallel()
+	webuitest.BehindAuthMiddleware(t, func(t *testing.T, root doger.Injector) webuitest.Doer {
+		t.Helper()
+
+		r := gin.New()
+		auth := gin.BasicAuth(gin.Accounts{webuitest.AuthUser: webuitest.AuthPassword})
+		Use(r.Group(webuitest.BasePath, auth), root)
+
+		return webuitest.HandlerDoer(r)
+	})
+}
+
+func TestWebUI_LayeredGraphBounded(t *testing.T) {
+	t.Parallel()
+	webuitest.LayeredGraphBounded(t, mount)
+}

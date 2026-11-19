@@ -28,13 +28,14 @@ Each entry gives the change and its migration.
 | `DisableStarterAutoDetection` | `EnableStarterAutoDetection` (default false) | Add `AsStarter()` to services that must start, or set `EnableStarterAutoDetection: true`. |
 | `Logf` | `Logger *slog.Logger` | `Logger: slog.Default()`, or any handler. |
 | `Clock clockwork.Clock`, `HealthScheduler` taking a `clockwork.Clock` | `doger.Clock` | `Clock: dogerclockwork.Wrap(fake)` (new module `github.com/kartaladev/doger/clock/clockwork`); scheduler implementers take a `doger.Clock`. |
+| `dogergocron` ran on any `clockwork.Clock` the container held | It maps `doger.RealClock()` and clocks made by `dogerclockwork.Wrap`; a consumer-written `doger.Clock` makes `ScheduleHealthRounds` fail with `dogergocron.ErrUnsupportedClock`, and the container then stays unmonitored | Use `doger.RealClock()` or `dogerclockwork.Wrap(...)`, or pass your own gocron scheduler with `dogergocron.WithScheduler`, which brings its own clock. |
 | `ErrStartAfterShutdown` | `ErrShutdown` | Rename the sentinel in `errors.Is` checks. |
 | `"DI: "` message prefix | `"doger: "`, carried once | Match with `errors.Is`/`errors.As`, not text. |
 | `ExplainServiceDependencyOutput` tree that expands every path | Each service expanded once; a repeat has `Ref: true` and no children | Follow `Ref` nodes through `ExplainNamedService`. |
 | Per-service hook signatures `HookBeforeStart`, `HookAfterStart`, `HookBeforeShutdown`, `HookAfterShutdown`, `HookAfterInvocation` | Start and shutdown hooks take `(ctx, scope, serviceName)`, and their "after" hooks also `elapsed time.Duration, err error`; `HookAfterInvocation` takes `(scope, serviceName, elapsed, err)` without a context | Add the `ctx`/`elapsed` parameters to your hook functions. |
 | `dogerchi.Use(*chi.Mux, …)` | `dogerchi.Use(chi.Router, …)` | Source-compatible; the parameter is wider. |
 | `RootScope.HealthCheck()` unbounded | Bounded by 10s by default | `HealthCheckTimeout: -1` for unbounded. |
-| Starting or resolving on a container after shutdown | `ErrShutdown` | Build a new container. |
+| Starting, resolving, registering or creating a scope on a container after shutdown | `ErrShutdown`: `Invoke*`, `InvokeAll*`, collection reads, `Alias*` and `Export*` return it; `Provide*`, `Override*` and `Scope()` panic with it, also from Closing hooks. A container cannot be reused after Shutdown | Build a new container. |
 | An error panic value from a provider returned as is | Wrapped: matches `ErrProviderPanic` and the original | Keep using `errors.Is`/`errors.As`; don't compare with `==`. |
 | Web UI page functions and adapter `Use` | Gain a variadic `...dogerhttp.Option` | Source-compatible; no change needed. |
 | `ServiceDescription` JSON keys `ScopeID`, `ScopeName`, `Service` | `scopeId`, `scopeName`, `service` (also changes Explain JSON) | Update JSON consumers. |

@@ -137,7 +137,7 @@ func TestServiceAlias_getInstanceAny(t *testing.T) {
 	stackService := newServiceAlias[*lazyTestHeathcheckerOK, Healthchecker]("github.com/kartaladev/doger.Healthchecker", i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK")
 	providerFrame, invocationFrames := stackService.source()
 	is.NotNil(providerFrame)
-	is.Contains(providerFrame.File, "service_alias.go") // Provider frame points to the service_alias.go file
+	is.Contains(providerFrame.File, "service_alias_test.go") // Provider frame points to the consumer's call site
 	is.NotNil(invocationFrames)
 	is.Empty(invocationFrames) // No invocations yet
 
@@ -208,7 +208,7 @@ func TestServiceAlias_getInstance(t *testing.T) {
 	stackService := newServiceAlias[*lazyTestHeathcheckerOK, Healthchecker]("github.com/kartaladev/doger.Healthchecker", i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK")
 	providerFrame, invocationFrames := stackService.source()
 	is.NotNil(providerFrame)
-	is.Contains(providerFrame.File, "service_alias.go") // Provider frame points to the service_alias.go file
+	is.Contains(providerFrame.File, "service_alias_test.go") // Provider frame points to the consumer's call site
 	is.NotNil(invocationFrames)
 	is.Empty(invocationFrames) // No invocations yet
 

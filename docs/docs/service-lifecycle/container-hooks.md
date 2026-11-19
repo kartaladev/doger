@@ -71,7 +71,7 @@ root.AddContainerStartingHook(func(ctx context.Context, root *doger.RootScope) e
 })
 
 err := root.Start()
-// err: DI: container start aborted: missing DB_URL
+// err: doger: container start aborted: missing DB_URL
 ```
 
 Because Starting hooks run before the context check, they run even when the context passed to `StartWithContext` is already cancelled. `Start` then fails with an error matching `context.Canceled`.
@@ -101,7 +101,7 @@ root.AddContainerReadyHook(func(ctx context.Context, root *doger.RootScope) {
 
 When the first `Start` fails after its one-shot guard, it runs every `HookContainerFailed` hook with the context passed to `StartWithContext` and the **exact error** it is about to return, then returns it. Started and Ready do not run. Failures include a Starting veto, a cancelled context, a provider, Starter, kind handler or runner error, and a `Shutdown` that began before the pipeline finished.
 
-Guard errors fire no hook: a second `Start` (`ErrAlreadyStarted`) or a `Start` after `Shutdown` (`ErrStartAfterShutdown`) returns before any container hook runs.
+Guard errors fire no hook: a second `Start` (`ErrAlreadyStarted`) or a `Start` after `Shutdown` (`ErrShutdown`) returns before any container hook runs.
 
 `Start` rolls nothing back, so a Failed hook is a good place to clean up:
 
@@ -145,14 +145,14 @@ Started, Ready, Failed and Closed hooks run after the running `Start` or `Shutdo
 
 Starting and Closing hooks run while `Start` or `Shutdown` is still running. A root `Shutdown` called synchronously from them waits for that operation, which waits for the hook: it **deadlocks** unless its context has a deadline. With a deadline:
 
-- from a Starting hook, `Shutdown` returns a failed report when the deadline expires, and `Start` then fails with an error matching `ErrStartAfterShutdown`;
+- from a Starting hook, `Shutdown` returns a failed report when the deadline expires, and `Start` then fails with an error matching `ErrShutdown`;
 - from a Closing hook, the nested `Shutdown` returns a failed report when the deadline expires, while the outer `Shutdown` completes normally.
 
 Prefer returning an error from a Starting hook to veto `Start`.
 
 ## Shutdown during Start {#shutdown-during-start}
 
-A root `Shutdown` that begins while the start pipeline runs cancels `Start` with cause `ErrStartAfterShutdown` and fires Closing only **after** the pipeline returned, or after its own context ended. `Start` then skips Started and Ready and runs Failed with an error matching `ErrStartAfterShutdown`, even if the pipeline returned nil.
+A root `Shutdown` that begins while the start pipeline runs cancels `Start` with cause `ErrShutdown` and fires Closing only **after** the pipeline returned, or after its own context ended. `Start` then skips Started and Ready and runs Failed with an error matching `ErrShutdown`, even if the pipeline returned nil.
 
 Once the pipeline has returned, the hooks run on two goroutines:
 
@@ -209,7 +209,7 @@ Scope hooks run logic when a **child** scope starts or shuts down, for example p
 - Sibling scopes shut down in parallel, so their hooks may run concurrently.
 - The root's own scope never fires scope hooks: use container hooks for the root container. `Refresh` fires no scope hook for new child scopes; only an explicit `scope.Start()` does.
 - Starting and Started do not fire when the scope, or one of its ancestors, is shutting down when `scope.Start()` is called: it then starts nothing and returns nil. Started is also skipped when the shutdown begins after the Starting hooks ran and before the scope's services are collected. A shutdown that begins after they were collected waits for them to start, then runs Closing, which may then run during or before Started.
-- A veto returns an error wrapping the hook's error and naming the scope: ``DI: scope `tenant` start aborted: ...``. A panic reads ``DI: scope `tenant` start aborted: DI: scope starting hook panicked: <value>``, wrapping the value when it is an error.
+- A veto returns an error wrapping the hook's error and naming the scope: ``doger: scope `tenant` start aborted: ...``. A panic reads ``doger: scope `tenant` start aborted: doger: scope starting hook panicked: <value>``, wrapping the value when it is an error.
 - A panic in a Started, Closing or Closed scope hook follows the [container panic policy](#panics): the operation completes, then the first panic goes to `HookContainerPanic` with the point `scope-started`, `scope-closing` or `scope-closed`, or is re-raised on the calling goroutine when `HookContainerPanic` is nil.
 
 ```go

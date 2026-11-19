@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/kartaladev/doger/stacktrace"
 )
 
@@ -28,11 +27,16 @@ type serviceLazy[T any] struct {
 
 	// lazy loading
 	built bool
+	// terminal is set once the service was shut down: it is never built
+	// again, so a caller that looked it up before gets ErrShutdown
+	terminal bool
 	// published holds the instance once built, nil otherwise; health
 	// checks read it without s.mu, which a build holds for the whole
 	// provider call.
 	published atomic.Pointer[T]
-	buildTime time.Duration
+	// buildTime holds the time.Duration of the last successful build, in
+	// nanoseconds; explain reads it without s.mu.
+	buildTime atomic.Int64
 	provider  Provider[T]
 
 	providerFrame stacktrace.Frame
@@ -47,9 +51,8 @@ func newServiceLazy[T any](name string, provider Provider[T]) *serviceLazy[T] {
 		name:     name,
 		typeName: inferServiceName[T](),
 
-		built:     false,
-		buildTime: 0,
-		provider:  provider,
+		built:    false,
+		provider: provider,
 
 		providerFrame:    providerFrame,
 		invocationFrames: newInvocationFrames(),
@@ -100,6 +103,9 @@ func (s *serviceLazy[T]) instanceOrBuild(i Injector) (instance T, built bool, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.terminal {
+		return empty[T](), false, shutDownServiceError(s.name)
+	}
 	if !s.built {
 		if err := s.build(i); err != nil {
 			return empty[T](), false, err
@@ -111,7 +117,12 @@ func (s *serviceLazy[T]) instanceOrBuild(i Injector) (instance T, built bool, er
 }
 
 func (s *serviceLazy[T]) build(i Injector) (err error) {
-	clock := injectorClock(i)
+	// the clock of the injector's root scope, or the real clock when there
+	// is no injector
+	clock := RealClock()
+	if i != nil {
+		clock = i.RootScope().opts.Clock
+	}
 	start := clock.Now()
 
 	if err := resolveDeclaredDependencies(i, s.opts); err != nil {
@@ -125,7 +136,7 @@ func (s *serviceLazy[T]) build(i Injector) (err error) {
 
 	s.instance = instance
 	s.built = true
-	s.buildTime = clock.Since(start)
+	s.buildTime.Store(int64(clock.Since(start)))
 	s.published.Store(&instance)
 
 	return nil
@@ -137,6 +148,12 @@ func onAfterBuild(i Injector, name string, instance any) {
 	if scope := injectorScope(i); scope != nil {
 		scope.RootScope().hooks.onAfterBuild(scope, name, instance)
 	}
+}
+
+// shutDownServiceError is the error of an invocation of the service name
+// once it was shut down.
+func shutDownServiceError(name string) error {
+	return libErrorMatching(ErrShutdown, "service `%s` is shut down", name)
 }
 
 // injectorScope returns the *Scope behind an injector a wrapper receives
@@ -168,16 +185,6 @@ func injectorScopeName(i Injector) string {
 	}
 
 	return ""
-}
-
-// injectorClock returns the clock of the injector's root scope, or the real
-// clock when there is no injector.
-func injectorClock(i Injector) clockwork.Clock {
-	if i == nil {
-		return clockwork.NewRealClock()
-	}
-
-	return i.RootScope().opts.Clock
 }
 
 // builtInstance returns the instance and whether it is built, without
@@ -228,18 +235,18 @@ func (s *serviceLazy[T]) healthcheck(ctx context.Context) error {
 	return nil
 }
 
+// isShutdowner reads the published instance without s.mu, so explaining a
+// service never waits for its build.
 func (s *serviceLazy[T]) isShutdowner() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if !s.built {
+	instance, built := s.builtInstance()
+	if !built {
 		return false
 	}
 
-	_, ok1 := any(s.instance).(ShutdownerWithContextAndError)
-	_, ok2 := any(s.instance).(ShutdownerWithError)
-	_, ok3 := any(s.instance).(ShutdownerWithContext)
-	_, ok4 := any(s.instance).(Shutdowner)
+	_, ok1 := any(instance).(ShutdownerWithContextAndError)
+	_, ok2 := any(instance).(ShutdownerWithError)
+	_, ok3 := any(instance).(ShutdownerWithContext)
+	_, ok4 := any(instance).(Shutdowner)
 	return ok1 || ok2 || ok3 || ok4
 }
 
@@ -247,7 +254,8 @@ func (s *serviceLazy[T]) shutdown(ctx context.Context) error {
 	s.mu.Lock()
 
 	defer func() {
-		// whatever the outcome, reset `build` flag and instance
+		// whatever the outcome, reset `build` flag and instance, for good
+		s.terminal = true
 		s.built = false
 		s.instance = empty[T]()
 		s.published.Store(nil)
@@ -297,9 +305,8 @@ func (s *serviceLazy[T]) clone(newScope Injector) any {
 		opts:     s.opts,
 		typeName: s.typeName,
 
-		built:     false,
-		provider:  s.provider,
-		buildTime: 0,
+		built:    false,
+		provider: s.provider,
 
 		providerFrame:    s.providerFrame,
 		invocationFrames: newInvocationFrames(),
@@ -310,8 +317,11 @@ func (s *serviceLazy[T]) source() (stacktrace.Frame, []stacktrace.Frame) {
 	return s.providerFrame, s.invocationFrameList()
 }
 
+// getBuildTime reads the build time and the published instance without
+// s.mu, so explaining a service never waits for, nor races with, its build or
+// shutdown.
 func (s *serviceLazy[T]) getBuildTime() (time.Duration, bool) {
-	return s.buildTime, s.built
+	return time.Duration(s.buildTime.Load()), s.published.Load() != nil
 }
 
 func (s *serviceLazy[T]) getRegistrationIndex() uint64 {

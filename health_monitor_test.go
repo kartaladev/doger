@@ -12,7 +12,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -24,7 +23,7 @@ import (
 type manualScheduler struct {
 	mu       sync.Mutex
 	calls    int
-	clocks   []clockwork.Clock
+	clocks   []Clock
 	rounds   []func(context.Context)
 	stops    []int
 	stopCtxs []context.Context
@@ -37,7 +36,7 @@ type manualScheduler struct {
 	stopPanic   any   // raised by the stop functions when set
 }
 
-func (m *manualScheduler) ScheduleHealthRounds(clock clockwork.Clock, round func(ctx context.Context)) (func(ctx context.Context) error, error) {
+func (m *manualScheduler) ScheduleHealthRounds(clock Clock, round func(ctx context.Context)) (func(ctx context.Context) error, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -122,6 +121,46 @@ func (l *healthMonitorTestLog) containing(parts ...string) []string {
 	return found
 }
 
+// healthMonitorTestRecords returns the records of rec at level whose
+// message contains part.
+func healthMonitorTestRecords(rec *logRecorder, level slog.Level, part string) []logRecord {
+	var found []logRecord
+	for _, r := range rec.all() {
+		if r.level == level && strings.Contains(r.message, part) {
+			found = append(found, r)
+		}
+	}
+	return found
+}
+
+// healthMonitorTestLevelsWith returns the levels of the records of rec
+// whose rendering contains text.
+func healthMonitorTestLevelsWith(rec *logRecorder, text string) []slog.Level {
+	var levels []slog.Level
+	for _, r := range rec.all() {
+		if strings.Contains(r.String(), text) {
+			levels = append(levels, r.level)
+		}
+	}
+	return levels
+}
+
+// assertHealthSchedulerLogged asserts that rec holds one record at level
+// whose message contains "health scheduler", with the error attribute
+// errText when it is not empty, and that value, when not empty, appears
+// only in Debug records.
+func assertHealthSchedulerLogged(t *testing.T, rec *logRecorder, level slog.Level, errText, value string) {
+	t.Helper()
+
+	found := healthMonitorTestRecords(rec, level, "health scheduler")
+	if assert.Len(t, found, 1, "%s records about the health scheduler: %v", level, rec.all()) && errText != "" {
+		assert.Equal(t, errText, found[0].attrs["error"])
+	}
+	if value != "" {
+		assert.Equal(t, []slog.Level{slog.LevelDebug}, healthMonitorTestLevelsWith(rec, value), "levels of the records with the panic value")
+	}
+}
+
 func TestHealthScheduler_NilNoRounds(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, 5*time.Second)
@@ -152,6 +191,35 @@ func TestHealthScheduler_NilNoGoroutine(t *testing.T) { //nolint:paralleltest
 
 	assert.NoError(t, goleak.Find(ignore))
 	i.Shutdown()
+}
+
+func TestHealthScheduler_ReceivesRealClockByDefault(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeClock()
+	tests := []struct {
+		name  string
+		clock Clock
+		want  Clock
+	}{
+		{name: "nil_default", clock: nil, want: RealClock()},
+		{name: "wrapped_fake_clock", clock: fake, want: fake},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			scheduler := &manualScheduler{}
+			i := NewWithOpts(&InjectorOpts{Clock: tt.clock, HealthScheduler: scheduler})
+			require.NoError(t, i.Start())
+			defer i.Shutdown()
+
+			require.Len(t, scheduler.clocks, 1)
+			assert.Equal(t, tt.want, scheduler.clocks[0])
+		})
+	}
 }
 
 func TestHealthScheduler_CalledAtReady(t *testing.T) {
@@ -214,7 +282,7 @@ func TestHealthScheduler_CalledAtReady(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				scheduler := &manualScheduler{}
 				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthScheduler: scheduler})
 				readyCalls := -1
@@ -248,10 +316,11 @@ func TestHealthScheduler_Failure(t *testing.T) {
 		name      string
 		scheduler *manualScheduler
 		withHook  bool
-		logged    []string // parts of a Logf line
+		errText   string // the error attribute of the Error record
+		value     string // the panic value, only in a Debug record
 	}{
-		{name: "error", scheduler: &manualScheduler{err: errors.New("bad cron")}, logged: []string{"health scheduler", "bad cron"}},
-		{name: "panic", scheduler: &manualScheduler{panicWith: "boom"}, logged: []string{"panic value", "point=healthscheduler", "boom"}},
+		{name: "error", scheduler: &manualScheduler{err: errors.New("bad cron")}, errText: "bad cron"},
+		{name: "panic", scheduler: &manualScheduler{panicWith: "boom"}, value: "boom"},
 		{name: "panic_hook", scheduler: &manualScheduler{panicWith: "boom"}, withHook: true},
 	}
 
@@ -261,7 +330,7 @@ func TestHealthScheduler_Failure(t *testing.T) {
 			testWithTimeout(t, 5*time.Second)
 			is := assert.New(t)
 
-			log := &healthMonitorTestLog{}
+			log := newLogRecorder(slog.LevelDebug)
 			recorder := &healthRunTestPanicRecorder{}
 			opts := &InjectorOpts{HealthScheduler: tt.scheduler, Logger: log.logger()}
 			if tt.withHook {
@@ -276,7 +345,7 @@ func TestHealthScheduler_Failure(t *testing.T) {
 			if tt.withHook {
 				is.Equal([][2]any{{"healthscheduler", "boom"}}, recorder.recorded())
 			} else {
-				is.NotEmpty(log.containing(tt.logged...), "Logf lines")
+				assertHealthSchedulerLogged(t, log, slog.LevelError, tt.errText, tt.value)
 			}
 		})
 	}
@@ -287,14 +356,14 @@ func TestHealthScheduler_StopReturnedWithError(t *testing.T) {
 	testWithTimeout(t, 5*time.Second)
 	is := assert.New(t)
 
-	log := &healthMonitorTestLog{}
+	log := newLogRecorder(slog.LevelDebug)
 	scheduler := &manualScheduler{err: errors.New("partial"), stopWithErr: true}
 	i := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler, Logger: log.logger()})
 
 	is.NoError(i.Start())
 	is.Equal(1, scheduler.stopCount(0), "calls of stop before Start returned")
 	is.False(i.HealthReport(IgnoreContainerPhase()).Monitored)
-	is.NotEmpty(log.containing("health scheduler", "partial"), "Logf lines")
+	assertHealthSchedulerLogged(t, log, slog.LevelError, "partial", "")
 
 	i.Shutdown()
 	is.Equal(1, scheduler.stopCount(0), "calls of stop after Shutdown")
@@ -352,7 +421,7 @@ func TestHealthRound_Results(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				is := assert.New(t)
 
-				fc := clockwork.NewFakeClock()
+				fc := newFakeClock()
 				scheduler := &manualScheduler{}
 				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthScheduler: scheduler, HealthCheckTimeout: tt.timeout})
 				ProvideNamedValue(i, "a", &healthReportTestSwitch{})
@@ -573,10 +642,11 @@ func TestHealthScheduler_RootScopeShutdownEndsRecording(t *testing.T) {
 				must1(InvokeNamed[int](i, "provider"))
 				received.Shutdown()
 
-				ProvideNamedValue(i, "db", &healthReportTestSwitch{})
+				registered := recoverError(func() { ProvideNamedValue(i, "db", &healthReportTestSwitch{}) })
 				report := tt.calls(i)
 
-				is.Equal(HealthUnknown, healthReportTestEntry(t, report, "db").State)
+				is.ErrorIs(registered, ErrShutdown)
+				is.Empty(report.Services)
 				is.Equal(PhaseIdle, report.Phase)
 				time.Sleep(10 * time.Millisecond) // let a stray hook call land
 				is.Empty(recorder.serviceCalls())
@@ -592,10 +662,12 @@ func TestHealthScheduler_StopFailure(t *testing.T) {
 		name      string
 		scheduler *manualScheduler
 		withHook  bool
-		logged    []string // parts of a Logf line
+		level     slog.Level // of the record about the health scheduler
+		errText   string     // its error attribute
+		value     string     // the panic value, only in a Debug record
 	}{
-		{name: "error", scheduler: &manualScheduler{stopErr: errors.New("busy")}, logged: []string{"health scheduler", "busy"}},
-		{name: "panic", scheduler: &manualScheduler{stopPanic: "stop boom"}, logged: []string{"panic value", "point=healthscheduler", "stop boom"}},
+		{name: "error", scheduler: &manualScheduler{stopErr: errors.New("busy")}, level: slog.LevelError, errText: "busy"},
+		{name: "panic", scheduler: &manualScheduler{stopPanic: "stop boom"}, level: slog.LevelError, value: "stop boom"},
 		{name: "panic_hook", scheduler: &manualScheduler{stopPanic: "stop boom"}, withHook: true},
 	}
 
@@ -605,7 +677,7 @@ func TestHealthScheduler_StopFailure(t *testing.T) {
 			testWithTimeout(t, 5*time.Second)
 			is := assert.New(t)
 
-			log := &healthMonitorTestLog{}
+			log := newLogRecorder(slog.LevelDebug)
 			recorder := &healthRunTestPanicRecorder{}
 			opts := &InjectorOpts{HealthScheduler: tt.scheduler, Logger: log.logger()}
 			if tt.withHook {
@@ -619,10 +691,30 @@ func TestHealthScheduler_StopFailure(t *testing.T) {
 			if tt.withHook {
 				is.Equal([][2]any{{"healthscheduler", "stop boom"}}, recorder.recorded())
 			} else {
-				is.NotEmpty(log.containing(tt.logged...), "Logf lines")
+				assertHealthSchedulerLogged(t, log, tt.level, tt.errText, tt.value)
 			}
 		})
 	}
+}
+
+// TestHealthScheduler_StopLogPanicPropagates checks that a panic raised by
+// the consumer's slog handler while logging a stop error is not taken for a
+// panic of the scheduler: it propagates from Shutdown, as any Logger panic.
+func TestHealthScheduler_StopLogPanicPropagates(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	recorder := &healthRunTestPanicRecorder{}
+	i := NewWithOpts(&InjectorOpts{
+		HealthScheduler:    &manualScheduler{stopErr: errors.New("busy")},
+		HookContainerPanic: recorder.hook,
+		Logger:             panickingLogger(func(rec logRecord) bool { return rec.message == "health scheduler stop failed" }, "log-boom"),
+	})
+	require.NoError(t, i.Start())
+
+	is.PanicsWithValue("log-boom", func() { i.Shutdown() })
+	is.Empty(recorder.recorded(), "HookContainerPanic calls")
 }
 
 // healthMonitorTestCtxCheck is a HealthcheckerWithContext that blocks until
@@ -739,7 +831,7 @@ func TestHealthScheduler_ShutdownCancelCause(t *testing.T) {
 		i.Shutdown()
 
 		is.EqualError((<-result)["db"], "doger: health check timeout: context canceled")
-		is.ErrorIs(<-check.cause, ErrStartAfterShutdown)
+		is.ErrorIs(<-check.cause, ErrShutdown)
 	})
 }
 
@@ -750,7 +842,7 @@ type healthMonitorTestBlockingScheduler struct {
 	stops   atomic.Int32
 }
 
-func (s *healthMonitorTestBlockingScheduler) ScheduleHealthRounds(clockwork.Clock, func(context.Context)) (func(context.Context) error, error) {
+func (s *healthMonitorTestBlockingScheduler) ScheduleHealthRounds(Clock, func(context.Context)) (func(context.Context) error, error) {
 	<-s.release
 	return func(context.Context) error {
 		s.stops.Add(1)
@@ -1232,6 +1324,45 @@ func TestHealthHooks_ContainerAfterService(t *testing.T) {
 	})
 }
 
+// TestHealthHooks_AddRacesClone is a race guard: adding health hooks while
+// the root is cloned must not race, and a clone taken afterwards has every
+// hook.
+func TestHealthHooks_AddRacesClone(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 10*time.Second)
+
+	root := New()
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for range 200 {
+			root.AddServiceHealthChangedHook(func(*Scope, string, ServiceHealth, ServiceHealth) {})
+			root.AddContainerHealthChangedHook(func(*RootScope, HealthState, HealthState) {})
+		}
+	})
+	wg.Go(func() {
+		for range 200 {
+			root.Clone()
+		}
+	})
+	wg.Wait()
+
+	clone := root.Clone()
+	assert.Len(t, clone.hooks.serviceHealthChanged.load(), 200)
+	assert.Len(t, clone.hooks.containerHealthChanged.load(), 200)
+}
+
+func TestHealthHooks_AddNilIgnored(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	root := New()
+	root.AddServiceHealthChangedHook(nil)
+	root.AddContainerHealthChangedHook(nil)
+
+	is.Empty(root.hooks.serviceHealthChanged.load())
+	is.Empty(root.hooks.containerHealthChanged.load())
+}
+
 func TestHealthHooks_NilSkipped(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, 5*time.Second)
@@ -1239,7 +1370,7 @@ func TestHealthHooks_NilSkipped(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		is := assert.New(t)
 
-		log := &healthMonitorTestLog{}
+		log := newLogRecorder(slog.LevelDebug)
 		recorder := &healthRunTestPanicRecorder{}
 		var calls atomic.Int32
 		i := NewWithOpts(&InjectorOpts{
@@ -1260,7 +1391,8 @@ func TestHealthHooks_NilSkipped(t *testing.T) {
 
 		is.Equal(int32(1), calls.Load(), "calls of the hook that is not nil")
 		is.Empty(recorder.recorded(), "HookContainerPanic calls")
-		is.Empty(log.containing("panic recovered"), "log records")
+		is.Empty(log.withMessage("panic recovered"), "panic recovered records")
+		is.Empty(log.withMessage("panic value"), "panic value records")
 		i.Shutdown()
 	})
 }
@@ -1330,7 +1462,7 @@ func TestHealthHooks_Panic(t *testing.T) {
 				is := assert.New(t)
 
 				scheduler := &manualScheduler{}
-				log := &healthMonitorTestLog{}
+				log := newLogRecorder(slog.LevelDebug)
 				panics := &healthRunTestPanicRecorder{}
 				opts := &InjectorOpts{HealthScheduler: scheduler, Logger: log.logger()}
 				if tt.withHook {
@@ -1351,7 +1483,15 @@ func TestHealthHooks_Panic(t *testing.T) {
 				if tt.withHook {
 					is.Equal([][2]any{{"healthchanged", "boom"}, {"healthchanged", "boom"}}, panics.recorded())
 				} else {
-					is.Len(log.containing("boom"), 2)
+					recovered := log.withMessage("panic recovered")
+					if is.Len(recovered, 2) {
+						for _, rec := range recovered {
+							is.Equal(slog.LevelError, rec.level)
+							is.Equal("healthchanged", rec.attrs["point"])
+							is.Equal("string", rec.attrs["panic_type"])
+						}
+					}
+					is.Equal([]slog.Level{slog.LevelDebug, slog.LevelDebug}, healthMonitorTestLevelsWith(log, "boom"), "levels of the records with the panic value")
 				}
 			})
 		})

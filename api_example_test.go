@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/jonboulle/clockwork"
 )
 
 // apiExampleDB is the service of the package examples.
@@ -274,7 +272,7 @@ func ExamplePropertySource() {
 // the container is ready, then never again.
 type apiExampleScheduler struct{}
 
-func (apiExampleScheduler) ScheduleHealthRounds(_ clockwork.Clock, round func(context.Context)) (func(context.Context) error, error) {
+func (apiExampleScheduler) ScheduleHealthRounds(_ Clock, round func(context.Context)) (func(context.Context) error, error) {
 	round(context.Background())
 	return func(context.Context) error { return nil }, nil
 }

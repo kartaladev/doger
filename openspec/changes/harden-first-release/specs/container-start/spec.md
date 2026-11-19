@@ -625,6 +625,67 @@ And the err passed for "b" is errBoom itself, not a wrapping error
 <!-- cases: N/A 8 concurrency: hooks run on the Start goroutine -->
 <!-- cases: N/A 10 compatibility: new hooks -->
 
+### Requirement: Child scope shutdown waits for a start that is starting its services
+A child scope's `Shutdown`/`ShutdownWithContext` that begins while a `Start`, `Refresh` or `Scope.Start` is running, and that run has services of this scope among its candidates, SHALL wait for that run to return, without cancelling it, before shutting anything down. A run that begins while the scope shuts down SHALL NOT start or handle services of that scope or of its descendant scopes. A descendant scope cannot be created under it then: `Scope()` panics with an error matching `ErrShutdown` (container-shutdown, "A closed scope stays closed"). Shutting such a scope down synchronously from code running in that run deadlocks, as for root Shutdown.
+
+#### Scenario: Child shutdown waits for a running start
+```gherkin
+Given a root container and child scope "tenant" with lazy Starter "w" whose Start blocks until released
+And the consumer has <before>
+And <run> is running in another goroutine and "w" has entered Start
+When the consumer calls tenant.Shutdown() in another goroutine
+Then tenant.Shutdown() has not returned while "w" is blocked
+When "w" is released
+Then <run> returns nil
+And tenant.Shutdown() returns a successful report
+And "w" was shut down 1 time, after its Start returned
+And the start bookkeeping holds no entry for "w"
+
+Examples:
+  | before                                          | run            |
+  | done nothing                                    | root.Start()   |
+  | called Start(), then registered "w" in "tenant" | root.Refresh() |
+  | called Start(), then registered "w" in "tenant" | tenant.Start() |
+```
+
+#### Scenario: A start that begins during a child shutdown skips the scope
+```gherkin
+Given a started root container and child scope "tenant" with lazy Starter "w" registered after Start
+And tenant.Shutdown() is running in another goroutine, blocked in a HookScopeClosing hook
+When the consumer calls root.Refresh()
+Then Refresh returns nil
+And "w" was started 0 times
+```
+
+#### Scenario: A scope created under a shutting-down scope is skipped
+```gherkin
+Given a started root container and child scope "tenant"
+And tenant.Shutdown() is running in another goroutine, blocked in a HookScopeClosing hook
+When the consumer creates grandchild "jobs" under "tenant"
+Then the call panics with an error matching ErrShutdown
+And root.Refresh() returns nil
+And once tenant.Shutdown() returned a successful report, tenant.Children() is empty
+```
+
+#### Scenario: A scope created during a running start does not wait
+```gherkin
+Given a root container with lazy Starter "a" whose provider creates child scope "tmp", registers and invokes lazy "x" in it, and calls tmp.Shutdown()
+When the consumer calls Start()
+Then Start returns nil
+And tmp.Shutdown() returned a successful report while Start was running
+```
+
+<!-- cases: 1 default: waiting is not configurable -->
+<!-- cases: 2 overrides: the context bounds the wait ("A child shutdown wait is bounded by its context") -->
+<!-- cases: N/A 3 zero values: a nil context means context.Background(), as for every Shutdown -->
+<!-- cases: 4 boundaries: a run with no candidate in the scope (a scope created during the run) does not wait -->
+<!-- cases: N/A 5 errors: the context error has its own requirement -->
+<!-- cases: N/A 6 duplicates: a second Shutdown of the same scope finds no running run with candidates in it -->
+<!-- cases: 7 lifecycle: Start, Refresh and Scope.Start rows; a run that begins during the shutdown -->
+<!-- cases: 8 concurrency: the subject; runs under -race with goleak -->
+<!-- cases: N/A 9 panics: hook panics during the wait follow scope-lifecycle-hooks -->
+<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - a child scope Shutdown no longer races a running start; Start-time code that shuts down a scope the run is starting deadlocks; a grandchild created under a closing scope is now refused with ErrShutdown instead of skipped -->
+
 ## ADDED Requirements
 
 ### Requirement: Starter auto-detection is opt-in

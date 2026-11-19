@@ -12,12 +12,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/kartaladev/doger"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // BasePath is the path every scenario mounts the UI at.
@@ -51,11 +50,13 @@ func Do(t *testing.T, do Doer, req *http.Request) Response {
 	t.Helper()
 
 	resp := do(req)
-	require.NotNil(t, resp)
+	if resp == nil {
+		t.Fatalf("no response")
+	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
+	requireNoError(t, err, "read body")
 
 	return Response{StatusCode: resp.StatusCode, Header: resp.Header, Body: string(body)}
 }
@@ -74,7 +75,7 @@ func NewRequest(t *testing.T, method, target string) *http.Request {
 	t.Helper()
 
 	u, err := url.Parse(target)
-	require.NoError(t, err)
+	requireNoError(t, err, "parse target")
 
 	req := httptest.NewRequest(method, "/", http.NoBody)
 	req.URL = u
@@ -124,10 +125,14 @@ func AssertNoInjectedMarkup(t *testing.T, page string) {
 	t.Helper()
 
 	for _, tag := range Tags(page) {
-		assert.NotContains(t, injectedElements, tag.Name, "injected element")
+		if slices.Contains(injectedElements, tag.Name) {
+			t.Errorf("injected element <%s>", tag.Name)
+		}
 
 		for _, attribute := range tag.Attributes {
-			assert.False(t, strings.HasPrefix(attribute, "on"), "injected attribute %q on <%s>", attribute, tag.Name)
+			if strings.HasPrefix(attribute, "on") {
+				t.Errorf("injected attribute %q on <%s>", attribute, tag.Name)
+			}
 		}
 	}
 }
@@ -163,7 +168,7 @@ func LinkByText(t *testing.T, page, text string) Link {
 		}
 	}
 
-	require.FailNowf(t, "link not found", "no link with text %q", text)
+	t.Fatalf("no link with text %q", text)
 
 	return Link{}
 }

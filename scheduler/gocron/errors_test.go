@@ -57,7 +57,8 @@ func TestModuleIdentity_AllSentinelsPrefixed(t *testing.T) {
 	t.Parallel()
 
 	sentinels := map[string]error{
-		"ErrInvalidOption": ErrInvalidOption,
+		"ErrInvalidOption":    ErrInvalidOption,
+		"ErrUnsupportedClock": ErrUnsupportedClock,
 	}
 
 	covered := make([]string, 0, len(sentinels))

@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"github.com/kartaladev/doger"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // The defensive headers every UI response carries.
@@ -32,9 +30,9 @@ const (
 func AssertDefensiveHeaders(t *testing.T, header http.Header) {
 	t.Helper()
 
-	assert.Equal(t, NoSniff, header.Get("X-Content-Type-Options"))
-	assert.Equal(t, ContentSecurityPolicy, header.Get("Content-Security-Policy"))
-	assert.Equal(t, NoStore, header.Get("Cache-Control"))
+	checkEqual(t, NoSniff, header.Get("X-Content-Type-Options"))
+	checkEqual(t, ContentSecurityPolicy, header.Get("Content-Security-Policy"))
+	checkEqual(t, NoStore, header.Get("Cache-Control"))
 }
 
 // newDBRoot returns a root holding a lazy service "db".
@@ -73,10 +71,10 @@ func DefensiveHeaders(t *testing.T, mount Mount) {
 			root := newDBRoot()
 			resp := Get(t, mount(t, root), tt.path(root))
 
-			require.Equal(t, tt.status, resp.StatusCode)
+			requireEqual(t, tt.status, resp.StatusCode)
 			AssertDefensiveHeaders(t, resp.Header)
 			if tt.status == http.StatusOK {
-				assert.Equal(t, ContentTypeHTML, resp.Header.Get("Content-Type"))
+				checkEqual(t, ContentTypeHTML, resp.Header.Get("Content-Type"))
 			}
 		})
 	}
@@ -92,11 +90,20 @@ func NonGETRejected(t *testing.T, mount Mount) {
 
 			resp := Do(t, mount(t, newDBRoot()), NewRequest(t, method, BasePath+"/service"))
 
-			assert.GreaterOrEqual(t, resp.StatusCode, 400)
-			assert.Less(t, resp.StatusCode, 500)
-			assert.NotContains(t, resp.Body, "<!DOCTYPE html>")
+			checkTrue(t, resp.StatusCode >= 400 && resp.StatusCode < 500, "status %d, want 4xx", resp.StatusCode)
+			checkNotContains(t, resp.Body, "<!DOCTYPE html>")
 		})
 	}
+
+	// HEAD is served like GET, as the docs promise on every adapter.
+	t.Run("HEAD_served", func(t *testing.T) {
+		t.Parallel()
+
+		resp := Do(t, mount(t, newDBRoot()), NewRequest(t, http.MethodHead, BasePath+"/service"))
+
+		checkEqual(t, http.StatusOK, resp.StatusCode, "HEAD status")
+		AssertDefensiveHeaders(t, resp.Header)
+	})
 }
 
 // countingDB counts the lifecycle calls it receives.
@@ -144,14 +151,14 @@ func ReadOnly(t *testing.T, mount Mount) {
 	}
 	for _, path := range paths {
 		resp := Get(t, do, path)
-		assert.Contains(t, []int{http.StatusOK, http.StatusFound}, resp.StatusCode, path)
+		checkStatusIn(t, resp.StatusCode, []int{http.StatusOK, http.StatusFound}, path)
 	}
 
-	assert.Zero(t, provides.Load(), "providers called")
-	assert.Zero(t, healthChecks.Load(), "health checks")
-	assert.Zero(t, shutdowns.Load(), "shutdowns")
-	assert.ElementsMatch(t, servicesBefore, root.ListProvidedServices())
-	assert.Len(t, root.Children(), childrenBefore)
+	checkEqual(t, int32(0), provides.Load(), "providers called")
+	checkEqual(t, int32(0), healthChecks.Load(), "health checks")
+	checkEqual(t, int32(0), shutdowns.Load(), "shutdowns")
+	checkTrue(t, sameServices(servicesBefore, root.ListProvidedServices()), "provided services changed")
+	checkEqual(t, childrenBefore, len(root.Children()), "child scopes")
 }
 
 // Fallbacks runs scenario "Fallbacks for missing and unknown identifiers"
@@ -191,16 +198,16 @@ func Fallbacks(t *testing.T, mount Mount) {
 			root := newDBRoot()
 			resp := Get(t, mount(t, root), tt.path(root.ID()))
 
-			require.Equal(t, tt.status, resp.StatusCode)
+			requireEqual(t, tt.status, resp.StatusCode)
 			if tt.location {
-				assert.Equal(t, BasePath+"/scope?scope_id="+root.ID(), resp.Header.Get("Location"))
+				checkEqual(t, BasePath+"/scope?scope_id="+root.ID(), resp.Header.Get("Location"))
 			}
 			if tt.heading != "" {
-				assert.Contains(t, resp.Body, tt.heading)
+				checkContains(t, resp.Body, tt.heading)
 			}
 			if tt.heading == scopeTree {
-				assert.Contains(t, resp.Body, "[root]", "the whole scope tree")
-				assert.Contains(t, resp.Body, "db", "the whole scope tree")
+				checkContains(t, resp.Body, "[root]", "the whole scope tree")
+				checkContains(t, resp.Body, "db", "the whole scope tree")
 			}
 		})
 	}
