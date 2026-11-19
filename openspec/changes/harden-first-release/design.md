@@ -233,9 +233,11 @@ Additional breaks and changes found while writing the specs:
 - **Options copy.** `NewWithOpts` and `CloneWithOpts` shallow-copy `*opts` and clone every hook slice. The caller's struct is never written.
 
 ### D15. Struct injection
-- **Nil interface.** A dependency whose value is a nil interface sets the field to its zero value through `memberValue`, as the collection path already does.
+- **Nil interface.** A dependency whose value is a nil interface sets the field to its zero value through `memberValue`, as the collection path already does, once the service's declared type (`getReflectType()`) is checked assignable to the field: a nil interface has no dynamic type, so an unassignable declared type gives the "not assignable" error matching `ErrStructInjection`.
+- **Named pointer targets.** `deepEmptyMakeValue` converts each allocated pointer to the target type, so `type P *S` is injected like `*S`.
 - **Recursive types.** `deepEmptyMakeValue` tracks the types it has visited. A recursive type returns an error matching `ErrStructInjection` that names the type.
-- **InvokeAs.** It uses a comma-ok assertion, so it returns the zero value for a nil interface.
+- **InvokeAs.** A nil instance gives the zero value and a nil error; any other instance was selected as assignable to `T` and is asserted with a forced assertion, so an impossible mismatch panics instead of becoming a silent zero value.
+- **Aliases.** An alias whose target is a nil interface gives the zero value of the alias type.
 
 ### D16. Source tracking
 Frame capture uses one `runtime.Callers` pass into a fixed-size array. It skips frames whose function belongs to package `github.com/kartaladev/doger` (not its sub-packages' tests), so value registrations record the user's call site.
@@ -406,7 +408,8 @@ Hot paths and the tests that cover them:
 | The invoker chain follows the capped list | resolution_errors_test.go: TestResolutionErrors_NotFoundCapWithChain | unit |
 | Injecting a nil-interface service | struct_injection_test.go: TestStructInjection_NilInterfaceDependency | table |
 | MustInvokeStruct with a nil-interface service | struct_injection_test.go: TestStructInjection_MustNilInterfaceDependency | unit |
-| Invalid targets | struct_injection_test.go: TestStructInjection_InvalidTargets | table |
+| Invalid targets | struct_injection_test.go: TestStructInjection_InvalidTargets (incl. the nil-interface rows) | table |
+| A named pointer-to-struct target | struct_injection_test.go: TestStructInjection_NamedPointerTarget | unit |
 | MustInvokeStruct with a recursive pointer type | struct_injection_test.go: TestStructInjection_MustRecursivePointerType | unit (child process before fix) |
 | Dependency failures are not ErrStructInjection | struct_injection_test.go: TestStructInjection_DependencyFailureNotStructError | unit |
 | Provider panic values become invocation errors | invoke_test.go: TestInvoke_ProviderPanic (existing, rows updated) | table |

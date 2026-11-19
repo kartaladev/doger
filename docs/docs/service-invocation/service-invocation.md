@@ -109,7 +109,11 @@ A target `InvokeStruct` cannot inject returns the zero value and an error matchi
 
 A named pointer type to a struct, such as `type AppPtr *App`, is a valid target.
 
-A service whose value is a nil interface, such as `doger.ProvideNamedValue[io.Reader](i, "reader", nil)`, sets its field to the zero value when the service's type is assignable to the field; otherwise the error is the "not assignable" one. `InvokeAs` returns the zero value and a nil error for such a service.
+A service whose value is a nil interface, such as `doger.ProvideNamedValue[io.Reader](i, "reader", nil)`, sets its field to the zero value when the service's type is assignable to the field; otherwise the error is the "not assignable" one. `InvokeAs`, and an alias of such a service, return the zero value and a nil error.
+
+A nil interface has no dynamic type, so it is checked by the service's declared type: a nil `io.ReadWriter` service cannot fill a `*bytes.Buffer` field, even though a non-nil `*bytes.Buffer` value of that same service could.
+
+Inside a provider, `MustInvoke*` turns any failure of a dependency into a panic, which the container reports as an error matching `doger.ErrProviderPanic` for the outer service (the dependency's error still matches with `errors.Is`). Prefer `Invoke*` in providers and return the error, so a missing or failing dependency is not reported as a panic.
 
 ### Implicit aliasing behavior with InvokeStruct {#implicit-aliasing-behavior-with-invokestruct}
 

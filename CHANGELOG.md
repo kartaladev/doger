@@ -53,8 +53,9 @@ Each entry gives the change and its migration.
   the prefix. A recursive pointer type used to overflow the stack, and an
   interface target type used to panic; both now return this error.
 - A service whose value is a nil interface no longer panics in `InvokeAs`
-  or `InvokeStruct`: it gives the zero value, or the "not assignable"
-  error when its type does not fit the field.
+  or `InvokeStruct`, and an alias of it no longer fails with a type
+  mismatch: it gives the zero value, or the "not assignable" error when
+  its declared type does not fit the field.
 - Not-found errors list at most 10 services, sorted, followed by
   `and N more`; `ExplainInjector` still lists all of them.
 

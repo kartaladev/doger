@@ -984,6 +984,21 @@ func TestAsDefault_YieldedFollowsOverride(t *testing.T) {
 			},
 		},
 		{
+			name: "ShutdownNamed removed the root service, then a default replaced it",
+			change: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				require.NoError(t, ShutdownNamed(root, name))
+				Provide(root, dialerProvider("root-default", nil), AsDefault())
+			},
+			check: func(t *testing.T, invoke func() (*dfDialer, error)) {
+				t.Helper()
+				// a yielded default follows non-default services only
+				dialer, err := invoke()
+				assert.Nil(t, dialer)
+				assert.ErrorIs(t, err, ErrServiceNotFound)
+			},
+		},
+		{
 			name: "ShutdownNamed removed the root service",
 			change: func(t *testing.T, root *RootScope) {
 				t.Helper()
