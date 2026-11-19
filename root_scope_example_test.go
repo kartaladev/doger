@@ -143,14 +143,6 @@ func ExampleRootScope_CloneWithOpts() {
 	// Output: shutdown: test
 }
 
-func ExampleRootScope_ShutdownOnSignals() {
-	// This example is commented out because it would block waiting for signals
-	// injector := New()
-	// signal, errors := injector.ShutdownOnSignals(syscall.SIGINT, syscall.SIGTERM)
-	// fmt.Println(signal)
-	// fmt.Println(errors.Len())
-}
-
 type exampleSignalDB struct{}
 
 func (*exampleSignalDB) Shutdown(ctx context.Context) error {

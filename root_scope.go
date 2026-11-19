@@ -936,6 +936,11 @@ func (s *RootScope) copyExtensionsTo(clone *RootScope, registry *extensionRegist
 	}
 }
 
+// defaultShutdownSignals are the signals ShutdownOnSignals and
+// ShutdownOnSignalsWithContext wait for when none is given: SIGTERM and
+// SIGINT. Tests replace them with a signal they can send.
+var defaultShutdownSignals = []os.Signal{syscall.SIGTERM, os.Interrupt}
+
 // ShutdownOnSignals listens for the provided signals in order to gracefully stop services.
 // It will block until receiving any of these signals.
 // If no signal is provided, syscall.SIGTERM and os.Interrupt will be handled by default.
@@ -962,9 +967,8 @@ func (s *RootScope) ShutdownOnSignalsWithContext(ctx context.Context, signals ..
 		ctx = context.Background()
 	}
 
-	// Make sure there is at least syscall.SIGTERM and os.Interrupt as a signal
 	if len(signals) < 1 {
-		signals = append(signals, syscall.SIGTERM, os.Interrupt)
+		signals = defaultShutdownSignals
 	}
 
 	ch := make(chan os.Signal, 5)

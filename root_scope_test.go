@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -288,12 +290,11 @@ func TestRootScope_CloneWithOpts(t *testing.T) {
 	is.NotNil(clone.healthSlots)
 }
 
-func TestRootScope_ShutdownOnSignals(t *testing.T) {
+func TestShutdownOnSignals_DefaultSet(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	// Note: This test cannot be fully automated because it waits for OS signals (SIGINT, SIGTERM)
-	// which require user input or external process termination. In a real scenario, this method
-	// would block until the application receives a termination signal from the OS.
+
+	// SIGTERM and SIGINT (os.Interrupt) when no signal is given
+	assert.Equal(t, []os.Signal{syscall.SIGTERM, os.Interrupt}, defaultShutdownSignals)
 }
 
 func TestRootScope_ShutdownOnSignalsWithContext(t *testing.T) {
