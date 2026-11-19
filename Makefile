@@ -1,4 +1,4 @@
-.PHONY: build test watch-test bench watch-bench coverage tools lint lint-fix modules test-all lint-all vuln audit outdated weight doc
+.PHONY: build test watch-test bench watch-bench coverage tools lint lint-fix modules test-all lint-all vuln govulncheck-install audit outdated weight doc
 
 build:
 	go build -v ./...
@@ -24,9 +24,8 @@ GOLANGCI_LINT_VERSION := v2.15.0
 GOVULNCHECK_VERSION := v1.10.0
 BENCHSTAT_VERSION := v0.0.0-20261009192801-be2c69fb417e
 
-tools:
+tools: govulncheck-install
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	go install golang.org/x/perf/cmd/benchstat@$(BENCHSTAT_VERSION)
 	go install github.com/cespare/reflex@v0.3.2
 	go install github.com/rakyll/gotest@v0.0.7
@@ -55,8 +54,13 @@ test-all:
 lint-all:
 	@scripts/modules.sh run golangci-lint run --timeout 120s --max-same-issues 50 --config "$(CURDIR)/.golangci.yml" $(LINT_FLAGS) ./...
 
+# fails on a reachable vulnerability unless SECURITY.md accepts it
+# (scripts/govulncheck.sh)
 vuln:
-	@scripts/modules.sh run govulncheck ./...
+	@scripts/modules.sh run "$(CURDIR)/scripts/govulncheck.sh"
+
+govulncheck-install:
+	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 
 audit:
 	go mod tidy

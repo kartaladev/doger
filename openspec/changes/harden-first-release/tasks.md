@@ -343,8 +343,8 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 50. Vulnerability gate and dependency floors
 
-- [ ] 50.1 Re-enable the govulncheck job in `security.yml` running `make vuln` and confirm it fails on fiber's brotli v1.1.0 (scenario "A reachable vulnerability fails the gate"); verify the job log or local `make vuln` names GO-2026-6888
-- [ ] 50.2 Bump `github.com/andybalholm/brotli` ≥ v1.2.7 in `http/fiber` and its example, and `golang.org/x/net` ≥ v0.62.0 in `http/echo` and `http/gin` (scenario "Released dependency floors"); verify `make vuln` exits 0 and `make test-all` is green
+- [x] 50.1 Re-enable the govulncheck job in `security.yml` running `make vuln` and confirm it fails on fiber's brotli v1.1.0 (scenario "A reachable vulnerability fails the gate"); verify the job log or local `make vuln` names GO-2026-6888
+- [x] 50.2 Bump `github.com/andybalholm/brotli` ≥ v1.2.7 in `http/fiber` and its example, and `golang.org/x/net` ≥ v0.62.0 in `http/echo` and `http/gin` (scenario "Released dependency floors"); verify `make vuln` exits 0 and `make test-all` is green
 - [ ] 50.3 Add SECURITY.md with a private reporting channel and "Accepted advisories" listing GO-2026-6875/GO-2026-6872 (scenario "An accepted vulnerability without a fix is recorded"); verify the policy section of `scripts/check-workflows.sh` passes
 
 ## 51. Workflow supply chain
