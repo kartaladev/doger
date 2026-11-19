@@ -162,9 +162,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 23. Not-found message cap
 
-- [ ] 23.1 RED: add `TestResolutionErrors_NotFoundCap` (rows 0/1/10/11/2000) and `TestResolutionErrors_NotFoundCapWithChain`; verify `go test -race -run TestResolutionErrors_NotFoundCap .` fails on the 11 and 2000 rows
-- [ ] 23.2 GREEN: keep the first 10 sorted names and append ` and N more` before `, path:` in `serviceNotFound`; verify the 23.1 tests pass and `make test` is green
-- [ ] 23.3 REFACTOR: Extract Function `formatServiceList(names, limit)`; verify `make test` and `make lint` pass
+- [x] 23.1 RED: add `TestResolutionErrors_NotFoundCap` (rows 0/1/10/11/2000) and `TestResolutionErrors_NotFoundCapWithChain`; verify `go test -race -run TestResolutionErrors_NotFoundCap .` fails on the 11 and 2000 rows
+- [x] 23.2 GREEN: keep the first 10 sorted names and append ` and N more` before `, path:` in `serviceNotFound`; verify the 23.1 tests pass and `make test` is green
+- [x] 23.3 REFACTOR: Extract Function `formatServiceList(names, limit)`; verify `make test` and `make lint` pass
 
 ## 24. Explanation is free of data races
 

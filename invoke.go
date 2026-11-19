@@ -897,16 +897,31 @@ func serviceNotFound(injector Injector, err error, chain []string) error {
 	serviceNames := getServiceNames(services)
 	sortedServiceNames := sortServiceNames(serviceNames)
 
+	list := formatServiceList(sortedServiceNames, notFoundListLimit)
+
 	if len(chain) > 1 {
 		return fmt.Errorf(
 			"%w `%s`, available services: %s, path: %s",
 			err,
 			name,
-			strings.Join(sortedServiceNames, ", "),
+			list,
 			humanReadableInvokerChain(chain),
 		)
 	}
-	return fmt.Errorf("%w `%s`, available services: %s", err, name, strings.Join(sortedServiceNames, ", "))
+	return fmt.Errorf("%w `%s`, available services: %s", err, name, list)
+}
+
+// notFoundListLimit is the number of services a not-found error lists.
+const notFoundListLimit = 10
+
+// formatServiceList joins the first limit names with ", ", followed by
+// " and N more" when more names exist.
+func formatServiceList(names []string, limit int) string {
+	if len(names) <= limit {
+		return strings.Join(names, ", ")
+	}
+
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:limit], ", "), len(names)-limit)
 }
 
 // serviceTypeMismatch returns an error indicating that the specified service was found,

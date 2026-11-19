@@ -331,3 +331,78 @@ func TestResolutionErrors_NilInjectorPanics(t *testing.T) {
 		})
 	}
 }
+
+// provideNumbered registers count int values named "s00", "s01", and so on.
+func provideNumbered(root *RootScope, count int) {
+	for n := range count {
+		ProvideNamedValue(root, fmt.Sprintf("s%02d", n), n)
+	}
+}
+
+func TestResolutionErrors_NotFoundCap(t *testing.T) {
+	t.Parallel()
+
+	const first10 = "`s00`, `s01`, `s02`, `s03`, `s04`, `s05`, `s06`, `s07`, `s08`, `s09`"
+
+	tests := []struct {
+		name    string
+		count   int
+		message string
+	}{
+		{
+			name:    "0",
+			count:   0,
+			message: "doger: could not find service `missing`, no service available",
+		},
+		{
+			name:    "1",
+			count:   1,
+			message: "doger: could not find service `missing`, available services: `s00`",
+		},
+		{
+			name:    "10",
+			count:   10,
+			message: "doger: could not find service `missing`, available services: " + first10,
+		},
+		{
+			name:    "11",
+			count:   11,
+			message: "doger: could not find service `missing`, available services: " + first10 + " and 1 more",
+		},
+		{
+			name:    "2000",
+			count:   2000,
+			message: "doger: could not find service `missing`, available services: " + first10 + " and 1990 more",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			root := New()
+			provideNumbered(root, tt.count)
+
+			_, err := InvokeNamed[int](root, "missing")
+			is.ErrorIs(err, ErrServiceNotFound)
+			is.EqualError(err, tt.message)
+		})
+	}
+}
+
+func TestResolutionErrors_NotFoundCapWithChain(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+
+	root := New()
+	provideNumbered(root, 12)
+	ProvideNamed(root, "a", func(i Injector) (int, error) { return InvokeNamed[int](i, "missing") })
+
+	// The 13 visible services sort as `a`, `s00` … `s11`: the list keeps
+	// `a` to `s08`. The spec scenario's "`s09` and 3 more" overlooks that
+	// `a` itself is listed.
+	_, err := InvokeNamed[int](root, "a")
+	is.ErrorIs(err, ErrServiceNotFound)
+	is.ErrorContains(err, "`s08` and 3 more, path: `a` -> `missing`")
+}

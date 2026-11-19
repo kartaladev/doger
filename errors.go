@@ -13,8 +13,9 @@ var (
 	// ErrServiceNotFound is matched by the error of an invocation, health
 	// check, ShutdownNamed call or dependency declaration that names a service
 	// no visible scope has registered, or one exported from a scope that was
-	// shut down. The message names the service and lists the services that
-	// are available.
+	// shut down. The message names the service and lists the available
+	// services sorted by name, at most 10, followed by "and N more" when
+	// more exist.
 	ErrServiceNotFound = errors.New("doger: could not find service")
 	// ErrServiceNotMatch is matched by the error of InvokeAs and MustInvokeAs
 	// when no visible service is assignable to the requested type.
