@@ -156,9 +156,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 22. InvokeAs and struct injection with nil interfaces and invalid targets
 
-- [ ] 22.1 RED: regression tests `TestInvokeAs_NilInterfaceInstance`, `TestInvokeAs_NonNilInstance`, `TestStructInjection_NilInterfaceDependency`, `TestStructInjection_MustNilInterfaceDependency`, `TestStructInjection_InvalidTargets`, `TestStructInjection_MustRecursivePointerType` (child process for the stack overflow) and `TestStructInjection_DependencyFailureNotStructError`; verify `go test -race -run 'TestInvokeAs_N|TestStructInjection_' .` fails with the interface-conversion/reflect panics and the missing `ErrStructInjection`
-- [ ] 22.2 GREEN: `InvokeAs` uses `typed, _ := instance.(T)`, struct injection uses `memberValue(dependency, fieldValue.Type())`, add `ErrStructInjection` wrapping the invalid-target errors, and `deepEmptyMakeValue` tracks visited types returning an error naming the type; verify the 22.1 tests pass and `make test` is green
-- [ ] 22.3 REFACTOR: Change Function Declaration so `deepEmpty[T]` returns `(T, error)` propagated through `InvokeStruct`, and Extract Function `structInjectionError`; verify `make test` and `make lint` pass
+- [x] 22.1 RED: regression tests `TestInvokeAs_NilInterfaceInstance`, `TestInvokeAs_NonNilInstance`, `TestStructInjection_NilInterfaceDependency`, `TestStructInjection_MustNilInterfaceDependency`, `TestStructInjection_InvalidTargets`, `TestStructInjection_MustRecursivePointerType` (child process for the stack overflow) and `TestStructInjection_DependencyFailureNotStructError`; verify `go test -race -run 'TestInvokeAs_N|TestStructInjection_' .` fails with the interface-conversion/reflect panics and the missing `ErrStructInjection`
+- [x] 22.2 GREEN: `InvokeAs` uses `typed, _ := instance.(T)`, struct injection uses `memberValue(dependency, fieldValue.Type())`, add `ErrStructInjection` wrapping the invalid-target errors, and `deepEmptyMakeValue` tracks visited types returning an error naming the type; verify the 22.1 tests pass and `make test` is green
+- [x] 22.3 REFACTOR: Change Function Declaration so `deepEmpty[T]` returns `(T, error)` propagated through `InvokeStruct`, and Extract Function `structInjectionError`; verify `make test` and `make lint` pass
 
 ## 23. Not-found message cap
 

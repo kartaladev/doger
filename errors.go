@@ -59,6 +59,14 @@ var (
 	// the functions with an error result and the panic value of the others.
 	// No call falls back to a global container.
 	ErrNilInjector = errors.New("doger: nil injector")
+	// ErrStructInjection is matched by the error of InvokeStruct and the
+	// panic value of MustInvokeStruct when the target cannot be injected:
+	// it is not a struct or a pointer chain to one, it is a recursive
+	// pointer type, a resolved service is not assignable to its field, or a
+	// `*` tag is on a field that is not a slice or map[string]. The message
+	// names the type or field. A dependency that fails to resolve does not
+	// match it.
+	ErrStructInjection = errors.New("doger: invalid struct injection target")
 )
 
 // libPrefix starts every message the library originates.
@@ -86,6 +94,7 @@ var libSentinels = []error{
 	ErrServiceAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
 	ErrAlreadyStarted, ErrStartAfterShutdown, ErrNotStarted, ErrNilInjector,
+	ErrStructInjection,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
 	ErrExtensionCycle, ErrExtensionConflict,
 }
@@ -178,6 +187,29 @@ func libErrorf(format string, args ...any) error {
 	}
 
 	return &libError{fmt.Errorf(libPrefix+format, unprefixed...)}
+}
+
+// injectionTargetError is an invalid struct injection target: its message
+// is the one of err, and it matches both err and ErrStructInjection.
+type injectionTargetError struct {
+	err error
+}
+
+// Error returns the message of the wrapped error.
+func (e *injectionTargetError) Error() string {
+	return e.err.Error()
+}
+
+// Unwrap returns the wrapped error and ErrStructInjection.
+func (e *injectionTargetError) Unwrap() []error {
+	return []error{e.err, ErrStructInjection}
+}
+
+// structInjectionError formats an invalid struct injection target like
+// libErrorf: the error matches ErrStructInjection, and its message is the
+// formatted one.
+func structInjectionError(format string, args ...any) error {
+	return &injectionTargetError{libErrorf(format, args...)}
 }
 
 // ServiceError is the error of an invocation whose service build failed:

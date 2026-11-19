@@ -158,7 +158,10 @@ func invokeByGenericType[T any](i Injector) (T, error) {
 		return empty[T](), err
 	}
 
-	return instance.(T), nil //nolint:errcheck,forcetypeassert
+	// A nil-interface instance gives the zero value of T.
+	typed, _ := instance.(T)
+
+	return typed, nil
 }
 
 // invokeServiceInstance invokes a service already selected by type. Hooks
@@ -754,7 +757,7 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 
 	// Ensure that servicePtr is a pointer to a struct
 	if structValue.Kind() != reflect.Pointer || structValue.Elem().Kind() != reflect.Struct {
-		return libErrorf("must be a pointer to a struct")
+		return structInjectionError("must be a pointer to a struct")
 	}
 
 	structValue = structValue.Elem()
@@ -773,7 +776,7 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 		wasTagNameEmpty := serviceName == ""
 
 		if !fieldValue.CanAddr() {
-			return libErrorf("field is not addressable `%s.%s`", structName, field.Name)
+			return structInjectionError("field is not addressable `%s.%s`", structName, field.Name)
 		}
 
 		if !fieldValue.CanSet() {
@@ -808,11 +811,11 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 			return err
 		}
 
-		dependencyValue := reflect.ValueOf(dependency)
+		dependencyValue := memberValue(dependency, fieldValue.Type())
 
 		// Should be checked before invocation, because we just built something that is not assignable to the field.
 		if !dependencyValue.Type().AssignableTo(fieldValue.Type()) {
-			return libErrorf("`%s` is not assignable to field `%s.%s`", serviceName, structName, field.Name)
+			return structInjectionError("`%s` is not assignable to field `%s.%s`", serviceName, structName, field.Name)
 		}
 
 		// Should not panic, since we checked CanAddr() and CanSet() earlier.
@@ -861,7 +864,7 @@ func injectCollectionField(injector Injector, structName string, field reflect.S
 		}
 		fieldValue.Set(collection)
 	default:
-		return libErrorf("tag `*` requires a slice or map[string] field, got `%s.%s`", structName, field.Name)
+		return structInjectionError("tag `*` requires a slice or map[string] field, got `%s.%s`", structName, field.Name)
 	}
 
 	return nil
