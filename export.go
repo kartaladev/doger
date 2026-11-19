@@ -12,7 +12,7 @@ import (
 )
 
 // ExportOption configures an export. Values come only from this package's
-// constructors, such as [ExportAs].
+// constructors, such as [WithExportName].
 type ExportOption func(*exportOptions)
 
 // exportOptions is the configuration of an export.
@@ -30,14 +30,15 @@ func buildExportOptions(sourceName string, opts []ExportOption) exportOptions {
 	return options
 }
 
-// ExportAs publishes the exported service in the parent scope under name,
-// instead of the name of its source. An empty name makes the export fail.
-func ExportAs(name string) ExportOption {
+// WithExportName publishes the exported service in the parent scope under
+// name, instead of the name of its source. An empty name makes the export
+// fail. It replaces ExportAs.
+func WithExportName(name string) ExportOption {
 	return func(options *exportOptions) { options.published = name }
 }
 
 // Export publishes the service named after T, registered in from, to the
-// parent scope of from, under the same name unless [ExportAs] renames it.
+// parent scope of from, under the same name unless [WithExportName] renames it.
 // The parent and its other descendants can then invoke it, while every other
 // service of from stays private. To publish further up, export again from
 // the parent: an export is a service of the parent, so it can be exported.
@@ -47,11 +48,13 @@ func ExportAs(name string) ExportOption {
 // from keeps ownership of the instance, which it starts, health-checks and
 // shuts down exactly once; the export is never started or shut down itself.
 //
-// Like [As], Export returns an error, and registers nothing, when from is nil
-// or has no parent, when the source is not registered in from itself (a
-// service visible only through an ancestor of from cannot be exported), when
-// its registered type is not assignable to T, or when the published name is
-// empty or already registered in the parent. Invoking an export after from
+// Like [Alias], Export returns an error, and registers nothing, when from is
+// nil (matching [ErrNilInjector]) or has no parent, when the source is not
+// registered in from itself (matching [ErrServiceNotFound]; a service visible
+// only through an ancestor of from cannot be exported), when its registered
+// type is not assignable to T (matching [ErrServiceTypeMismatch]), or when
+// the published name is empty or already registered in the parent (matching
+// [ErrServiceAlreadyDeclared]). Invoking an export after from
 // was shut down fails with an error matching [ErrServiceNotFound].
 //
 // An export of a default (a source registered with [AsDefault]) is a default
@@ -83,7 +86,7 @@ func Export[T any](from *Scope, opts ...ExportOption) error {
 }
 
 // ExportNamed is like [Export] for the service registered as name in from.
-// The service is published as name unless [ExportAs] renames it.
+// The service is published as name unless [WithExportName] renames it.
 func ExportNamed[T any](from *Scope, name string, opts ...ExportOption) error {
 	published := buildExportOptions(name, opts).published
 	source, err := validateExport(from, name, published, reflect.TypeFor[T]())
@@ -128,7 +131,7 @@ func wrapExportIfDefault[T any](source any, export *serviceExport[T]) serviceWra
 // when it is invalid.
 func validateExport(from *Scope, sourceName, publishedName string, target reflect.Type) (any, error) {
 	if from == nil {
-		return nil, libErrorf("cannot export from a nil scope")
+		return nil, libErrorMatching(ErrNilInjector, "cannot export from a nil scope")
 	}
 	if from.parentScope == nil {
 		return nil, libErrorf("scope `%s` has no parent scope to export to", from.name)
@@ -138,10 +141,10 @@ func validateExport(from *Scope, sourceName, publishedName string, target reflec
 	}
 	source, ok := from.serviceGet(sourceName)
 	if !ok {
-		return nil, libErrorf("service `%s` has not been declared", sourceName)
+		return nil, libErrorMatching(ErrServiceNotFound, "service `%s` has not been declared", sourceName)
 	}
 	if !serviceCanCastToType(source, target) {
-		return nil, libErrorf("service `%s` is not assignable to `%s`", sourceName, typetostring.GetReflectType(target))
+		return nil, libErrorMatching(ErrServiceTypeMismatch, "service `%s` is not assignable to `%s`", sourceName, typetostring.GetReflectType(target))
 	}
 
 	return source, nil

@@ -101,7 +101,7 @@ func BenchmarkInvokeAlias(b *testing.B) {
 	doger.Provide(injector, func(i doger.Injector) (*benchSvcImpl, error) {
 		return &benchSvcImpl{}, nil
 	})
-	if err := doger.As[*benchSvcImpl, benchIface](injector); err != nil {
+	if err := doger.Alias[*benchSvcImpl, benchIface](injector); err != nil {
 		b.Fatal(err)
 	}
 	_ = doger.MustInvoke[benchIface](injector)

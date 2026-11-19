@@ -316,7 +316,7 @@ func TestRaceConditionServiceAliasCreation(t *testing.T) {
 
 			if index%2 == 0 {
 				// Create alias
-				aliasErrors[index] = doger.AsNamed[string, string](root, "alias-base-service", aliasName)
+				aliasErrors[index] = doger.AliasNamed[string, string](root, "alias-base-service", aliasName)
 			} else {
 				// Try to invoke alias (may not exist yet)
 				result, err := doger.InvokeNamed[string](root, aliasName)

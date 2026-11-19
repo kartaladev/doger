@@ -188,13 +188,21 @@ func ProvideNamedTransient[T any](i Injector, name string, provider Provider[T],
 // - The service is properly created and stored
 // - Logging is performed for successful registration.
 func provide[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T], opts []ProvideOption) {
+	if err := tryProvide(i, name, valueOrProvider, serviceCtor, opts); err != nil {
+		panic(err)
+	}
+}
+
+// tryProvide is provide returning the duplicate-registration error instead
+// of panicking with it.
+func tryProvide[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T], opts []ProvideOption) error {
 	_i := mustInjector(i)
 	scope := injectorScope(_i)
 	options := buildServiceOptions(opts)
 
 	// without a default involved, a duplicate fails first, as it always did
 	if (options == nil || !options.isDefault) && nonDefaultExists(scope, name) {
-		panic(duplicateServiceError(name))
+		return duplicateServiceError(name)
 	}
 
 	service := serviceCtor(name, valueOrProvider)
@@ -207,14 +215,16 @@ func provide[T any, A any](i Injector, name string, valueOrProvider A, serviceCt
 
 	outcome, err := registerLocked(scope, name, wrapped)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	if outcome == registerSkipped {
-		return
+		return nil
 	}
 
 	root.opts.onAfterRegistration(scope, name)
 	root.opts.Logf("doger: service %s injected", name)
+
+	return nil
 }
 
 // registerLocked registers incoming as name in scope under the scope's write
@@ -613,14 +623,16 @@ func MustInvokeStruct[T any](i Injector) T {
 // 							Explicit aliases
 /////////////////////////////////////////////////////////////////////////////
 
-// As declares an alias for a service, allowing it to be retrieved using a different type.
-// This function creates a type alias where the Alias type can be used to retrieve the Initial service.
-// The alias is automatically named using the type name of Alias.
+// Alias registers, in the scope of i, an alias named after Target that
+// resolves the service named after Initial, so the service can be invoked
+// as Target. It replaces the As function of samber/do; [Bind] is its
+// package-loading form.
 //
-// Parameters:
-//   - i: The injector to register the alias in
-//
-// Returns an error if the alias cannot be created (e.g., type incompatibility or missing service).
+// Alias returns an error and registers nothing when Initial does not
+// implement Target (the message names both types), when no visible scope
+// registers Initial (matching [ErrServiceNotFound]), when the scope of i
+// already registers the alias name (matching [ErrServiceAlreadyDeclared]),
+// or when i is nil (matching [ErrNilInjector]).
 //
 // Shutting the alias down (with its scope, or with Shutdown/ShutdownNamed on
 // the alias name) removes the alias but never shuts its target down: the
@@ -636,44 +648,33 @@ func MustInvokeStruct[T any](i Injector) T {
 //	})
 //
 //	// Create an alias so it can be retrieved as an interface
-//	doger.As[*PostgresqlDatabase, Database](injector)
+//	doger.Alias[*PostgresqlDatabase, Database](injector)
 //
 //	// Now both work:
 //	db := doger.MustInvoke[*PostgresqlDatabase](injector)
 //	db := doger.MustInvoke[Database](injector)
-func As[Initial any, Alias any](i Injector) error {
+func Alias[Initial any, Target any](i Injector) error {
 	initialName := NameOf[Initial]()
-	aliasName := NameOf[Alias]()
+	aliasName := NameOf[Target]()
 
-	return AsNamed[Initial, Alias](i, initialName, aliasName)
+	return AliasNamed[Initial, Target](i, initialName, aliasName)
 }
 
-// MustAs declares an alias for a service and panics if an error occurs.
-// This is a convenience function that wraps As and panics on error.
-//
-// Parameters:
-//   - i: The injector to register the alias in
-//
-// Panics if the alias cannot be created (e.g., type incompatibility or missing service).
+// MustAlias is like [Alias] but panics with the error Alias would return.
 //
 // Play: https://go.dev/play/p/_wGjnRJfwV8
 //
 // Example:
 //
-//	doger.MustAs[*PostgresqlDatabase, Database](injector)
-func MustAs[Initial any, Alias any](i Injector) {
-	must0(As[Initial, Alias](i))
+//	doger.MustAlias[*PostgresqlDatabase, Database](injector)
+func MustAlias[Initial any, Target any](i Injector) {
+	must0(Alias[Initial, Target](i))
 }
 
-// AsNamed declares a named alias for a named service.
-// This function allows you to create aliases with custom names for both the initial service and the alias.
-//
-// Parameters:
-//   - i: The injector to register the alias in
-//   - initial: The name of the existing service to alias
-//   - alias: The name for the new alias service
-//
-// Returns an error if the alias cannot be created (e.g., type incompatibility or missing service).
+// AliasNamed registers, in the scope of i, an alias named alias that
+// resolves the service named initial, typed Initial, as Target. It is
+// [Alias] with explicit names, and returns the same errors; [BindNamed] is
+// its package-loading form.
 //
 // Shutting the alias down (with its scope, or with Shutdown/ShutdownNamed on
 // the alias name) removes the alias but never shuts its target down: the
@@ -689,49 +690,40 @@ func MustAs[Initial any, Alias any](i Injector) {
 //	})
 //
 //	// Create an alias with custom names
-//	doger.AsNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
+//	doger.AliasNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
 //
 //	// Retrieve using the alias name
 //	db := doger.MustInvokeNamed[Database](injector, "db-interface")
-func AsNamed[Initial any, Alias any](i Injector, initial string, alias string) error {
+func AliasNamed[Initial any, Target any](i Injector, initial string, alias string) error {
 	_i, err := getInjector(i)
 	if err != nil {
 		return err
 	}
 
 	// first, we check if Initial can be cast to Alias
-	if !genericCanCastToGeneric[Initial, Alias]() {
-		return libErrorf("`%s` does not implement `%s`", initial, alias)
+	if !genericCanCastToGeneric[Initial, Target]() {
+		return libErrorf("`%s` does not implement `%s`", NameOf[Initial](), NameOf[Target]())
 	}
 
 	if ok := _i.serviceExistRec(initial); !ok {
-		return libErrorf("service `%s` has not been declared", initial)
+		return libErrorMatching(ErrServiceNotFound, "service `%s` has not been declared", initial)
 	}
 
-	provide(_i, alias, nil, func(_ string, _ any) serviceWrapper[Alias] {
-		return newServiceAlias[Initial, Alias](alias, _i, initial)
+	return tryProvide(_i, alias, nil, func(_ string, _ any) serviceWrapper[Target] {
+		return newServiceAlias[Initial, Target](alias, _i, initial)
 	}, nil)
-
-	return nil
 }
 
-// MustAsNamed declares a named alias for a named service and panics if an error occurs.
-// This is a convenience function that wraps AsNamed and panics on error.
-//
-// Parameters:
-//   - i: The injector to register the alias in
-//   - initial: The name of the existing service to alias
-//   - alias: The name for the new alias service
-//
-// Panics if the alias cannot be created (e.g., type incompatibility or missing service).
+// MustAliasNamed is like [AliasNamed] but panics with the error AliasNamed
+// would return.
 //
 // Play: https://go.dev/play/p/8QI2XUm9yLH
 //
 // Example:
 //
-//	doger.MustAsNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
-func MustAsNamed[Initial any, Alias any](i Injector, initial string, alias string) {
-	must0(AsNamed[Initial, Alias](i, initial, alias))
+//	doger.MustAliasNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
+func MustAliasNamed[Initial any, Target any](i Injector, initial string, alias string) {
+	must0(AliasNamed[Initial, Target](i, initial, alias))
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -762,7 +754,7 @@ func MustAsNamed[Initial any, Alias any](i Injector, initial string, alias strin
 // several of these scopes, only the nearest service is considered, even if
 // it is not assignable to T: it then hides the ancestor's, as InvokeNamed
 // would. Inside a provider, the invoking scope is the scope the provider's
-// service is registered in. Aliases (As, Bind) are never members: their
+// service is registered in. Aliases (Alias, Bind) are never members: their
 // target represents itself.
 //
 // A default registration ([AsDefault]) not resolved yet is left out when a
@@ -1102,7 +1094,7 @@ func TransientNamed[T any](serviceName string, p Provider[T], opts ...ProvideOpt
 //   - Alias: The type to bind to (must be implemented by Initial)
 //
 // Returns a function that creates the type alias when executed.
-// Panics if the binding cannot be created. Like [As], the alias never shuts
+// Panics if the binding cannot be created. Like [Alias], the alias never shuts
 // its target down.
 //
 // Play: https://go.dev/play/p/j69I52whJr2
@@ -1115,7 +1107,7 @@ func TransientNamed[T any](serviceName string, p Provider[T], opts ...ProvideOpt
 //	)
 func Bind[Initial any, Alias any]() func(Injector) {
 	return func(injector Injector) {
-		MustAs[Initial, Alias](injector)
+		MustAlias[Initial, Alias](injector)
 	}
 }
 
@@ -1130,7 +1122,7 @@ func Bind[Initial any, Alias any]() func(Injector) {
 //   - Alias: The type to bind to (must be implemented by Initial)
 //
 // Returns a function that creates the named type alias when executed.
-// Panics if the binding cannot be created. Like [AsNamed], the alias never
+// Panics if the binding cannot be created. Like [AliasNamed], the alias never
 // shuts its target down.
 //
 // Play: https://go.dev/play/p/m2gW7s9_qgq
@@ -1143,6 +1135,6 @@ func Bind[Initial any, Alias any]() func(Injector) {
 //	)
 func BindNamed[Initial any, Alias any](initial string, alias string) func(Injector) {
 	return func(injector Injector) {
-		MustAsNamed[Initial, Alias](injector, initial, alias)
+		MustAliasNamed[Initial, Alias](injector, initial, alias)
 	}
 }

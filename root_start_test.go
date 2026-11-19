@@ -164,7 +164,7 @@ func TestStart_Detection(t *testing.T) {
 			register: func(t *testing.T, root *RootScope) *startCounter {
 				instance := &startWithErr{}
 				Provide(root, func(Injector) (*startWithErr, error) { return instance, nil })
-				require.NoError(t, As[*startWithErr, startStartable](root))
+				require.NoError(t, Alias[*startWithErr, startStartable](root))
 				return instance.counter()
 			},
 			starts: 1, shutdowns: 1,

@@ -43,7 +43,7 @@ doger.Provide(root, NewAppDialer) // registered afterwards: still wins
 dialer := doger.MustInvoke[*Dialer](ext) // the application's dialer
 ```
 
-An alias of a default (`As`, `Bind`) resolves through the default's decision.
+An alias of a default (`Alias`, `Bind`) resolves through the default's decision.
 
 ## In the same scope {#same-scope}
 

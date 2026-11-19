@@ -78,8 +78,8 @@ The traditional vocab can be translated for package registration:
 - `ProvideNamedValue[T](Injector, string, T)` -> `EagerNamed(string, T)`
 - `ProvideTransient[T](Injector, Provider[T])` -> `Transient(Provider[T])`
 - `ProvideNamedTransient[T](Injector, string, Provider[T])` -> `TransientNamed(string, Provider[T])`
-- `As[Initial, Alias](Injector)` -> `Bind[Initial, Alias]()`
-- `AsNamed[Initial, Alias](Injector, string, string)` -> `BindNamed[Initial, Alias](string, string)`
+- `Alias[Initial, Alias](Injector)` -> `Bind[Initial, Alias]()`
+- `AliasNamed[Initial, Alias](Injector, string, string)` -> `BindNamed[Initial, Alias](string, string)`
 
 ## Testing and mocking {#testing-and-mocking}
 

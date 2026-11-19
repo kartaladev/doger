@@ -421,7 +421,7 @@ func TestHealthReport_Membership(t *testing.T) {
 			name: "value_with_alias",
 			setup: func(i *RootScope) func(...HealthReportOption) HealthReport {
 				ProvideNamedValue(i, "db", &healthReportTestSwitch{})
-				must0(AsNamed[*healthReportTestSwitch, Healthchecker](i, "db", "hc"))
+				must0(AliasNamed[*healthReportTestSwitch, Healthchecker](i, "db", "hc"))
 				return i.HealthReport
 			},
 			listed: []string{"[root]/db"},
@@ -430,7 +430,7 @@ func TestHealthReport_Membership(t *testing.T) {
 			name: "alias_to_lazy_never_invoked",
 			setup: func(i *RootScope) func(...HealthReportOption) HealthReport {
 				ProvideNamed(i, "db", func(Injector) (*healthReportTestSwitch, error) { return &healthReportTestSwitch{}, nil })
-				must0(AsNamed[*healthReportTestSwitch, Healthchecker](i, "db", "hc"))
+				must0(AliasNamed[*healthReportTestSwitch, Healthchecker](i, "db", "hc"))
 				return i.HealthReport
 			},
 			listed: []string{},
@@ -1588,7 +1588,7 @@ func TestHealthClassification_CloneOverrideDefaultAlias(t *testing.T) {
 		{
 			name: "alias",
 			action: func(i *RootScope) func(...HealthReportOption) HealthReport {
-				must0(AsNamed[*healthReportTestSwitch, Healthchecker](i, "db", "hc"))
+				must0(AliasNamed[*healthReportTestSwitch, Healthchecker](i, "db", "hc"))
 				return i.HealthReport
 			},
 			tags:     []string{"liveness"},

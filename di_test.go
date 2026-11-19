@@ -990,27 +990,27 @@ func TestMustInvokeStruct(t *testing.T) {
 // 							Explicit aliases
 /////////////////////////////////////////////////////////////////////////////
 
-func TestAs(t *testing.T) {
+func TestAlias(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
 	i := New()
 	Provide(i, func(i Injector) (*lazyTestHeathcheckerOK, error) { return &lazyTestHeathcheckerOK{}, nil })
 
-	is.NoError(As[*lazyTestHeathcheckerOK, Healthchecker](i))
-	is.EqualError(As[*lazyTestShutdownerOK, Healthchecker](i), "doger: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
-	is.EqualError(As[*lazyTestHeathcheckerKO, Healthchecker](i), "doger: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
-	is.EqualError(As[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i), "doger: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
+	is.NoError(Alias[*lazyTestHeathcheckerOK, Healthchecker](i))
+	is.EqualError(Alias[*lazyTestShutdownerOK, Healthchecker](i), "doger: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(Alias[*lazyTestHeathcheckerKO, Healthchecker](i), "doger: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
+	is.EqualError(Alias[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i), "doger: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
 
 	i = New()
 	type iTestHeathchecker interface {
 		HealthCheck() error
 	}
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
-	is.NoError(As[iTestHeathchecker, Healthchecker](i))
+	is.NoError(Alias[iTestHeathchecker, Healthchecker](i))
 }
 
-func TestMustAs(t *testing.T) {
+func TestMustAlias(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
@@ -1019,7 +1019,7 @@ func TestMustAs(t *testing.T) {
 
 	// Test successful alias creation
 	is.NotPanics(func() {
-		MustAs[*lazyTestHeathcheckerOK, Healthchecker](i)
+		MustAlias[*lazyTestHeathcheckerOK, Healthchecker](i)
 	})
 
 	// Test that the alias was created and can be invoked
@@ -1029,17 +1029,17 @@ func TestMustAs(t *testing.T) {
 
 	// Test panic on invalid interface implementation
 	is.Panics(func() {
-		MustAs[*lazyTestShutdownerOK, Healthchecker](i)
+		MustAlias[*lazyTestShutdownerOK, Healthchecker](i)
 	})
 
 	// Test panic on service not declared
 	is.Panics(func() {
-		MustAs[*lazyTestHeathcheckerKO, Healthchecker](i)
+		MustAlias[*lazyTestHeathcheckerKO, Healthchecker](i)
 	})
 
 	// Test panic on self-reference
 	is.Panics(func() {
-		MustAs[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i)
+		MustAlias[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i)
 	})
 
 	// Test with interface-to-interface
@@ -1050,7 +1050,7 @@ func TestMustAs(t *testing.T) {
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NotPanics(func() {
-		MustAs[iTestHeathchecker, Healthchecker](i)
+		MustAlias[iTestHeathchecker, Healthchecker](i)
 	})
 
 	// Test that the interface alias works
@@ -1059,24 +1059,24 @@ func TestMustAs(t *testing.T) {
 	is.NotNil(hc2)
 }
 
-func TestAsNamed(t *testing.T) {
+func TestAliasNamed(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
 	i := New()
 	Provide(i, func(i Injector) (*lazyTestHeathcheckerOK, error) { return &lazyTestHeathcheckerOK{}, nil })
 
-	is.NoError(AsNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker"))
-	is.EqualError(AsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker"), "doger: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
-	is.EqualError(AsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker"), "doger: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
-	is.EqualError(AsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK"), "doger: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
+	is.NoError(AliasNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker"))
+	is.EqualError(AliasNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker"), "doger: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(AliasNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker"), "doger: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
+	is.EqualError(AliasNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK"), "doger: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
 
 	i = New()
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
-	is.NoError(AsNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker"))
+	is.NoError(AliasNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker"))
 }
 
-func TestAsNamed_NilInjector(t *testing.T) {
+func TestAliasNamed_NilInjector(t *testing.T) {
 	tests := []struct {
 		name string
 		use  func(t *testing.T, root *RootScope)
@@ -1114,14 +1114,14 @@ func TestAsNamed_NilInjector(t *testing.T) {
 
 			root := New()
 			provideGreeter(root, "nil-alias-base")
-			require.NoError(t, AsNamed[*greeterImpl, Greeter](root, "nil-alias-base", "nil-alias"))
+			require.NoError(t, AliasNamed[*greeterImpl, Greeter](root, "nil-alias-base", "nil-alias"))
 
 			tt.use(t, root)
 		})
 	}
 }
 
-func TestMustAsNamed(t *testing.T) {
+func TestMustAliasNamed(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
@@ -1130,7 +1130,7 @@ func TestMustAsNamed(t *testing.T) {
 
 	// Test successful named alias creation
 	is.NotPanics(func() {
-		MustAsNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker")
+		MustAliasNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test that the named alias was created and can be invoked
@@ -1140,17 +1140,17 @@ func TestMustAsNamed(t *testing.T) {
 
 	// Test panic on invalid interface implementation
 	is.Panics(func() {
-		MustAsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker")
+		MustAliasNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test panic on service not declared
 	is.Panics(func() {
-		MustAsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker")
+		MustAliasNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test panic on self-reference
 	is.Panics(func() {
-		MustAsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK")
+		MustAliasNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK")
 	})
 
 	// Test with interface-to-interface named alias
@@ -1161,7 +1161,7 @@ func TestMustAsNamed(t *testing.T) {
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NotPanics(func() {
-		MustAsNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker")
+		MustAliasNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test that the interface named alias works
@@ -1173,7 +1173,7 @@ func TestMustAsNamed(t *testing.T) {
 	ProvideNamed(i, "custom-source", func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NotPanics(func() {
-		MustAsNamed[iTestHeathchecker, Healthchecker](i, "custom-source", "custom-target")
+		MustAliasNamed[iTestHeathchecker, Healthchecker](i, "custom-source", "custom-target")
 	})
 
 	hc3, err3 := InvokeNamed[Healthchecker](i, "custom-target")

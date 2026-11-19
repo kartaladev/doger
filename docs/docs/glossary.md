@@ -71,7 +71,7 @@ The process of executing a procedure or function through a call.
 
 ## Interface Binding {#interface-binding}
 
-A technique in DI that allows a concrete implementation to be bound to an interface type. This enables loose coupling by allowing services to depend on interfaces rather than concrete implementations. Interface binding can be done explicitly using `doger.As()` or implicitly using `doger.InvokeAs()`.
+A technique in DI that allows a concrete implementation to be bound to an interface type. This enables loose coupling by allowing services to depend on interfaces rather than concrete implementations. Interface binding can be done explicitly using `doger.Alias()` or implicitly using `doger.InvokeAs()`.
 
 This pattern follows the Go motto "Accept interfaces, return structs", which means:
 

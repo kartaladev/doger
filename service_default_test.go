@@ -338,7 +338,7 @@ func TestAsDefault_AliasResolvesThroughDecision(t *testing.T) {
 	root := New()
 	ext := root.Scope("ext")
 	Provide(ext, dialerProvider("default-dialer", nil), AsDefault())
-	require.NoError(t, As[*dfDialer, dfDialing](ext))
+	require.NoError(t, Alias[*dfDialer, dfDialing](ext))
 	Provide(root, dialerProvider("app-dialer", nil))
 
 	dialer, err := Invoke[dfDialing](ext)

@@ -996,7 +996,7 @@ func TestInvokeAs_Deterministic(t *testing.T) {
 			provideGreeter(root, "a")
 			request := root.Scope("request")
 			// the only match in the nearest scope
-			if err := AsNamed[*greeterImpl, Greeter](request, "a", "g"); err != nil {
+			if err := AliasNamed[*greeterImpl, Greeter](request, "a", "g"); err != nil {
 				panic(err)
 			}
 			return request
@@ -1253,9 +1253,9 @@ func TestInvokeAs_SkipsInvoker(t *testing.T) {
 			target := "decor"
 			for index, alias := range tt.aliases {
 				if index == 0 {
-					require.NoError(t, AsNamed[*greeterDecor, Greeter](root, target, alias))
+					require.NoError(t, AliasNamed[*greeterDecor, Greeter](root, target, alias))
 				} else {
-					require.NoError(t, AsNamed[Greeter, Greeter](root, target, alias))
+					require.NoError(t, AliasNamed[Greeter, Greeter](root, target, alias))
 				}
 				target = alias
 			}
@@ -1323,7 +1323,7 @@ func TestInvokeAs_SkipsAliasOfShadowedName(t *testing.T) {
 
 	root := New()
 	provideGreeter(root, "svc")
-	require.NoError(t, AsNamed[*greeterImpl, Greeter](root, "svc", "g"))
+	require.NoError(t, AliasNamed[*greeterImpl, Greeter](root, "svc", "g"))
 	child := root.Scope("child")
 	ProvideNamed(child, "svc", func(i Injector) (*greeterDecor, error) {
 		inner, err := InvokeAs[Greeter](i)
@@ -1494,7 +1494,7 @@ func TestInvokeStruct_FallbackSkipsInvokerAlias(t *testing.T) {
 		}
 		return &greeterDecor{inner: value.G}, nil
 	})
-	require.NoError(t, AsNamed[*greeterDecor, Greeter](root, "decor", "decor-alias"))
+	require.NoError(t, AliasNamed[*greeterDecor, Greeter](root, "decor", "decor-alias"))
 	provideGreeter(root, "base")
 
 	decor, err := InvokeNamed[*greeterDecor](root, "decor")

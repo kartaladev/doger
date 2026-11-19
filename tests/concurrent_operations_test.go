@@ -49,7 +49,7 @@ func TestConcurrentServiceAliasOperations(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 			aliasName := fmt.Sprintf("alias-%d", index)
-			errors[index] = doger.AsNamed[string, string](root, "base-service", aliasName)
+			errors[index] = doger.AliasNamed[string, string](root, "base-service", aliasName)
 		}(i)
 	}
 
@@ -279,7 +279,7 @@ func TestConcurrentServiceAliasReplacement(t *testing.T) {
 		return "original-base-value", nil
 	})
 
-	err := doger.AsNamed[string, string](root, "base-for-alias", "service-alias")
+	err := doger.AliasNamed[string, string](root, "base-for-alias", "service-alias")
 	is.NoError(err)
 
 	// Invoke through alias - should get original value

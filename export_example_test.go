@@ -34,17 +34,22 @@ func ExampleExport() {
 	_, err := Invoke[*examplePool](root)
 	fmt.Println("pool visible from root:", !errors.Is(err, ErrServiceNotFound))
 
+	// only a service registered in "redis" itself can be exported
+	err = Export[*exampleCacheApp](redis)
+	fmt.Println("export of a missing source:", errors.Is(err, ErrServiceNotFound))
+
 	// the app, which depends on the export, shuts down before "redis"
 	root.Shutdown()
 	// Output:
 	// pool visible from root: false
+	// export of a missing source: true
 	// app closed
 	// pool closed
 }
 
 type exampleDatabase struct{ dsn string }
 
-func ExampleExportAs() {
+func ExampleWithExportName() {
 	root := New()
 	primary := root.Scope("primary")
 	replica := root.Scope("replica")
@@ -52,8 +57,8 @@ func ExampleExportAs() {
 	// both scopes register the same type: publish them under distinct names
 	ProvideValue(primary, &exampleDatabase{dsn: "primary"})
 	ProvideValue(replica, &exampleDatabase{dsn: "replica"})
-	MustExport[*exampleDatabase](primary, ExportAs("db-primary"))
-	MustExport[*exampleDatabase](replica, ExportAs("db-replica"))
+	MustExport[*exampleDatabase](primary, WithExportName("db-primary"))
+	MustExport[*exampleDatabase](replica, WithExportName("db-replica"))
 
 	fmt.Println(MustInvokeNamed[*exampleDatabase](root, "db-primary").dsn)
 	fmt.Println(MustInvokeNamed[*exampleDatabase](root, "db-replica").dsn)

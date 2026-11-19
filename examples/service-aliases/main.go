@@ -29,9 +29,9 @@ func main() {
 	fmt.Println("  - ReadOnlyDatabase: Read-only operations only")
 	fmt.Println("  - WriteDatabase: Write operations only")
 
-	_ = doger.As[*Database, DatabaseInterface](injector)
-	_ = doger.As[*Database, ReadOnlyDatabase](injector)
-	_ = doger.As[*Database, WriteDatabase](injector)
+	_ = doger.Alias[*Database, DatabaseInterface](injector)
+	_ = doger.Alias[*Database, ReadOnlyDatabase](injector)
+	_ = doger.Alias[*Database, WriteDatabase](injector)
 
 	// Step 3: Register repositories that depend on DatabaseInterface
 	fmt.Println("Step 3: Registering repositories (use DatabaseInterface)")

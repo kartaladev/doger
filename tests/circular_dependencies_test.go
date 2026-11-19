@@ -393,7 +393,7 @@ func TestCircularDependency_ServiceAlias(t *testing.T) {
 		_, err := doger.InvokeNamed[string](inj, "serviceA")
 		return "B", err
 	})
-	doger.MustAsNamed[string, string](i, "serviceB", "aliasB")
+	doger.MustAliasNamed[string, string](i, "serviceB", "aliasB")
 
 	_, err := doger.InvokeNamed[string](i, "serviceA")
 	is.Error(err)

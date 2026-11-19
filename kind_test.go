@@ -514,7 +514,7 @@ func TestRunnable_AutoDetection(t *testing.T) {
 			name: "enabled_with_alias", enabled: true,
 			register: func(t *testing.T, root *RootScope, rec *callRecorder) {
 				Provide(root, newJob(rec))
-				require.NoError(t, As[*runRecorder, Runner](root))
+				require.NoError(t, Alias[*runRecorder, Runner](root))
 			},
 			runs: 1,
 		},

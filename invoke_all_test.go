@@ -290,7 +290,7 @@ func TestInvokeAll_AnyType(t *testing.T) {
 	var aCalls, bCalls atomic.Int32
 	ProvideNamed(root, "a", func(Injector) (int, error) { aCalls.Add(1); return 1, nil })
 	ProvideNamed(root, "b", func(Injector) (string, error) { bCalls.Add(1); return "b", nil })
-	require.NoError(t, AsNamed[int, any](root, "a", "alias-a"))
+	require.NoError(t, AliasNamed[int, any](root, "a", "alias-a"))
 
 	members, err := InvokeAll[any](root)
 
@@ -326,7 +326,7 @@ func TestInvokeAll_AliasExcluded(t *testing.T) {
 	root := New()
 	audit := newAudit("audit")
 	Provide(root, func(Injector) (*AuditHandler, error) { return audit, nil })
-	require.NoError(t, As[*AuditHandler, EventHandler](root))
+	require.NoError(t, Alias[*AuditHandler, EventHandler](root))
 
 	handlers, err := InvokeAll[EventHandler](root)
 
@@ -568,7 +568,7 @@ func TestInvokeAllMap_AliasExcluded(t *testing.T) {
 	root := New()
 	audit := newAudit("audit")
 	Provide(root, func(Injector) (*AuditHandler, error) { return audit, nil })
-	require.NoError(t, As[*AuditHandler, EventHandler](root))
+	require.NoError(t, Alias[*AuditHandler, EventHandler](root))
 
 	handlers, err := InvokeAllMap[EventHandler](root)
 

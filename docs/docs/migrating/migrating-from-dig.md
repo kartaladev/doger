@@ -170,7 +170,7 @@ doger.Provide(injector, func(i doger.Injector) (*UserRepository, error) {
 })
 
 // Register the interface binding
-doger.As[*UserRepository, Repository](i)
+doger.Alias[*UserRepository, Repository](i)
 ```
 
 Or bind on service loading:
@@ -406,7 +406,7 @@ func main() {
 
 1. **Error handling** - `doger` returns errors from `Invoke()`, not `Provide()`
 2. **Circular dependencies** - `doger` will detect and report these
-3. **Interface bindings** - Use `doger.As` for interface implementations
+3. **Interface bindings** - Use `doger.Alias` for interface implementations
 4. **Panics vs errors** - Prefer `doger.MustInvoke` over `doger.Invoke` when a missing service should stop the program immediately instead of being handled as a recoverable error
 
 ## Testing {#testing}

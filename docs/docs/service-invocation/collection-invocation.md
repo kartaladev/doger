@@ -81,11 +81,11 @@ Including a default in a collection resolves it, which fixes its decision. Live 
 
 ## Aliases {#aliases}
 
-Aliases registered with `doger.As` or `doger.Bind` are never members. Their target represents itself, so an alias never duplicates a member:
+Aliases registered with `doger.Alias` or `doger.Bind` are never members. Their target represents itself, so an alias never duplicates a member:
 
 ```go
 doger.Provide(injector, NewAuditHandler)
-doger.As[*AuditHandler, EventHandler](injector)
+doger.Alias[*AuditHandler, EventHandler](injector)
 
 handlers, _ := doger.InvokeAll[EventHandler](injector)
 // one element: the *AuditHandler instance

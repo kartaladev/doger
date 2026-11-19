@@ -125,7 +125,7 @@ func TestAfterBuildHook_Fires(t *testing.T) {
 			name: "alias",
 			setup: func(root *RootScope) func() any {
 				ProvideNamed(root, "db", func(Injector) (*buildDB, error) { return &buildDB{}, nil })
-				if err := AsNamed[*buildDB, buildDBIface](root, "db", "iface"); err != nil {
+				if err := AliasNamed[*buildDB, buildDBIface](root, "db", "iface"); err != nil {
 					panic(err)
 				}
 				return func() any { db, _ := InvokeNamed[buildDBIface](root, "iface"); return db }

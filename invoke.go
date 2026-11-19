@@ -464,7 +464,7 @@ func newCollectionCandidate(name string, scope *Scope, s any, target reflect.Typ
 }
 
 // excludedAlias reports whether the alias service is not a collection member
-// read from reader: an As or Bind alias never is, and an export is not one
+// read from reader: an Alias or Bind alias never is, and an export is not one
 // inside its source scope. reader is nil when no scope it sees holds exports.
 func excludedAlias(service any, reader *Scope) bool {
 	if reader == nil {

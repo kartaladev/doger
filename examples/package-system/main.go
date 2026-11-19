@@ -45,9 +45,9 @@ func main() {
 
 	// Create aliases for Configuration to bridge interface types
 	// This is needed for doger.InvokeAs to work across packages
-	_ = doger.As[*Configuration, database.Configuration](injector)
-	_ = doger.As[*Configuration, logging.Configuration](injector)
-	_ = doger.As[*Configuration, application.Configuration](injector)
+	_ = doger.Alias[*Configuration, database.Configuration](injector)
+	_ = doger.Alias[*Configuration, logging.Configuration](injector)
+	_ = doger.Alias[*Configuration, application.Configuration](injector)
 
 	fmt.Println("=== Package System Example ===")
 	fmt.Println("Available services:", injector.ListProvidedServices())

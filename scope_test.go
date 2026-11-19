@@ -1872,7 +1872,7 @@ func TestScopeShutdown_AfterContextEnded(t *testing.T) {
 				target := &countedShutdowner{}
 				ProvideNamed(tenant.RootScope(), "target", func(Injector) (*countedShutdowner, error) { return target, nil })
 				MustInvokeNamed[*countedShutdowner](tenant.RootScope(), "target")
-				require.NoError(t, AsNamed[*countedShutdowner, ShutdownerWithError](tenant, "target", "s"))
+				require.NoError(t, AliasNamed[*countedShutdowner, ShutdownerWithError](tenant, "target", "s"))
 				return target.calls.Load
 			},
 			ctx: cancelled,
@@ -2822,7 +2822,7 @@ func TestScope_ExportCount(t *testing.T) {
 	assert.Equal(t, int64(1), root.self.exportCount())
 	assert.Equal(t, int64(0), redis.exportCount())
 
-	MustExport[*exClient](redis, ExportAs("second"))
+	MustExport[*exClient](redis, WithExportName("second"))
 	MustExportNamed[*exClient](redis, "default-client")
 	assert.Equal(t, int64(3), root.self.exportCount())
 

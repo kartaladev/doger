@@ -128,7 +128,7 @@ client := doger.MustInvoke[*Client](injector)
 
 The child keeps ownership of the exported instance: it is built, started, health-checked and shut down exactly once, by the child. The export itself is an alias bound to the child scope (listed as `alias`): it is never started or shut down, and it always resolves from the child, whatever scope invokes it.
 
-`ExportNamed` exports a named service, and `doger.ExportAs("name")` publishes it under another name, for example when two child scopes export the same type. An export reaches the direct parent only; to publish further up, export it again from the parent:
+`ExportNamed` exports a named service, and `doger.WithExportName("name")` publishes it under another name, for example when two child scopes export the same type. An export reaches the direct parent only; to publish further up, export it again from the parent:
 
 ```go
 a := injector.Scope("a")
@@ -138,7 +138,7 @@ doger.MustExport[*Client](b) // into "a"
 doger.MustExport[*Client](a) // into the root
 ```
 
-`Export` returns an error, and registers nothing, when the scope is nil or has no parent, when the service is not registered in that scope itself (a service it only sees through an ancestor cannot be exported), when its type is not assignable to `T`, or when the published name is empty or already registered in the parent. `MustExport` and `MustExportNamed` panic with that error. Invoking an export after its scope was shut down fails with `ErrServiceNotFound`.
+`Export` returns an error, and registers nothing, when the scope is nil (matching `doger.ErrNilInjector`) or has no parent, when the service is not registered in that scope itself (matching `doger.ErrServiceNotFound`; a service it only sees through an ancestor cannot be exported), when its type is not assignable to `T` (matching `doger.ErrServiceTypeMismatch`), or when the published name is empty or already registered in the parent (matching `doger.ErrServiceAlreadyDeclared`). `MustExport` and `MustExportNamed` panic with that error. Invoking an export after its scope was shut down fails with `ErrServiceNotFound`.
 
 ### Ownership {#scope-export-ownership}
 
@@ -149,7 +149,7 @@ doger.MustExport[*Client](a) // into the root
 
 ### Collections {#scope-export-collections}
 
-Unlike `As` and `Bind` aliases, an export is a member of collections (`InvokeAll`, `InvokeAllMap`, live collections) read from the parent and its other descendants, since the exported service is not visible there otherwise. Read from the exporting scope or its descendants, the export is left out and the service is counted once, under its own name. `InvokeAs` in the parent finds the export too.
+Unlike `Alias` and `Bind` aliases, an export is a member of collections (`InvokeAll`, `InvokeAllMap`, live collections) read from the parent and its other descendants, since the exported service is not visible there otherwise. Read from the exporting scope or its descendants, the export is left out and the service is counted once, under its own name. `InvokeAs` in the parent finds the export too.
 
 ### Exporting a default {#scope-export-defaults}
 
@@ -174,7 +174,7 @@ An exporting child runs its `HookScopeClosing` hooks just before its first servi
 
 | Behavior                      | Zero-config default                                                         | Consumer control                                                                                     |
 | ----------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Name of the published service | The name of the child service                                               | `doger.ExportAs(name)`                                                                               |
+| Name of the published service | The name of the child service                                               | `doger.WithExportName(name)`                                                                         |
 | Lifecycle of the instance     | Owned by the child: started, health-checked and shut down there, once       | Not overridable: one owner per instance; to make the parent own a service, register it in the parent |
 | Shutdown order                | Dependency order across the parent and its exporting descendants            | `DeclareDependency` and `DependsOn` add edges; nothing shuts the exported service down first         |
 | Scopes without exports        | Shutdown exactly as before                                                  | -                                                                                                    |

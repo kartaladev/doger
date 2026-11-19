@@ -563,7 +563,7 @@ func TestProvideOptions_CloneOverrideAlias(t *testing.T) {
 		{
 			name: "alias_has_none",
 			operation: func(t *testing.T, root *RootScope) Injector {
-				require.NoError(t, As[*optServer, optLifecycle](root))
+				require.NoError(t, Alias[*optServer, optLifecycle](root))
 				return root
 			},
 			service: NameOf[optLifecycle](),
@@ -572,7 +572,7 @@ func TestProvideOptions_CloneOverrideAlias(t *testing.T) {
 		{
 			name: "alias_target_keeps_its_own",
 			operation: func(t *testing.T, root *RootScope) Injector {
-				require.NoError(t, As[*optServer, optLifecycle](root))
+				require.NoError(t, Alias[*optServer, optLifecycle](root))
 				return root
 			},
 			service: serverName,

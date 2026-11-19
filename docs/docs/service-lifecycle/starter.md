@@ -43,7 +43,7 @@ Unlike `Shutdowner`, which is detected on the built instance, a starter is detec
 | Lazy or eager, registered type has a `Start` method | yes                                               |
 | Registered under an interface type without `Start`  | no, unless registered with `doger.AsStarter()`    |
 | Transient                                           | never (a factory has no single instance to start) |
-| Alias (`As`, `Bind`)                                | no; the target is started once                    |
+| Alias (`Alias`, `Bind`)                             | no; the target is started once                    |
 | Default (`AsDefault()`) that yields                 | no; the service it yields to is started once      |
 | Default (`AsDefault()`) that does not yield         | as the same registration without `AsDefault()`    |
 

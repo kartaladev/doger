@@ -55,12 +55,12 @@ func TestExport_Publishes(t *testing.T) {
 		},
 		{
 			name:      "export_as",
-			export:    func(from *Scope) error { return Export[*exClient](from, ExportAs("cache-client")) },
+			export:    func(from *Scope) error { return Export[*exClient](from, WithExportName("cache-client")) },
 			published: "cache-client",
 		},
 		{
 			name:      "export_named_as",
-			export:    func(from *Scope) error { return ExportNamed[*exClient](from, clientName, ExportAs("c")) },
+			export:    func(from *Scope) error { return ExportNamed[*exClient](from, clientName, WithExportName("c")) },
 			published: "c",
 		},
 	}
@@ -128,10 +128,11 @@ func TestExport_Invalid(t *testing.T) {
 		absent   []string // names the root must not hold
 	}{
 		{
-			name:    "nil_scope",
-			export:  func(*RootScope, *Scope) error { return Export[*exClient](nil) },
-			message: "doger: cannot export from a nil scope",
-			absent:  []string{clientName},
+			name:     "nil_scope",
+			export:   func(*RootScope, *Scope) error { return Export[*exClient](nil) },
+			message:  "doger: cannot export from a nil scope",
+			sentinel: ErrNilInjector,
+			absent:   []string{clientName},
 		},
 		{
 			name:    "root_scope",
@@ -140,27 +141,29 @@ func TestExport_Invalid(t *testing.T) {
 			absent:  []string{clientName},
 		},
 		{
-			name:    "missing",
-			export:  func(_ *RootScope, redis *Scope) error { return Export[*exMissing](redis) },
-			message: fmt.Sprintf("doger: service `%s` has not been declared", NameOf[*exMissing]()),
-			absent:  []string{NameOf[*exMissing]()},
+			name:     "missing",
+			export:   func(_ *RootScope, redis *Scope) error { return Export[*exMissing](redis) },
+			message:  NameOf[*exMissing](),
+			sentinel: ErrServiceNotFound,
+			absent:   []string{NameOf[*exMissing]()},
 		},
 		{
-			name:    "type_mismatch",
-			export:  func(_ *RootScope, redis *Scope) error { return ExportNamed[*exOther](redis, clientName) },
-			message: fmt.Sprintf("doger: service `%s` is not assignable to", clientName),
-			absent:  []string{clientName},
+			name:     "type_mismatch",
+			export:   func(_ *RootScope, redis *Scope) error { return ExportNamed[*exOther](redis, clientName) },
+			message:  clientName,
+			sentinel: ErrServiceTypeMismatch,
+			absent:   []string{clientName},
 		},
 		{
 			name:    "empty_name",
-			export:  func(_ *RootScope, redis *Scope) error { return Export[*exClient](redis, ExportAs("")) },
+			export:  func(_ *RootScope, redis *Scope) error { return Export[*exClient](redis, WithExportName("")) },
 			message: "doger: export name cannot be empty",
 			absent:  []string{""},
 		},
 		{
 			name:     "duplicate",
-			export:   func(_ *RootScope, redis *Scope) error { return Export[*exClient](redis, ExportAs(otherName)) },
-			message:  fmt.Sprintf("doger: service `%s` has already been declared", otherName),
+			export:   func(_ *RootScope, redis *Scope) error { return Export[*exClient](redis, WithExportName(otherName)) },
+			message:  otherName,
 			sentinel: ErrServiceAlreadyDeclared,
 		},
 	}
@@ -246,7 +249,7 @@ func TestExport_ResolvesFromSource(t *testing.T) {
 			app := root.Scope("app")
 			Provide(redis, clientProvider("redis-client", nil))
 			Provide(app, clientProvider("app-client", nil))
-			require.NoError(t, Export[*exClient](redis, ExportAs("shared")))
+			require.NoError(t, Export[*exClient](redis, WithExportName("shared")))
 
 			injectors := map[string]Injector{"root": root, "app": app, "redis": redis}
 			client, err := InvokeNamed[*exClient](injectors[from], "shared")
@@ -491,7 +494,7 @@ func TestExport_SourceScopeHealthCheck(t *testing.T) {
 			Provide(redis, func(Injector) (*exPool, error) { return pool, nil }, tt.opts...)
 			_, err := Invoke[*exPool](redis)
 			require.NoError(t, err)
-			require.NoError(t, Export[*exPool](redis, ExportAs("pool")))
+			require.NoError(t, Export[*exPool](redis, WithExportName("pool")))
 
 			results := redis.HealthCheck()
 
@@ -527,7 +530,7 @@ func TestExport_TargetShutdownOnce(t *testing.T) {
 			Provide(redis, func(Injector) (*exPool, error) { return pool, nil })
 			_, err := Invoke[*exPool](redis)
 			require.NoError(t, err)
-			require.NoError(t, Export[*exPool](redis, ExportAs("pool")))
+			require.NoError(t, Export[*exPool](redis, WithExportName("pool")))
 
 			tt.operation(root, redis)
 
@@ -588,7 +591,7 @@ func TestExport_CollectionMembership(t *testing.T) {
 			redis := root.Scope("redis")
 			app := root.Scope("app")
 			Provide(redis, func(Injector) (*exPool, error) { return &exPool{}, nil }, tt.opts...)
-			require.NoError(t, Export[*exPool](redis, ExportAs("pool")))
+			require.NoError(t, Export[*exPool](redis, WithExportName("pool")))
 
 			injectors := map[string]Injector{"root": root, "app": app, "redis": redis}
 			members, err := InvokeAllMap[Healthchecker](injectors[tt.from])
@@ -639,7 +642,7 @@ func TestExport_InvokeAsSkipsOwnExport(t *testing.T) {
 		{
 			name:   "direct",
 			scope:  func(a, _ *Scope) *Scope { return a },
-			export: func(a, _ *Scope) error { return ExportNamed[exAPI](a, "dec", ExportAs("api")) },
+			export: func(a, _ *Scope) error { return ExportNamed[exAPI](a, "dec", WithExportName("api")) },
 		},
 		{
 			name:  "chained",
@@ -648,7 +651,7 @@ func TestExport_InvokeAsSkipsOwnExport(t *testing.T) {
 				if err := ExportNamed[exAPI](c, "dec"); err != nil {
 					return err
 				}
-				return ExportNamed[exAPI](a, "dec", ExportAs("api"))
+				return ExportNamed[exAPI](a, "dec", WithExportName("api"))
 			},
 		},
 	}

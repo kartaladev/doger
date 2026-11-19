@@ -286,7 +286,7 @@ func TestHealthCheck_ServiceWithoutCheckNeverTimesOut(t *testing.T) {
 			name: "injector_alias_to_lazy_never_invoked_cancelled", entry: healthCheckTestEntryInjector, ctxState: "cancelled",
 			register: func(i *RootScope) string {
 				Provide(i, func(Injector) (*healthCheckTestResult, error) { return &healthCheckTestResult{}, nil })
-				must0(As[*healthCheckTestResult, Healthchecker](i))
+				must0(Alias[*healthCheckTestResult, Healthchecker](i))
 				return NameOf[Healthchecker]()
 			},
 		},

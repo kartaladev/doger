@@ -103,13 +103,13 @@ func (x *ExtensionContext) closedError() error {
 // applied only once the extension's Extend returned nil, so a failing
 // install publishes nothing; an export that then fails, for example because
 // the service was never registered, fails the install. Options are those of
-// Export, such as [ExportAs].
+// Export, such as [WithExportName].
 func ExtensionExport[T any](x *ExtensionContext, opts ...ExportOption) error {
 	return ExtensionExportNamed[T](x, NameOf[T](), opts...)
 }
 
 // ExtensionExportNamed is like [ExtensionExport] for the service registered
-// as name in x.Scope(); it is published as name unless [ExportAs] renames
+// as name in x.Scope(); it is published as name unless [WithExportName] renames
 // it.
 func ExtensionExportNamed[T any](x *ExtensionContext, name string, opts ...ExportOption) error {
 	if x.closed.Load() {

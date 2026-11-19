@@ -34,7 +34,7 @@ import Head from '@docusaurus/Head';
           name: 'Can I use doger without generics?',
           acceptedAnswer: {
             '@type': 'Answer',
-            text: 'No, doger requires Go 1.27 or later because its entire API — Provide, Invoke, Override, As — is built on generic type parameters. There is no reflection-based fallback for older Go versions.',
+            text: 'No, doger requires Go 1.27 or later because its entire API — Provide, Invoke, Override, Alias — is built on generic type parameters. There is no reflection-based fallback for older Go versions.',
           },
         },
         {
@@ -96,7 +96,7 @@ No. `doger` resolves and injects services using Go generics (Go 1.27+), so type 
 
 ## Can I use doger without generics? {#can-i-use-samberdo-without-generics}
 
-No, `doger` requires Go 1.27 or later because its entire API — `Provide`, `Invoke`, `Override`, `As` — is built on generic type parameters. There is no reflection-based fallback for older Go versions.
+No, `doger` requires Go 1.27 or later because its entire API — `Provide`, `Invoke`, `Override`, `Alias` — is built on generic type parameters. There is no reflection-based fallback for older Go versions.
 
 ## How do I mock a service in tests? {#how-do-i-mock-a-service-in-tests}
 

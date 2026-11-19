@@ -402,7 +402,7 @@ func TestHealthRound_EachCheckOnce(t *testing.T) {
 		i := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler})
 		db := newHealthRunTestBlocking(nil)
 		ProvideNamedValue(i, "db", db)
-		must0(AsNamed[*healthRunTestBlocking, Healthchecker](i, "db", "hc"))
+		must0(AliasNamed[*healthRunTestBlocking, Healthchecker](i, "db", "hc"))
 		child := i.Scope("child")
 		svc := &healthReportTestSwitch{}
 		ProvideNamedValue(child, "svc", svc)

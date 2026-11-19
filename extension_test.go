@@ -305,7 +305,7 @@ func (e redisExtension) Extend(x *ExtensionContext) error {
 		return ErrExtensionDisabled
 	}
 	if e.InstanceKey != "" { // each instance publishes its own client
-		return ExtensionExport[*extClient](x, ExportAs(NameOf[*extClient]()+"#"+e.InstanceKey))
+		return ExtensionExport[*extClient](x, WithExportName(NameOf[*extClient]()+"#"+e.InstanceKey))
 	}
 	return ExtensionExport[*extClient](x)
 }

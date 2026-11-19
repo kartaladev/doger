@@ -271,7 +271,7 @@ func TestHealthCheck_EachCheckOnce(t *testing.T) {
 			name: "alias",
 			setup: func(i *RootScope, a, _ *healthRunTestCounter) func() map[string]error {
 				ProvideValue(i, a)
-				must0(As[*healthRunTestCounter, Healthchecker](i))
+				must0(Alias[*healthRunTestCounter, Healthchecker](i))
 				return i.HealthCheck
 			},
 			want: map[string]error{dbName: nil, hcName: nil}, countA: 1,
@@ -280,7 +280,7 @@ func TestHealthCheck_EachCheckOnce(t *testing.T) {
 			name: "alias_error",
 			setup: func(i *RootScope, a, _ *healthRunTestCounter) func() map[string]error {
 				ProvideValue(i, a)
-				must0(As[*healthRunTestCounter, Healthchecker](i))
+				must0(Alias[*healthRunTestCounter, Healthchecker](i))
 				return i.HealthCheck
 			},
 			errA: errDown,

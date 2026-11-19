@@ -1,6 +1,7 @@
 package doger
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -392,11 +393,11 @@ func aliasMyServiceProvider(i Injector) (*myService, error) {
 	return &myService{Name: "alias-test-service"}, nil
 }
 
-func ExampleAs() {
+func ExampleAlias() {
 	injector := New()
 
 	Provide(injector, aliasMyServiceProvider)
-	err := As[*myService, IMyService](injector)
+	err := Alias[*myService, IMyService](injector)
 
 	fmt.Println(err)
 
@@ -406,17 +407,22 @@ func ExampleAs() {
 
 	fmt.Println(service1.GetName())
 	fmt.Println(service2.GetName())
+
+	// the alias name is taken now
+	err = Alias[*myService, IMyService](injector)
+	fmt.Println(errors.Is(err, ErrServiceAlreadyDeclared))
 	// Output:
 	// <nil>
 	// alias-test-service
 	// alias-test-service
+	// true
 }
 
-func ExampleMustAs() {
+func ExampleMustAlias() {
 	injector := New()
 
 	Provide(injector, aliasMyServiceProvider)
-	MustAs[*myService, IMyService](injector)
+	MustAlias[*myService, IMyService](injector)
 
 	// Now both work:
 	service1 := MustInvoke[*myService](injector)
@@ -429,11 +435,11 @@ func ExampleMustAs() {
 	// alias-test-service
 }
 
-func ExampleAsNamed() {
+func ExampleAliasNamed() {
 	injector := New()
 
 	ProvideNamed(injector, "my-service", aliasMyServiceProvider)
-	err := AsNamed[*myService, IMyService](injector, "my-service", "my-interface")
+	err := AliasNamed[*myService, IMyService](injector, "my-service", "my-interface")
 
 	fmt.Println(err)
 
@@ -445,11 +451,11 @@ func ExampleAsNamed() {
 	// alias-test-service
 }
 
-func ExampleMustAsNamed() {
+func ExampleMustAliasNamed() {
 	injector := New()
 
 	ProvideNamed(injector, "my-service", aliasMyServiceProvider)
-	MustAsNamed[*myService, IMyService](injector, "my-service", "my-interface")
+	MustAliasNamed[*myService, IMyService](injector, "my-service", "my-interface")
 
 	// Retrieve using the alias name
 	service := MustInvokeNamed[IMyService](injector, "my-interface")

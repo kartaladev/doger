@@ -1,23 +1,23 @@
 ---
 title: Interface binding
-description: Bind and invoke Go interfaces with doger using implicit aliasing (doger.InvokeAs) or explicit binding (doger.As), following "accept interfaces, return structs".
+description: Bind and invoke Go interfaces with doger using implicit aliasing (doger.InvokeAs) or explicit binding (doger.Alias), following "accept interfaces, return structs".
 sidebar_position: 2
 ---
 
 # Interface binding
 
-Interface binding in `doger` lets you register a concrete struct and invoke it through an interface it implements, either implicitly (`doger.InvokeAs`) or explicitly (`doger.As`). You have probably already heard the Go proverb "Accept interfaces, return structs". The basic idea is to let the consumer define the interfaces it uses while the producer returns concrete types.
+Interface binding in `doger` lets you register a concrete struct and invoke it through an interface it implements, either implicitly (`doger.InvokeAs`) or explicitly (`doger.Alias`). You have probably already heard the Go proverb "Accept interfaces, return structs". The basic idea is to let the consumer define the interfaces it uses while the producer returns concrete types.
 
 This library offers a great API for assembling a large number of modules with loose coupling and a clear separation of concerns.
 
-Aliases must be Go interfaces. It can be declared explicitly on injection using `doger.As()`, or invoked implicitly using `doger.InvokeAs()`.
+Aliases must be Go interfaces. It can be declared explicitly on injection using `doger.Alias()`, or invoked implicitly using `doger.InvokeAs()`.
 
 1. **Implicit alias invocation**:
    - provide struct, invoke interface
    - `doger.InvokeAs()`
 2. **Explicit alias injection**:
    - provide struct, bind interface, invoke interface
-   - `doger.As()`
+   - `doger.Alias()`
 
 ## Implicit invocation (preferred) {#implicit-invocation-preferred}
 
@@ -89,10 +89,12 @@ If you rely a lot on `doger.Scope`, explicit injection might be used to define c
 
 4 methods are available for explicit aliasing:
 
-- `doger.As`
-- `doger.MustAs`
-- `doger.AsNamed`
-- `doger.MustAsNamed`
+- `doger.Alias`
+- `doger.MustAlias`
+- `doger.AliasNamed`
+- `doger.MustAliasNamed`
+
+`Alias` and `AliasNamed` return an error, and register nothing, when the concrete type does not implement the interface, when the target is not registered (matching `doger.ErrServiceNotFound`), when the alias name is already registered in the scope (matching `doger.ErrServiceAlreadyDeclared`), or when the injector is nil (matching `doger.ErrNilInjector`). The `Must` variants panic with that error.
 
 ```go
 type Metric interface {
@@ -115,7 +117,7 @@ doger.Provide(i, func(i doger.Injector) (*RequestPerSecond, error) {
 })
 
 // explicit aliasing
-err := doger.As[*RequestPerSecond, Metric](injector)
+err := doger.Alias[*RequestPerSecond, Metric](injector)
 if err != nil {
     // ...
 }
@@ -133,7 +135,7 @@ An alias never shuts its target down. Shutting a scope down, or calling `doger.S
 
 ```go
 child := injector.Scope("request")
-doger.As[*RequestPerSecond, Metric](child)
+doger.Alias[*RequestPerSecond, Metric](child)
 _ = doger.MustInvoke[Metric](child)
 
 child.Shutdown()    // removes the alias; *RequestPerSecond keeps running

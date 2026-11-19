@@ -193,14 +193,22 @@ func TestResolutionErrors_DuplicateRegistration(t *testing.T) {
 
 	two := func(Injector) (int, error) { return 2, nil }
 
-	// The alias rows of the scenario need AliasNamed, which group 4 adds.
 	tests := []struct {
 		name     string
-		register func(root *RootScope)
+		register func(root *RootScope)       // panics with the error
+		returns  func(root *RootScope) error // returns the error, when set
 	}{
 		{name: "provide_named", register: func(root *RootScope) { ProvideNamed(root, "db", two) }},
 		{name: "provide_named_value", register: func(root *RootScope) { ProvideNamedValue(root, "db", 2) }},
 		{name: "provide_named_transient", register: func(root *RootScope) { ProvideNamedTransient(root, "db", two) }},
+		{name: "alias_named", returns: func(root *RootScope) error {
+			ProvideNamedValue(root, "other", 3)
+			return AliasNamed[int, int](root, "other", "db")
+		}},
+		{name: "must_alias_named", register: func(root *RootScope) {
+			ProvideNamedValue(root, "other", 3)
+			MustAliasNamed[int, int](root, "other", "db")
+		}},
 	}
 
 	for _, tt := range tests {
@@ -211,10 +219,16 @@ func TestResolutionErrors_DuplicateRegistration(t *testing.T) {
 			root := New()
 			ProvideNamed(root, "db", func(Injector) (int, error) { return 1, nil })
 
-			recovered := recoverPanic(func() { tt.register(root) })
+			var err error
+			if tt.returns != nil {
+				is.NotPanics(func() { err = tt.returns(root) })
+			} else {
+				recovered := recoverPanic(func() { tt.register(root) })
+				var ok bool
+				err, ok = recovered.(error)
+				require.True(t, ok, "panic value %v must be an error", recovered)
+			}
 
-			err, ok := recovered.(error)
-			require.True(t, ok, "panic value %v must be an error", recovered)
 			is.ErrorIs(err, ErrServiceAlreadyDeclared)
 			is.EqualError(err, "doger: service `db` has already been declared")
 
@@ -260,7 +274,7 @@ func TestResolutionErrors_NilInjectorReturnsError(t *testing.T) {
 		{name: "invoke_struct", call: func() error { _, err := InvokeStruct[nilInjectorApp](nil); return err }},
 		{name: "health_check_named", call: func() error { return HealthCheckNamed(nil, "db") }},
 		{name: "shutdown_named", call: func() error { return ShutdownNamed(nil, "db") }},
-		{name: "alias_named", call: func() error { return AsNamed[int, int](nil, "a", "b") }},
+		{name: "alias_named", call: func() error { return AliasNamed[int, int](nil, "a", "b") }},
 		{name: "declare_dependency", call: func() error { return DeclareDependency(nil, "a", "b") }},
 		{name: "typed_nil_root_invoke", call: func() error { _, err := Invoke[int](typedNilRoot); return err }},
 		{name: "typed_nil_scope_invoke_named", call: func() error { _, err := InvokeNamed[int](typedNilScope, "db"); return err }},
@@ -295,7 +309,7 @@ func TestResolutionErrors_NilInjectorPanics(t *testing.T) {
 		{name: "provide_transient", call: func() { ProvideTransient[int](nil, provider) }},
 		{name: "override_named_value", call: func() { OverrideNamedValue(nil, "db", 1) }},
 		{name: "must_invoke", call: func() { MustInvoke[int](nil) }},
-		{name: "must_alias", call: func() { MustAs[int, int](nil) }},
+		{name: "must_alias", call: func() { MustAlias[int, int](nil) }},
 		{name: "invoke_collection", call: func() { InvokeCollection[int](nil) }},
 		{name: "explain_injector", call: func() { ExplainInjector(nil) }},
 		{name: "package", call: func() { Package(Lazy[int](provider))(nil) }},

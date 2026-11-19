@@ -40,7 +40,7 @@ func TestExplainService_ProviderFrame(t *testing.T) {
 			name: "alias",
 			register: func(t *testing.T, i doger.Injector) {
 				doger.Provide(i, newExplainFrameDB)
-				require.NoError(t, doger.As[*explainFrameDB, doger.Healthchecker](i))
+				require.NoError(t, doger.Alias[*explainFrameDB, doger.Healthchecker](i))
 			},
 			explain:  doger.ExplainService[doger.Healthchecker],
 			file:     "/service_alias.go",

@@ -42,7 +42,7 @@ func TestMixedServiceTypesComplexDependencies(t *testing.T) {
 	})
 
 	// Alias service that points to transient service
-	err := doger.AsNamed[string, string](root, "transient-dependent", "alias-service")
+	err := doger.AliasNamed[string, string](root, "transient-dependent", "alias-service")
 	is.NoError(err)
 
 	// Invoke the alias service multiple times
@@ -229,7 +229,7 @@ func TestMixedServiceTypesNestedScopes(t *testing.T) {
 	})
 
 	// Alias in child2 that points to child1 service
-	err := doger.AsNamed[string, string](child2, "child1-lazy", "child2-alias")
+	err := doger.AliasNamed[string, string](child2, "child1-lazy", "child2-alias")
 	is.NoError(err)
 
 	// Invoke the transient service
