@@ -81,6 +81,10 @@ jobs:
     - name: Release steps self-test
       run: scripts/release-steps.sh self-test
 
+    # the dry run checks the stripped tree with govulncheck, as release.yml does
+    - name: Install govulncheck
+      run: make govulncheck-install
+
     - name: Reject invalid versions
       run: |
           for v in v2.0.0 0.1.0 ""; do
