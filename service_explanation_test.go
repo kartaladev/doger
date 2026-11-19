@@ -1,6 +1,7 @@
 package doger
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -155,4 +156,82 @@ func TestExplain_ConcurrentWithShutdown(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+type explainEdgeA struct{}
+
+type explainEdgeB struct{}
+
+// explainEdgeFields resolves "b" by struct injection.
+type explainEdgeFields struct {
+	B *explainEdgeB `do:"b"`
+}
+
+func TestExplain_FailedDependencyNoEdge(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		b       string                 // the name "b" is registered under
+		resolve func(i Injector) error // how "a" resolves "b"
+	}{
+		{name: "named", b: "b", resolve: func(i Injector) error { _, err := InvokeNamed[*explainEdgeB](i, "b"); return err }},
+		{name: "named_any", b: "b", resolve: func(i Injector) error { _, err := InvokeNamed[any](i, "b"); return err }},
+		{name: "by_type", b: NameOf[*explainEdgeB](), resolve: func(i Injector) error { _, err := Invoke[*explainEdgeB](i); return err }},
+		{name: "struct", b: "b", resolve: func(i Injector) error { _, err := InvokeStruct[explainEdgeFields](i); return err }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+			must := require.New(t)
+
+			root := New()
+			errBDown := errors.New("b down")
+			ProvideNamed(root, tt.b, func(Injector) (*explainEdgeB, error) { return nil, errBDown })
+			ProvideNamed(root, "a", func(i Injector) (*explainEdgeA, error) { return &explainEdgeA{}, tt.resolve(i) })
+
+			_, err := InvokeNamed[*explainEdgeA](root, "a")
+			must.ErrorIs(err, errBDown)
+
+			a, ok := ExplainNamedService(root, "a")
+			must.True(ok)
+			is.Empty(a.Dependencies)
+			b, ok := ExplainNamedService(root, tt.b)
+			must.True(ok)
+			is.Empty(b.Dependents)
+		})
+	}
+}
+
+func TestExplain_RetryRecordsEdgeOnce(t *testing.T) {
+	t.Parallel()
+	is := assert.New(t)
+	must := require.New(t)
+
+	root := New()
+	var calls atomic.Int64
+	ProvideNamed(root, "b", func(Injector) (*explainEdgeB, error) {
+		if calls.Add(1) == 1 {
+			return nil, errors.New("b down")
+		}
+		return &explainEdgeB{}, nil
+	})
+	ProvideNamed(root, "a", func(i Injector) (*explainEdgeA, error) {
+		_, err := InvokeNamed[*explainEdgeB](i, "b")
+		return &explainEdgeA{}, err
+	})
+
+	_, err := InvokeNamed[*explainEdgeA](root, "a")
+	must.Error(err)
+	for range 2 {
+		_, err = InvokeNamed[*explainEdgeA](root, "a")
+		must.NoError(err)
+	}
+
+	a, ok := ExplainNamedService(root, "a")
+	must.True(ok)
+	must.Len(a.Dependencies, 1)
+	is.Equal("b", a.Dependencies[0].Service)
 }

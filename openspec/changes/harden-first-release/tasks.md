@@ -174,9 +174,9 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 25. Only successful builds record dependency edges
 
-- [ ] 25.1 RED: add `TestExplain_FailedDependencyNoEdge` (4 path rows) and `TestExplain_RetryRecordsEdgeOnce` (scenarios "A failed dependency records no edge", "A successful retry records the edge once"); verify the `named` and `named_any` rows fail with a recorded dependency
-- [ ] 25.2 GREEN: record the edge only after a successful build in `invokeByName` and `invokeAnyByNameAs`; verify the 25.1 tests pass and `make test` is green
-- [ ] 25.3 REFACTOR: Extract Function `recordDependencyOnSuccess` shared by the by-name and by-type paths; verify `make test` and `make lint` pass
+- [x] 25.1 RED: add `TestExplain_FailedDependencyNoEdge` (4 path rows) and `TestExplain_RetryRecordsEdgeOnce` (scenarios "A failed dependency records no edge", "A successful retry records the edge once"); verify the `named` and `named_any` rows fail with a recorded dependency
+- [x] 25.2 GREEN: record the edge only after a successful build in `invokeByName` and `invokeAnyByNameAs`; verify the 25.1 tests pass and `make test` is green
+- [x] 25.3 REFACTOR: Extract Function `recordDependencyOnSuccess` shared by the by-name and by-type paths; verify `make test` and `make lint` pass
 
 ## 26. Bounded, plain-text explanation
 
