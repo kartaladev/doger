@@ -71,19 +71,12 @@ func (r *finishedRuns) wait(t *testing.T, n int32) {
 	require.Eventually(t, func() bool { return r.n.Load() >= n }, 2*time.Second, time.Millisecond, "gocron did not finish %d runs", n)
 }
 
-// advance moves fc by step, which must reach the next run, and waits until
-// run number want started. gocron frees a run's singleton slot an instant
-// after the run's listeners return, with nothing to wait on: a tick racing
-// that release is dropped (the monitor counts it) and rescheduled one
-// interval later. The tick itself fired on time, so the test then advances
-// once more. A drop while a run is under way is a duplicate tick of the
-// same instant, which the singleton mode absorbs.
 // assertRounds checks the rounds of a cadence row. Short of the next run,
 // the fake clock fires no timer, so the count is exact. Once an advance
-// reaches a run, at least that run happened: gocron on a clockwork fake
-// clock occasionally runs extra rounds for one advance (also without
-// doger), so the count is a lower bound there, and the rows just short of
-// each deadline pin the cadence.
+// reaches a run, at least that run happened. Extra rounds for one advance
+// have been observed with gocron on a clockwork fake clock (no test here
+// pins down their cause), so the count is a lower bound there, and the
+// rows just short of each deadline pin the cadence.
 func assertRounds(t *testing.T, got, want int32, reached bool) {
 	t.Helper()
 	if reached {
@@ -93,6 +86,13 @@ func assertRounds(t *testing.T, got, want int32, reached bool) {
 	assert.Equal(t, want, got, "rounds")
 }
 
+// advance moves fc by step, which must reach the next run, and waits until
+// run number want started. gocron frees a run's singleton slot an instant
+// after the run's listeners return, with nothing to wait on: a tick racing
+// that release is dropped (the monitor counts it) and rescheduled one
+// interval later. The tick itself fired on time, so the test then advances
+// once more. A drop while a run is under way is a duplicate tick of the
+// same instant, which the singleton mode absorbs.
 func (r *finishedRuns) advance(t *testing.T, fc *clockwork.FakeClock, step time.Duration, want int32) {
 	t.Helper()
 	for attempt := 1; ; attempt++ {
@@ -632,10 +632,10 @@ func TestScheduler_ClockMapping(t *testing.T) { //nolint:paralleltest
 			require.Eventually(t, func() bool { return rounds.Load() == 1 }, 2*time.Second, time.Millisecond, "the first round did not run at once")
 			if fake != nil {
 				// rounds follow the fake clock: none before it advances, a
-				// later one once it does. The count after one advance is not
-				// asserted exactly: gocron on a clockwork fake clock
-				// occasionally runs extra rounds for one advance (also without
-				// doger), which is gocron's timing, not the clock mapping
+				// later one once it does. The count after one advance is a
+				// lower bound: extra rounds for one advance have been
+				// observed with gocron on a clockwork fake clock (see
+				// assertRounds); the clock mapping is what this row checks
 				waitForTimer(t, fake)
 				is.Equal(int32(1), rounds.Load(), "a round ran before the fake clock advanced")
 				fake.Advance(DefaultInterval)

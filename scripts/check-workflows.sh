@@ -280,12 +280,24 @@ check_release() {
 	done
 	step_body tidy | grep -q 'tidy_module' ||
 		fail "$sr: tidy does not run tidy_module (drop test-only requirements, then go mod tidy)"
-	# tidy alone keeps a test-only requirement a dependency's graph mentions
-	local tm dep
+	# tidy alone keeps a test-only requirement a dependency's graph mentions:
+	# the drop (the go mod edit of the collected -droprequire flags) comes
+	# before the first go mod tidy
+	local tm dep drop_line tidy_line
 	tm="$(step_body tidy_module)"
-	{ grep -q -- '-droprequire=' <<<"$tm" && grep -q 'go mod tidy' <<<"$tm" &&
-		[ "$(grep -n -- '-droprequire=' <<<"$tm" | head -1 | cut -d: -f1)" -lt "$(grep -n 'go mod tidy' <<<"$tm" | head -1 | cut -d: -f1)" ]; } ||
-		fail "$sr: tidy_module does not drop the test-only requirements before 'go mod tidy'"
+	# shellcheck disable=SC2016 # matches the literal "${drops[@]}" of the script
+	drop_line="$(grep -n 'go mod edit "\${drops\[@\]}"' <<<"$tm" | head -1 | cut -d: -f1 || true)"
+	tidy_line="$(grep -n '^[[:space:]]*go mod tidy' <<<"$tm" | head -1 | cut -d: -f1 || true)"
+	{ [ -n "$drop_line" ] && [ -n "$tidy_line" ] && [ "$drop_line" -lt "$tidy_line" ]; } ||
+		fail "$sr: tidy_module does not drop the test-only requirements (go mod edit \"\${drops[@]}\") before 'go mod tidy'"
+	# a used one is never dropped: tidy would re-resolve it at its latest
+	# shellcheck disable=SC2016 # matches literal $dep and $used in the script
+	# version, with that version's requirements and go line
+	{ step_body used_modules | grep -q 'go list -deps' && step_body used_modules | grep -q 'release_platforms' &&
+		grep -q 'used_modules' <<<"$tm" && grep -q 'grep -qxF "\$dep" <<<"\$used" && continue' <<<"$tm"; } ||
+		fail "$sr: tidy_module does not keep the test-only requirements the non-test packages use on every release platform"
+	grep -q 'added or raised' <<<"$tm" ||
+		fail "$sr: tidy_module does not fail when go mod tidy adds or raises a requirement"
 	for dep in github.com/stretchr/testify go.uber.org/goleak; do
 		awk '/^test_only=\(/{on=1; next} on && /^\)/{exit} on' "$s" | grep -qx "[[:space:]]*$dep" ||
 			fail "$sr: test_only does not list $dep"
@@ -629,15 +641,18 @@ pin() {
 	go.uber.org/goleak
 )
 tidy_module() {
+	drops+=("-droprequire=go.uber.org/goleak")
 	go mod tidy
-	go mod edit -droprequire=go.uber.org/goleak
+	go mod edit "${drops[@]}"
 }
 tidy() {
 	while IFS= read -r dir; do
 		(cd "$dir" && tidy_module)
 	done < <(modules)
 }'
-	expect "$fx" release fail 'tidy_module does not drop the test-only requirements before .go mod tidy.'
+	expect "$fx" release fail 'tidy_module does not drop the test-only requirements \(go mod edit .* before .go mod tidy.'
+	expect "$fx" release fail 'tidy_module does not keep the test-only requirements the non-test packages use'
+	expect "$fx" release fail 'tidy_module does not fail when go mod tidy adds or raises a requirement'
 	expect "$fx" release fail 'test_only does not list github\.com/stretchr/testify'
 
 	# dependabot: a widened job or step condition, and no module list

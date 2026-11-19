@@ -109,48 +109,73 @@ strip() {
 	rm -rf examples/ docs/ tests/
 }
 
-# test_only lists the modules only tests use. scripts/release-dry-run.sh
-# checks that no released go.mod requires them unless a non-test package
-# imports them.
+# test_only lists the modules that, outside clock/clockwork and
+# scheduler/gocron (which use clockwork at run time), only tests use. A
+# released module keeps one only when its non-test packages import it;
+# scripts/release-dry-run.sh checks every released go.mod for them.
 test_only=(
 	github.com/stretchr/testify
 	go.uber.org/goleak
 	github.com/jonboulle/clockwork
 )
 
-# tidy_module drops the test-only requirements of the module in the
-# current directory, then runs go mod tidy. Tidy alone keeps a requirement
-# the go.mod already lists when a dependency's own graph mentions it (gin
-# and echo mention testify), so the drop comes first. Tidy re-adds any that
-# a non-test package really imports, at the version the module required.
+# release_platforms are the GOOS/GOARCH pairs whose builds decide which
+# modules the non-test packages use.
+release_platforms=(
+	linux/amd64 linux/arm64
+	darwin/amd64 darwin/arm64
+	windows/amd64 windows/arm64
+)
+
+# used_modules prints the modules the non-test packages of the module in
+# the current directory use, on any release platform.
+used_modules() {
+	local platform
+	for platform in "${release_platforms[@]}"; do
+		GOOS="${platform%/*}" GOARCH="${platform#*/}" CGO_ENABLED=0 \
+			go list -deps -f '{{with .Module}}{{.Path}}{{end}}' ./... || return 1
+	done | sort -u
+}
+
+# requirements prints the go line and "<path> <version>" for every
+# requirement of the go.mod in the current directory.
+requirements() {
+	go mod edit -json | jq -r '"go \(.Go)", (.Require // [] | .[] | "\(.Path) \(.Version)")'
+}
+
+# tidy_module drops the test-only requirements the non-test packages of
+# the module in the current directory do not use, then runs go mod tidy.
+# Tidy alone keeps a requirement the go.mod already lists when a
+# dependency's own graph mentions it (gin and echo mention testify), so the
+# drop comes first. A used one is never dropped: tidy would re-resolve it
+# at its latest version, with that version's requirements and go line. As a
+# guard, tidy may only remove requirements: a raised go line or an added or
+# raised requirement fails the step.
 tidy_module() {
-	local dep had
-	local -a drops=() kept=()
+	local used dep before after line
+	local -a drops=()
+	used="$(used_modules)" || {
+		echo "release-steps.sh: go list cannot load the non-test packages of $(pwd)" >&2
+		return 1
+	}
 	for dep in "${test_only[@]}"; do
-		had="$(go mod edit -json | jq -r --arg p "$dep" '.Require // [] | map(select(.Path == $p)) | .[0].Version // empty')"
-		[ -n "$had" ] || continue
+		go mod edit -json | jq -e --arg p "$dep" '.Require // [] | any(.Path == $p)' >/dev/null || continue
+		grep -qxF "$dep" <<<"$used" && continue
 		drops+=("-droprequire=$dep")
-		kept+=("$dep@$had")
 	done
+	before="$(requirements)"
 	if [ "${#drops[@]}" -gt 0 ]; then
+		echo "drop unused test-only requirements: ${drops[*]#-droprequire=}"
 		go mod edit "${drops[@]}"
 	fi
 	go mod tidy
 
-	# a re-added requirement keeps the version the module had
-	local spec now
-	local -a restore=()
-	for spec in ${kept[@]+"${kept[@]}"}; do
-		dep="${spec%@*}"
-		now="$(go mod edit -json | jq -r --arg p "$dep" '.Require // [] | map(select(.Path == $p)) | .[0].Version // empty')"
-		if [ -n "$now" ] && [ "$now" != "${spec#*@}" ]; then
-			restore+=("-require=$spec")
-		fi
-	done
-	if [ "${#restore[@]}" -gt 0 ]; then
-		go mod edit "${restore[@]}"
-		go mod tidy
-	fi
+	after="$(requirements)"
+	while IFS= read -r line; do
+		grep -qxF "$line" <<<"$before" && continue
+		echo "release-steps.sh: go mod tidy in $(pwd) added or raised '$line' (before: $(grep -m1 "^${line%% *} " <<<"$before" || echo none))" >&2
+		return 1
+	done <<<"$after"
 }
 
 # go mod tidy everywhere while the local replace directives still point at
@@ -196,6 +221,7 @@ pin() {
 # release is not published yet, so each module builds with a temporary
 # copy of its go.mod (-modfile) that points every released sibling back at
 # this tree; the released go.mod and go.sum stay as pinned.
+# shellcheck disable=SC2030,SC2031 # each subshell sets its own go env
 verify() {
 	local rows dir top tmp sib_dir sib_path
 	local -a replaces
@@ -236,6 +262,50 @@ tags() {
 	done < <(modules)
 }
 
+# self_test runs tidy_module on a fixture module (go 1.21) whose non-test
+# code imports github.com/go-co-op/gocron/v2 v2.2.0, with gocron on the
+# drop list: the tidy must leave the go line and every requirement as they
+# were, because gocron is used. Needs network or a warm module cache.
+# shellcheck disable=SC2030,SC2031 # each subshell sets its own go env
+self_test() {
+	local dir before after failures=0
+	dir="$(mktemp -d)"
+	# shellcheck disable=SC2064 # expand now: dir is local
+	trap "chmod -R u+w '$dir' 2>/dev/null; rm -rf '$dir'" RETURN
+	(
+		cd "$dir"
+		export GOWORK=off GOTOOLCHAIN=local GOFLAGS=-mod=mod
+		printf 'module example.com/fixture\n\ngo 1.21\n\nrequire github.com/go-co-op/gocron/v2 v2.2.0\n' >go.mod
+		printf 'package fixture\n\nimport _ "github.com/go-co-op/gocron/v2"\n' >fixture.go
+		go mod tidy
+	) >"$dir.log" 2>&1 || {
+		echo "self-test: cannot build the fixture module: $(tail -3 "$dir.log")" >&2
+		rm -f "$dir.log"
+		return 1
+	}
+	rm -f "$dir.log"
+	before="$(cd "$dir" && GOWORK=off go mod edit -json | jq -c '{Go, Require: [.Require[] | {Path, Version}]}')"
+	(
+		cd "$dir"
+		export GOWORK=off GOTOOLCHAIN=local
+		test_only=(github.com/go-co-op/gocron/v2)
+		tidy_module
+	) >/dev/null 2>&1 || {
+		echo "ok:   self-test tidy_module refused the fixture (exit non-zero)"
+	}
+	after="$(cd "$dir" && GOWORK=off go mod edit -json | jq -c '{Go, Require: [.Require[] | {Path, Version}]}')"
+	if [ "$before" = "$after" ]; then
+		echo "ok:   self-test a used test-only requirement keeps the go line and every requirement"
+	else
+		echo "FAIL self-test tidy_module changed the fixture's go.mod:"
+		echo "    before: $before"
+		echo "    after:  $after"
+		failures=1
+	fi
+	[ "$failures" -eq 0 ] && echo "self-test passed"
+	return "$failures"
+}
+
 cmd="${1:-}"
 shift || true
 case "$cmd" in
@@ -246,8 +316,9 @@ tidy) tidy ;;
 pin) pin "$@" ;;
 verify) verify ;;
 tags) tags "$@" ;;
+self-test) self_test ;;
 *)
-	echo "usage: $0 check-semver|modules|strip|tidy|pin|verify|tags [semver]" >&2
+	echo "usage: $0 check-semver|modules|strip|tidy|pin|verify|tags [semver]|self-test" >&2
 	exit 2
 	;;
 esac

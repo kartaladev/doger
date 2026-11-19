@@ -77,6 +77,10 @@ jobs:
           scripts/check-workflows.sh --self-test
           scripts/check-workflows.sh
 
+    # a used test-only requirement survives the release tidy unchanged
+    - name: Release steps self-test
+      run: scripts/release-steps.sh self-test
+
     - name: Reject invalid versions
       run: |
           for v in v2.0.0 0.1.0 ""; do
