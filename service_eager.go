@@ -35,7 +35,7 @@ type serviceEager[T any] struct {
 }
 
 func newServiceEager[T any](name string, instance T) *serviceEager[T] {
-	providerFrame, _ := stacktrace.NewFrameFromCaller()
+	providerFrame, _ := stacktrace.NewFrameFromCallerOutside(rootPkgPath) // the consumer's call site
 
 	return &serviceEager[T]{
 		name:     name,

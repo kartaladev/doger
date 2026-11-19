@@ -168,28 +168,28 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 24. Explanation is free of data races
 
-- [ ] 24.1 RED: add `TestExplain_ConcurrentWithLazyBuild` and `TestExplain_ConcurrentWithShutdown` (scenarios "Explain concurrently with a lazy build", "Explain concurrently with shutdown"); verify `go test -race -run TestExplain_Concurrent .` fails with `WARNING: DATA RACE` at `getBuildTime`
-- [ ] 24.2 GREEN: read build time and built state under the read lock or from the published atomic state in lazy/default/eager `getBuildTime`; verify the 24.1 tests pass under `-race` and `make test` is green
-- [ ] 24.3 REFACTOR: Extract Function for the shared build-state snapshot used by explain and the web UI's `inferServiceInfo`; verify `make test` and `make lint` pass
+- [x] 24.1 RED: add `TestExplain_ConcurrentWithLazyBuild` and `TestExplain_ConcurrentWithShutdown` (scenarios "Explain concurrently with a lazy build", "Explain concurrently with shutdown"); verify `go test -race -run TestExplain_Concurrent .` fails with `WARNING: DATA RACE` at `getBuildTime`
+- [x] 24.2 GREEN: read build time and built state under the read lock or from the published atomic state in lazy/default/eager `getBuildTime`; verify the 24.1 tests pass under `-race` and `make test` is green
+- [x] 24.3 REFACTOR: Extract Function for the shared build-state snapshot used by explain and the web UI's `inferServiceInfo`; verify `make test` and `make lint` pass
 
 ## 25. Only successful builds record dependency edges
 
-- [ ] 25.1 RED: add `TestExplain_FailedDependencyNoEdge` (4 path rows) and `TestExplain_RetryRecordsEdgeOnce` (scenarios "A failed dependency records no edge", "A successful retry records the edge once"); verify the `named` and `named_any` rows fail with a recorded dependency
-- [ ] 25.2 GREEN: record the edge only after a successful build in `invokeByName` and `invokeAnyByNameAs`; verify the 25.1 tests pass and `make test` is green
-- [ ] 25.3 REFACTOR: Extract Function `recordDependencyOnSuccess` shared by the by-name and by-type paths; verify `make test` and `make lint` pass
+- [x] 25.1 RED: add `TestExplain_FailedDependencyNoEdge` (4 path rows) and `TestExplain_RetryRecordsEdgeOnce` (scenarios "A failed dependency records no edge", "A successful retry records the edge once"); verify the `named` and `named_any` rows fail with a recorded dependency
+- [x] 25.2 GREEN: record the edge only after a successful build in `invokeByName` and `invokeAnyByNameAs`; verify the 25.1 tests pass and `make test` is green
+- [x] 25.3 REFACTOR: Extract Function `recordDependencyOnSuccess` shared by the by-name and by-type paths; verify `make test` and `make lint` pass
 
 ## 26. Bounded, plain-text explanation
 
-- [ ] 26.1 RED: add `TestExplain_LayeredGraphBounded`, `TestExplain_DependentsBounded`, `TestExplain_RefRendersSingleLine`, `TestExplain_RefJSON` and `TestExplain_PlainText` (service-explanation bounded/plain-text scenarios); verify they fail (121391 vs 45 nodes; `Ref` undefined; `&lt;` in output)
-- [ ] 26.2 GREEN: memoize `newExplainServiceDependencies` per call by (scope, service), emit `Ref: true` nodes (`json:"ref,omitempty"`) with no children rendered as `" (ref)"`, add JSON tags to `ServiceDescription`, and switch `di_explain.go` to `text/template`; verify the 26.1 tests pass and `make test` is green
-- [ ] 26.3 REFACTOR: Introduce Parameter Object for the visited set passed through the recursive builders; verify `make test` and `make lint` pass
-- [ ] 26.4 Add `FuzzExplainText` and run it 60s, and update the godoc of `ExplainServiceDependencyOutput`/`ExplainNamedService` and `ExampleExplainNamedService`; verify `go test -run=^$ -fuzz=FuzzExplainText -fuzztime=60s .` and `go test -run ExampleExplainNamedService .` pass
+- [x] 26.1 RED: add `TestExplain_LayeredGraphBounded`, `TestExplain_DependentsBounded`, `TestExplain_RefRendersSingleLine`, `TestExplain_RefJSON` and `TestExplain_PlainText` (service-explanation bounded/plain-text scenarios); verify they fail (121391 vs 45 nodes; `Ref` undefined; `&lt;` in output)
+- [x] 26.2 GREEN: memoize `newExplainServiceDependencies` per call by (scope, service), emit `Ref: true` nodes (`json:"ref,omitempty"`) with no children rendered as `" (ref)"`, add JSON tags to `ServiceDescription`, and switch `di_explain.go` to `text/template`; verify the 26.1 tests pass and `make test` is green
+- [x] 26.3 REFACTOR: Introduce Parameter Object for the visited set passed through the recursive builders; verify `make test` and `make lint` pass
+- [x] 26.4 Add `FuzzExplainText` and run it 60s, and update the godoc of `ExplainServiceDependencyOutput`/`ExplainNamedService` and `ExampleExplainNamedService`; verify `go test -run=^$ -fuzz=FuzzExplainText -fuzztime=60s .` and `go test -run ExampleExplainNamedService .` pass
 
 ## 27. Registration source is the consumer's call site
 
-- [ ] 27.1 RED: add `TestSourceTracking_RegistrationForms` and `TestSourceTracking_NewCallSite`, and move `TestSourceTracking_ProviderFrame` from `di_explain_frame_test.go` expecting the test file and line (service-source-tracking scenarios); verify they fail with `service_eager.go:39` / `service_alias.go`
-- [ ] 27.2 GREEN: the provider frame of value and alias registrations skips non-test frames of the root `doger` package (invocation frames unchanged); verify the 27.1 tests pass, the alias invocation-frame test stays green and `make test` is green
-- [ ] 27.3 REFACTOR: Replace Loop with one `runtime.Callers` pass into a fixed array in `stacktrace` (D16/D17) keeping the classifier; verify `make test`, `make lint` and `go test ./stacktrace` pass
+- [x] 27.1 RED: add `TestSourceTracking_RegistrationForms` and `TestSourceTracking_NewCallSite`, and move `TestSourceTracking_ProviderFrame` from `di_explain_frame_test.go` expecting the test file and line (service-source-tracking scenarios); verify they fail with `service_eager.go:39` / `service_alias.go`
+- [x] 27.2 GREEN: the provider frame of value and alias registrations skips non-test frames of the root `doger` package (invocation frames unchanged); verify the 27.1 tests pass, the alias invocation-frame test stays green and `make test` is green
+- [x] 27.3 REFACTOR: Replace Loop with one `runtime.Callers` pass into a fixed array in `stacktrace` (D16/D17) keeping the classifier; verify `make test`, `make lint` and `go test ./stacktrace` pass
 
 ## 28. A yielded default follows its target by name
 
@@ -312,9 +312,9 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 45. Web UI renders bounded dependency trees
 
-- [ ] 45.1 RED: add `TestPages_TreeSizeFollowsGraph`, `TestPages_ReferenceLinks` and `TestWebUI_LayeredGraphBounded` per adapter (scenarios "Tree size follows the graph shape", "A reference links to the referenced service", "A layered graph renders each service once"); verify they fail (about 26 MB and 121391 entries for svc-23)
-- [ ] 45.2 GREEN: render `Ref` nodes as links with no children via the recursive template block; verify the 45.1 tests pass with the body under 64 KiB within 1s
-- [ ] 45.3 REFACTOR: Extract Function `dependencyTree` template block shared by Dependencies and Dependents; verify the per-module tests and lint pass
+- [x] 45.1 RED: add `TestPages_TreeSizeFollowsGraph`, `TestPages_ReferenceLinks` and `TestWebUI_LayeredGraphBounded` per adapter (scenarios "Tree size follows the graph shape", "A reference links to the referenced service", "A layered graph renders each service once"); verify they fail. Observed after the explain merge: "dependency tree lists 45 entries with 0 references, want 45 with 22" for svc-23 on every adapter (and 0 references for the diamond and ten-layer rows); the size and time bound already held, because group 26's `Ref` nodes bound the explain output, so the failure is the missing reference marking (the 26 MB / 121391 entries figure predates group 26)
+- [x] 45.2 GREEN: render `Ref` nodes as links with no children via the recursive template block; verify the 45.1 tests pass with the body under 64 KiB within 1s
+- [x] 45.3 REFACTOR: Extract Function `dependencyTree` template block shared by Dependencies and Dependents; verify the per-module tests and lint pass
 
 ## 46. Web UI source paths and mount options
 
@@ -324,11 +324,11 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 47. Web UI mounts behind middleware and under concurrency
 
-- [ ] 47.1 RED: add `TestWebUI_BehindAuthMiddleware` per adapter, `TestWebUI_ChiMuxStillAccepted` and `TestWebUI_ConcurrentViewing` (std, chi) (scenarios "Authentication middleware guards the UI", "Existing chi mounts keep compiling", "Viewers race with container churn"); verify the chi `r.With(auth)` rows fail to compile on `*chi.Mux`
-- [ ] 47.2 GREEN: change `dogerchi.Use` to take `chi.Router`; verify the 47.1 tests pass under `-race` with goleak
-- [ ] 47.3 REFACTOR: none needed — only the parameter type changes; verify the per-module tests and lint pass
-- [ ] 47.4 Docs: fix `docs/docs/troubleshooting/web-ui.md` (drop the "health-check status" claim; add headers, bounded trees, `WithFullSourcePaths` and per-adapter middleware examples) and remove `doger.Options{EnableWebUI, WebUIPort}` from `docs/static/llms.txt`; verify `grep -c EnableWebUI docs/static/llms.txt` prints 0 and `cd docs && npm run build` passes
-- [ ] 47.5 Docs: `examples/web-application` mounts the UI with `r.With(basicAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD")))` on a `127.0.0.1` listener, and each adapter gets an `Example` with a middleware mount; verify `go build ./...` in `examples/web-application` and `go test -run Example ./...` in each adapter module pass
+- [x] 47.1 RED: add `TestWebUI_BehindAuthMiddleware` per adapter, `TestWebUI_ChiMuxStillAccepted` and `TestWebUI_ConcurrentViewing` (std, chi) (scenarios "Authentication middleware guards the UI", "Existing chi mounts keep compiling", "Viewers race with container churn"); verify the chi `r.With(auth)` rows fail to compile on `*chi.Mux`
+- [x] 47.2 GREEN: change `dogerchi.Use` to take `chi.Router`; verify the 47.1 tests pass under `-race` with goleak
+- [x] 47.3 REFACTOR: none needed — only the parameter type changes; verify the per-module tests and lint pass
+- [x] 47.4 Docs: fix `docs/docs/troubleshooting/web-ui.md` (drop the "health-check status" claim; add headers, bounded trees, `WithFullSourcePaths` and per-adapter middleware examples) and remove `doger.Options{EnableWebUI, WebUIPort}` from `docs/static/llms.txt`; verify `grep -c EnableWebUI docs/static/llms.txt` prints 0 and `cd docs && npm run build` passes
+- [x] 47.5 Docs: `examples/web-application` mounts the UI with `r.With(basicAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD")))` on a `127.0.0.1` listener, and each adapter gets an `Example` with a middleware mount; verify `go build ./...` in `examples/web-application` and `go test -run Example ./...` in each adapter module pass
 
 ## 48. Make targets for every workspace module
 

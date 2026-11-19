@@ -54,13 +54,13 @@ func TestFromTemplate(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		data     map[string]any
+		data     map[string]string
 		expected string
 	}{
 		{name: "nil_data", template: "foobar", data: nil, expected: "foobar"},
-		{name: "unused_data", template: "foobar", data: map[string]any{"foo": "bar"}, expected: "foobar"},
-		{name: "field", template: "foo {{.Bar}}", data: map[string]any{"Bar": "bar"}, expected: "foo bar"},
-		{name: "missing_field", template: "foo {{.Foo}}", data: map[string]any{"Baz": "bar"}, expected: "foo "},
+		{name: "unused_data", template: "foobar", data: map[string]string{"foo": "bar"}, expected: "foobar"},
+		{name: "field", template: "foo {{.Bar}}", data: map[string]string{"Bar": "bar"}, expected: "foo bar"},
+		{name: "missing_field", template: "foo {{.Foo}}", data: map[string]string{"Baz": "bar"}, expected: "foo "},
 	}
 
 	for _, tt := range tests {
@@ -343,9 +343,7 @@ Dependencies:
       * SERVICE-A1 from scope [root]
       * SERVICE-A2 from scope [root]
   * SERVICE-C2 from scope scope-child
-    * SERVICE-B from scope [root]
-      * SERVICE-A1 from scope [root]
-      * SERVICE-A2 from scope [root]
+    * SERVICE-B from scope [root] (ref)
 
 Dependents:
 * SERVICE-F from scope scope-child
@@ -369,9 +367,7 @@ Dependencies:
       * SERVICE-A1 from scope [root]
       * SERVICE-A2 from scope [root]
   * SERVICE-C2 from scope scope-child
-    * SERVICE-B from scope [root]
-      * SERVICE-A1 from scope [root]
-      * SERVICE-A2 from scope [root]
+    * SERVICE-B from scope [root] (ref)
 
 Dependents:
 * SERVICE-F from scope scope-child
