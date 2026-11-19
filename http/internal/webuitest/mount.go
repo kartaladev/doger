@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/kartaladev/doger"
-	"github.com/stretchr/testify/assert"
 )
 
 // The credentials the basic-auth middleware of the scenarios accepts.
@@ -63,7 +62,7 @@ func BehindAuthMiddleware(t *testing.T, mount Mount) {
 			}
 
 			resp := Do(t, mount(t, newDBRoot()), req)
-			assert.Equal(t, tt.status, resp.StatusCode)
+			checkEqual(t, tt.status, resp.StatusCode)
 		})
 	}
 }
@@ -97,22 +96,24 @@ func ConcurrentViewing(t *testing.T, mount Mount) {
 				child := root.Scope(fmt.Sprintf("churn-%d-%d", w, i))
 				doger.ProvideNamed(child, "req", func(doger.Injector) (string, error) { return "req", nil })
 				_, err := doger.InvokeNamed[string](child, "req")
-				assert.NoError(t, err)
-				assert.True(t, child.Shutdown().Succeed)
+				if err != nil {
+					t.Errorf("invoke: %v", err)
+				}
+				checkTrue(t, child.Shutdown().Succeed)
 			}
 		})
 		wg.Go(func() {
 			for i := range iterations {
 				path := paths[(w+i)%len(paths)]
 				resp := Get(t, do, path)
-				assert.Contains(t, []int{http.StatusOK, http.StatusFound}, resp.StatusCode, path)
+				checkStatusIn(t, resp.StatusCode, []int{http.StatusOK, http.StatusFound}, path)
 			}
 		})
 	}
 	wg.Wait()
 
-	assert.True(t, root.Shutdown().Succeed)
+	checkTrue(t, root.Shutdown().Succeed)
 
 	resp := Get(t, do, BasePath+"/service")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	checkEqual(t, http.StatusOK, resp.StatusCode)
 }

@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/kartaladev/doger"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // HostileName is a name that would inject markup if rendered unescaped,
@@ -57,7 +55,7 @@ func HostileGraph(t *testing.T, name string) (*doger.RootScope, *doger.Scope) {
 	})
 
 	_, err := doger.InvokeNamed[string](child, name)
-	require.NoError(t, err)
+	requireNoError(t, err)
 
 	return root, child
 }
@@ -90,9 +88,9 @@ func HostileNamesEscaped(t *testing.T, mount Mount) {
 				root, child := HostileGraph(t, hostile.Name)
 				resp := Get(t, mount(t, root), page.path(root, child))
 
-				assert.Equal(t, http.StatusOK, resp.StatusCode)
-				assert.NotContains(t, resp.Body, hostile.Name)
-				assert.Contains(t, resp.Body, hostile.Escaped)
+				checkEqual(t, http.StatusOK, resp.StatusCode)
+				checkNotContains(t, resp.Body, hostile.Name)
+				checkContains(t, resp.Body, hostile.Escaped)
 				AssertNoInjectedMarkup(t, resp.Body)
 			})
 		}
@@ -140,12 +138,12 @@ func LinkOpensNamedService(t *testing.T, mount Mount) {
 			link := LinkByText(t, list, tt.Name)
 
 			target, err := url.Parse(link.Href)
-			require.NoError(t, err)
-			assert.Contains(t, target.RawQuery, "service_name="+tt.Encoded)
+			requireNoError(t, err)
+			checkContains(t, target.RawQuery, "service_name="+tt.Encoded)
 
 			resp := Get(t, do, link.Href)
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-			assert.Contains(t, resp.Body, "Service name: "+tt.Escaped)
+			checkEqual(t, http.StatusOK, resp.StatusCode)
+			checkContains(t, resp.Body, "Service name: "+tt.Escaped)
 		})
 	}
 }
@@ -162,9 +160,9 @@ func LinksResolve(t *testing.T, mount Mount) {
 	link := LinkByText(t, list, "a&b#c")
 
 	resp := Get(t, do, link.Href)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, resp.Body, "Service name: a&amp;b#c")
-	assert.NotContains(t, resp.Body, "<h1>Service description</h1>", "the link fell back to the service list")
+	checkEqual(t, http.StatusOK, resp.StatusCode)
+	checkContains(t, resp.Body, "Service name: a&amp;b#c")
+	checkNotContains(t, resp.Body, "<h1>Service description</h1>", "the link fell back to the service list")
 }
 
 // NoReflection runs scenario "Query values are never reflected" against
@@ -178,8 +176,8 @@ func NoReflection(t *testing.T, mount Mount) {
 	resp := Get(t, mount(t, root),
 		BasePath+"/service?scope_id=%3Cscript%3Ex%3C%2Fscript%3E&service_name=%3Cimg%20src%3Dx%3E")
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.NotContains(t, resp.Body, "<script>x</script>")
-	assert.NotContains(t, resp.Body, "&lt;script&gt;x")
-	assert.NotContains(t, resp.Body, "<img src=x>")
+	checkEqual(t, http.StatusOK, resp.StatusCode)
+	checkNotContains(t, resp.Body, "<script>x</script>")
+	checkNotContains(t, resp.Body, "&lt;script&gt;x")
+	checkNotContains(t, resp.Body, "<img src=x>")
 }
