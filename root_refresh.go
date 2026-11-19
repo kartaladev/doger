@@ -22,7 +22,7 @@ func (s *RootScope) Refresh() error {
 //
 // It returns an error matching [ErrNotStarted] until the first Start
 // succeeded, at once and without waiting while that Start is still running,
-// and one matching [ErrStartAfterShutdown] once root Shutdown began, which
+// and one matching [ErrShutdown] once root Shutdown began, which
 // takes precedence; it starts nothing then. Concurrent Refresh
 // and [Scope.Start] calls run one at a time. Never call Refresh
 // synchronously from code that runs during a Refresh or Scope.Start: it
@@ -102,7 +102,7 @@ func (s *RootScope) incrementalPhaseError() error {
 // incrementally, or nil. lifecycleMu must be held.
 func (s *RootScope) checkIncrementalPhase() error {
 	if s.closePhase != closeOpen {
-		return libErrorf("cannot start: %w", ErrStartAfterShutdown)
+		return libErrorf("cannot start: %w", ErrShutdown)
 	}
 	if s.startPhase != startStarted && s.startPhase != startReady {
 		return ErrNotStarted
@@ -180,7 +180,7 @@ func (s *Scope) Start() error {
 //
 // It follows the rules of Refresh: [ErrNotStarted] before the container's
 // first successful Start, without waiting for a running Start,
-// [ErrStartAfterShutdown] once root Shutdown began,
+// [ErrShutdown] once root Shutdown began,
 // calls serialized with Refresh, and never call it synchronously from code
 // running during a Refresh or Scope.Start.
 //

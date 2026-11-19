@@ -254,14 +254,23 @@ func TestStart_OneShot(t *testing.T) {
 		{name: "called_nothing", previous: func(*RootScope) {}, calls: 1},
 		{name: "called_start", previous: func(root *RootScope) { _ = root.Start() }, result: ErrAlreadyStarted, calls: 1},
 		{name: "called_failed_start", failBuild: true, previous: func(root *RootScope) { _ = root.Start() }, result: ErrAlreadyStarted, calls: 0},
-		{name: "called_shutdown", previous: func(root *RootScope) { root.Shutdown() }, result: ErrStartAfterShutdown, calls: 0},
+		{name: "called_shutdown", previous: func(root *RootScope) { root.Shutdown() }, result: ErrShutdown, calls: 0},
 		{
 			name: "called_start_then_shutdown",
 			previous: func(root *RootScope) {
 				_ = root.Start()
 				root.Shutdown()
 			},
-			result: ErrStartAfterShutdown, calls: 1,
+			result: ErrShutdown, calls: 1,
+		},
+		{
+			name:      "called_failed_start_then_shutdown",
+			failBuild: true,
+			previous: func(root *RootScope) {
+				_ = root.Start()
+				root.Shutdown()
+			},
+			result: ErrShutdown, calls: 0,
 		},
 	}
 
@@ -287,6 +296,9 @@ func TestStart_OneShot(t *testing.T) {
 				is.NoError(err)
 			} else {
 				is.ErrorIs(err, tt.result)
+			}
+			if errors.Is(tt.result, ErrShutdown) {
+				is.NotErrorIs(err, ErrAlreadyStarted, "Shutdown takes precedence")
 			}
 			is.Equal(tt.calls, instance.starts.Load())
 		})
@@ -1060,7 +1072,7 @@ func TestStart_ShutdownCancels(t *testing.T) {
 					is.True(report.Succeed)
 				}
 
-				is.ErrorIs(<-started, ErrStartAfterShutdown)
+				is.ErrorIs(<-started, ErrShutdown)
 				is.Equal(tt.wantAShutdowns, aShutdowns())
 				is.Equal(int32(0), zCalls())
 			})
@@ -1083,7 +1095,7 @@ func TestStart_PanicReleasesShutdown(t *testing.T) {
 	is.PanicsWithValue("hook-boom", func() { _ = root.Start() })
 
 	is.True(root.Shutdown().Succeed)
-	is.ErrorIs(root.Start(), ErrStartAfterShutdown)
+	is.ErrorIs(root.Start(), ErrShutdown)
 }
 
 func TestStart_Concurrent(t *testing.T) {
@@ -1302,7 +1314,7 @@ func TestStartError_NotForGuards(t *testing.T) {
 				root.Shutdown()
 				return root.Start()
 			},
-			sentinel: ErrStartAfterShutdown,
+			sentinel: ErrShutdown,
 		},
 		{
 			name: "context already cancelled",
@@ -1466,7 +1478,7 @@ func TestIncrementalStart_Phase(t *testing.T) {
 			name:      "Shutdown without Start, tenant.Start",
 			previous:  func(root *RootScope) { root.Shutdown() },
 			operation: func(_ *RootScope, tenant *Scope) error { return tenant.Start() },
-			want:      ErrStartAfterShutdown,
+			want:      ErrShutdown,
 		},
 		{
 			name: "Start then Shutdown, root.Refresh",
@@ -1475,7 +1487,7 @@ func TestIncrementalStart_Phase(t *testing.T) {
 				root.Shutdown()
 			},
 			operation: func(root *RootScope, _ *Scope) error { return root.Refresh() },
-			want:      ErrStartAfterShutdown,
+			want:      ErrShutdown,
 		},
 	}
 
@@ -1607,7 +1619,7 @@ func TestRefresh_ShutdownCancels(t *testing.T) {
 
 		select {
 		case err := <-refreshErr:
-			is.ErrorIs(err, ErrStartAfterShutdown)
+			is.ErrorIs(err, ErrShutdown)
 		default:
 			is.Fail("Shutdown returned before Refresh returned")
 		}
@@ -1936,7 +1948,7 @@ func TestStart_FailureThenShutdown(t *testing.T) {
 				<-shutdownDone
 
 				is.ErrorIs(err, errBoom)
-				is.ErrorIs(err, ErrStartAfterShutdown)
+				is.ErrorIs(err, ErrShutdown)
 				select {
 				case <-bCancelled:
 				default:
@@ -2216,7 +2228,7 @@ func TestStart_CallerCancelThenShutdown(t *testing.T) {
 				err := <-runErr
 				<-shutdownDone
 
-				is.ErrorIs(err, ErrStartAfterShutdown)
+				is.ErrorIs(err, ErrShutdown)
 				is.ErrorIs(err, context.Canceled)
 				if tt.outcome != nil {
 					is.ErrorIs(err, tt.outcome)
@@ -2231,7 +2243,7 @@ func TestAbortOutcome(t *testing.T) {
 	t.Parallel()
 
 	errBoom := errors.New("boom")
-	alreadyAborted := fmt.Errorf("boom (start aborted: %w)", ErrStartAfterShutdown)
+	alreadyAborted := fmt.Errorf("boom (start aborted: %w)", ErrShutdown)
 	tests := []struct {
 		name   string
 		cause  error // nil: cancelled by the caller, context.Canceled
@@ -2239,9 +2251,9 @@ func TestAbortOutcome(t *testing.T) {
 		want   string
 		same   bool // the result is returned unchanged
 	}{
-		{name: "Shutdown cause, nil", cause: ErrStartAfterShutdown, want: "doger: start aborted: doger: container is shut down"},
+		{name: "Shutdown cause, nil", cause: ErrShutdown, want: "doger: start aborted: doger: container is shut down"},
 		{name: "caller cause, nil", want: "doger: start aborted: doger: container is shut down: context canceled"},
-		{name: "Shutdown cause, failure", cause: ErrStartAfterShutdown, result: errBoom, want: "boom (start aborted: doger: container is shut down)"},
+		{name: "Shutdown cause, failure", cause: ErrShutdown, result: errBoom, want: "boom (start aborted: doger: container is shut down)"},
 		{name: "caller cause, failure", result: errBoom, want: "boom (start aborted: doger: container is shut down: context canceled)"},
 		{
 			name:   "caller cause, failure carrying it",
@@ -2262,7 +2274,7 @@ func TestAbortOutcome(t *testing.T) {
 			err := abortOutcome(ctx, tt.result)
 
 			is.EqualError(err, tt.want)
-			is.ErrorIs(err, ErrStartAfterShutdown)
+			is.ErrorIs(err, ErrShutdown)
 			if tt.result != nil {
 				is.ErrorIs(err, tt.result)
 			}

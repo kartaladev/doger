@@ -228,7 +228,7 @@ type InjectorOpts struct {
 	// A Starting hook must not call root Shutdown synchronously without a
 	// deadline: Shutdown waits for the running Start, which waits for the hook.
 	// With a deadline, Shutdown returns a failed report when it expires, and
-	// Start then fails with an error matching ErrStartAfterShutdown.
+	// Start then fails with an error matching ErrShutdown.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddContainerStartingHook] adds a hook later, safely

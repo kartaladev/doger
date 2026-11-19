@@ -831,7 +831,7 @@ func TestHealthScheduler_ShutdownCancelCause(t *testing.T) {
 		i.Shutdown()
 
 		is.EqualError((<-result)["db"], "doger: health check timeout: context canceled")
-		is.ErrorIs(<-check.cause, ErrStartAfterShutdown)
+		is.ErrorIs(<-check.cause, ErrShutdown)
 	})
 }
 

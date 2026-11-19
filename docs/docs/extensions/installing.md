@@ -79,7 +79,7 @@ Property values are never logged, and no error the library returns contains one.
 
 ## When to call Extend {#phases}
 
-`Extend` is allowed before `Start`, from a `HookContainerStarting` hook (the services are then started by that `Start`), and after `Start`: call `root.Refresh()` to start what the extension added. Once shutdown began, `Extend` returns an error matching `doger.ErrStartAfterShutdown`. Do not call it concurrently with `Start`.
+`Extend` is allowed before `Start`, from a `HookContainerStarting` hook (the services are then started by that `Start`), and after `Start`: call `root.Refresh()` to start what the extension added. Once shutdown began, `Extend` returns an error matching `doger.ErrShutdown`. Do not call it concurrently with `Start`.
 
 ## Lifecycle and health checks {#lifecycle}
 
@@ -95,7 +95,7 @@ A root `Shutdown` follows the usual rules: once its context ended, the services 
 | `ErrExtensionConflict`          | the identity is installed differently, or the private scope name is taken   |
 | `*ExtensionError` (`errors.As`) | the extension failed to install; `Name`, `Instance`, and the cause in `Err` |
 | `ErrExtensionCycle`             | extensions require each other in a cycle                                    |
-| `ErrStartAfterShutdown`         | `Extend` after shutdown began                                               |
+| `ErrShutdown`         | `Extend` after shutdown began                                               |
 
 A failing install leaves nothing behind: the private scope is shut down and removed, its exports are removed, and a later `Extend` can retry.
 

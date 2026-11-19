@@ -236,7 +236,7 @@ func (s *RootScope) Shutdown() *ShutdownReport { return s.ShutdownWithContext(co
 //     down by a later root Shutdown.
 //
 // A Shutdown that begins while [RootScope.StartWithContext] runs cancels
-// Start, with cause [ErrStartAfterShutdown], and waits for it to return
+// Start, with cause [ErrShutdown], and waits for it to return
 // before shutting services down. If ctx ends first, the report fails with a
 // root-scope error wrapping ctx.Err(), and shutdown proceeds with the ended
 // context while Start is still running, so it skips the services it then
@@ -263,7 +263,7 @@ func (s *RootScope) Shutdown() *ShutdownReport { return s.ShutdownWithContext(co
 // checks: a check that ignores its context may still run while its service
 // shuts down. A service whose Shutdown releases what its check uses must
 // guard against a check still running. A check's context is cancelled with
-// the cause [ErrStartAfterShutdown] (see [context.Cause]); a caller still
+// the cause [ErrShutdown] (see [context.Cause]); a caller still
 // waiting for it gets an error matching [ErrHealthCheckTimeout] and
 // [context.Canceled]. When ScheduleHealthRounds is still running, Shutdown
 // waits for it to return, even after ctx has ended, then calls the stop
@@ -365,7 +365,7 @@ type closeTicket struct {
 // beginClose moves the close phase from open to closing. The caller that
 // does it is the winner and runs the shutdown; any other caller waits on done.
 // A Start, Refresh or Scope.Start running then is cancelled with cause
-// ErrStartAfterShutdown before lifecycleMu is released.
+// ErrShutdown before lifecycleMu is released.
 func (s *RootScope) beginClose() closeTicket {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
@@ -382,7 +382,7 @@ func (s *RootScope) beginClose() closeTicket {
 	cancel, ticket.startDone, ticket.inFlight = s.inFlightRun()
 	if ticket.inFlight {
 		// under lifecycleMu, so a run finishing now already sees the cause
-		cancel(ErrStartAfterShutdown)
+		cancel(ErrShutdown)
 	}
 
 	return ticket

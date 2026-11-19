@@ -1480,7 +1480,7 @@ func TestExtend_Phases(t *testing.T) {
 					func(_ context.Context, root *RootScope) { extendErr = Extend(root, starterExtension(starts)) },
 				}})
 				root.Shutdown()
-				require.ErrorIs(t, extendErr, ErrStartAfterShutdown)
+				require.ErrorIs(t, extendErr, ErrShutdown)
 				assert.Empty(t, childNames(root))
 			},
 		},
@@ -1490,7 +1490,7 @@ func TestExtend_Phases(t *testing.T) {
 				t.Helper()
 				root := New()
 				root.Shutdown()
-				require.ErrorIs(t, Extend(root, starterExtension(starts)), ErrStartAfterShutdown)
+				require.ErrorIs(t, Extend(root, starterExtension(starts)), ErrShutdown)
 				assert.Empty(t, childNames(root))
 			},
 		},

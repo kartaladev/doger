@@ -471,8 +471,8 @@ func TestRefresh_QueuedBehindShutdown(t *testing.T) {
 
 	root.Shutdown()
 
-	is.ErrorIs(<-firstDone, ErrStartAfterShutdown)
-	is.ErrorIs(<-secondDone, ErrStartAfterShutdown)
+	is.ErrorIs(<-firstDone, ErrShutdown)
+	is.ErrorIs(<-secondDone, ErrShutdown)
 	is.Equal(int32(1), starts.Load(), "the queued Refresh started nothing")
 }
 
@@ -670,7 +670,7 @@ func TestScopeStartingHook_ShutdownCause(t *testing.T) {
 		err := tenant.Start()
 		<-done
 
-		assert.ErrorIs(t, err, ErrStartAfterShutdown)
+		assert.ErrorIs(t, err, ErrShutdown)
 	})
 }
 

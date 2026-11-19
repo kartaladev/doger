@@ -44,20 +44,23 @@ var (
 	ErrHealthCheckPanic = errors.New("doger: health check panic")
 
 	// ErrAlreadyStarted is returned by a Start call after the first one, whether
-	// the first one succeeded or failed.
+	// the first one succeeded or failed, as long as root Shutdown has not
+	// begun: once it has, a Start returns [ErrShutdown] instead, never
+	// ErrAlreadyStarted.
 	ErrAlreadyStarted = errors.New("doger: container already started")
-	// ErrStartAfterShutdown is matched by the error of Start, Refresh and
-	// Scope.Start once root Shutdown has begun. It is also the cause Shutdown gives the context
-	// of a running Start, Refresh or Scope.Start, so the error a run that
-	// Shutdown interrupted returns matches it, and the cause of the context of
-	// a health check in flight (see [context.Cause]).
-	ErrStartAfterShutdown = errors.New("doger: container is shut down")
 	// ErrShutdown is matched once a scope's shutdown has begun: by the error
 	// of Invoke*, Alias* and Export* on that scope, by the panic value of
 	// Provide*, Override* and Scope() on it, and by the error of an
 	// invocation that looked a service up before its shutdown and would
 	// have built it again. A container cannot be reused after Shutdown:
 	// build a new one.
+	//
+	// It is also matched by the error of Start, Refresh and Scope.Start once
+	// root Shutdown has begun, which takes precedence over
+	// [ErrAlreadyStarted]. Shutdown gives it as the cause of the context of a
+	// running Start, Refresh or Scope.Start, so the error of a run Shutdown
+	// interrupted matches it, and of the context of a health check in flight
+	// (see [context.Cause]). It replaces ErrStartAfterShutdown.
 	ErrShutdown = errors.New("doger: container is shut down")
 	// ErrNotStarted is returned by Refresh and Scope.Start while the
 	// container's first Start has not succeeded.
@@ -115,7 +118,7 @@ var libSentinels = []error{
 	ErrServiceNotFound, ErrServiceNotMatch, ErrServiceTypeMismatch,
 	ErrServiceAlreadyDeclared, ErrCircularDependency,
 	ErrHealthCheckTimeout, ErrHealthCheckPanic,
-	ErrAlreadyStarted, ErrStartAfterShutdown, ErrShutdown, ErrNotStarted, ErrNilInjector,
+	ErrAlreadyStarted, ErrShutdown, ErrNotStarted, ErrNilInjector,
 	ErrStructInjection, ErrProviderPanic, ErrShutdownPanic,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
 	ErrExtensionCycle, ErrExtensionConflict,

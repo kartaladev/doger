@@ -564,7 +564,7 @@ func TestScopeHooks_ObserverPanicThroughParent(t *testing.T) {
 
 	is.PanicsWithValue("scope-boom", func() { root.Shutdown() })
 	is.Equal(int32(1), svc.shutdowns.Load())
-	is.ErrorIs(root.Start(), ErrStartAfterShutdown)
+	is.ErrorIs(root.Start(), ErrShutdown)
 }
 
 func TestScopeHooks_NilContext(t *testing.T) {

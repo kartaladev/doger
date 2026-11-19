@@ -44,7 +44,7 @@ func (s *RootScope) Start() error {
 //
 // A container starts at most once: any later call returns an error matching
 // [ErrAlreadyStarted], even when the first one failed, and a call after root
-// Shutdown began returns an error matching [ErrStartAfterShutdown]. A clone
+// Shutdown began returns an error matching [ErrShutdown]. A clone
 // starts independently of its source; clones share eager instances, so an
 // eager Starter is started again by the clone.
 //
@@ -67,10 +67,10 @@ func (s *RootScope) Start() error {
 // Start runs the Failed hooks, then re-raises it.
 //
 // Shutdown during Start: a root Shutdown that begins while Start runs
-// cancels the Start-time context with cause [ErrStartAfterShutdown] and waits
+// cancels the Start-time context with cause [ErrShutdown] and waits
 // for Start to return, bounded by its own context. Start stops before its
 // next Starter or handler and returns an error matching
-// ErrStartAfterShutdown, and also ctx's cause when ctx was cancelled before
+// ErrShutdown, and also ctx's cause when ctx was cancelled before
 // Shutdown began. A Starter that ignores its context and finishes
 // after Shutdown stopped waiting is not rolled back: honour ctx.
 //
@@ -296,7 +296,7 @@ func (s *RootScope) beginStart(ctx context.Context) (context.Context, error) {
 	defer s.lifecycleMu.Unlock()
 
 	if s.closePhase != closeOpen {
-		return nil, libErrorf("cannot start: %w", ErrStartAfterShutdown)
+		return nil, libErrorf("cannot start: %w", ErrShutdown)
 	}
 	if s.startPhase != startIdle {
 		return nil, ErrAlreadyStarted
@@ -356,32 +356,32 @@ func (s *RootScope) finishStart(startCtx context.Context, err *error) {
 // abortOutcome is the outcome of a run that Shutdown began during: a run
 // that succeeded after its last abort check is reported as aborted, and a
 // failure also carries the abort cause unless it already does. The abort
-// cause always matches ErrStartAfterShutdown, even when the caller cancelled
+// cause always matches ErrShutdown, even when the caller cancelled
 // first. lifecycleMu must be held, so that beginClose has set the cause.
 func abortOutcome(ctx context.Context, err error) error {
 	cause := shutdownCause(ctx)
 	switch {
 	case err == nil:
 		return fmt.Errorf("doger: start aborted: %w", cause)
-	case errors.Is(err, ErrStartAfterShutdown):
+	case errors.Is(err, ErrShutdown):
 		return err
 	case errors.Is(err, context.Cause(ctx)):
 		// carries the caller's cause already
-		return fmt.Errorf("%w (start aborted: %w)", err, ErrStartAfterShutdown)
+		return fmt.Errorf("%w (start aborted: %w)", err, ErrShutdown)
 	default:
 		return fmt.Errorf("%w (start aborted: %w)", err, cause)
 	}
 }
 
 // shutdownCause returns the cause of the run's cancellation, made to match
-// ErrStartAfterShutdown when the caller cancelled before Shutdown did.
+// ErrShutdown when the caller cancelled before Shutdown did.
 func shutdownCause(ctx context.Context) error {
 	cause := context.Cause(ctx)
-	if errors.Is(cause, ErrStartAfterShutdown) {
+	if errors.Is(cause, ErrShutdown) {
 		return cause
 	}
 
-	return fmt.Errorf("%w: %w", ErrStartAfterShutdown, cause)
+	return fmt.Errorf("%w: %w", ErrShutdown, cause)
 }
 
 // startCandidate is a service discovered by Start.
@@ -836,7 +836,7 @@ func recoverAsError(r any) error {
 }
 
 // checkAbort returns an error wrapping the cause when the Start-time context
-// is done: the caller's ctx.Err(), or ErrStartAfterShutdown when Shutdown
+// is done: the caller's ctx.Err(), or ErrShutdown when Shutdown
 // cancelled Start.
 func checkAbort(startCtx context.Context) error {
 	if startCtx.Err() != nil {

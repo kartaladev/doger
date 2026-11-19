@@ -201,7 +201,7 @@ var extensionNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // health reports list its Starters as [HealthUnknown] without checking
 // them); after a
 // failed Start, Refresh returns [ErrNotStarted] as usual. Once root Shutdown
-// began, Extend returns an error matching [ErrStartAfterShutdown] and
+// began, Extend returns an error matching [ErrShutdown] and
 // installs nothing. Like the hook adders, Extend must not be called
 // concurrently with Start, and a Shutdown beginning while Extend runs is not
 // prevented.
@@ -262,7 +262,7 @@ func installInSession(root *RootScope, ext Extension, options extendOptions, fro
 	}
 
 	if phase := root.Phase(); phase == PhaseClosing || phase == PhaseClosed {
-		return &ExtensionError{Name: name, Instance: id.instance, Err: fmt.Errorf("%w: cannot install in phase %s", ErrStartAfterShutdown, phase)}
+		return &ExtensionError{Name: name, Instance: id.instance, Err: fmt.Errorf("%w: cannot install in phase %s", ErrShutdown, phase)}
 	}
 
 	registry := root.extensionRegistry()

@@ -110,7 +110,7 @@ func (s *RootScope) stopScheduling(ctx context.Context) {
 	m.sched = schedStopped
 	cancel, scheduling := m.roundCancel, m.scheduling
 	for _, call := range m.inflight {
-		call.cancel(ErrStartAfterShutdown) // cancelled, not waited for
+		call.cancel(ErrShutdown) // cancelled, not waited for
 	}
 	m.mu.Unlock()
 
