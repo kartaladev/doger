@@ -85,7 +85,7 @@ Examples:
 ## ADDED Requirements
 
 ### Requirement: Every library message carries the doger prefix exactly once
-Every error message, panic value message and error sentinel the library originates SHALL start with `doger: ` exactly once and SHALL NOT contain `DI: `, including messages that wrap another library error. A message that leads with a consumer's error, such as an abort outcome, SHALL keep that text first and unprefixed, and library text inside it SHALL NOT repeat the prefix.
+Every error message, panic value message and error sentinel the library originates SHALL start with `doger: ` exactly once and SHALL NOT contain `DI: `, including messages that wrap another library error. As a defensive rule, a message whose lead is a consumer's error SHALL keep that text first and unprefixed, and library text inside it SHALL NOT repeat the prefix; no public path produces one today, because a failing service of a start run is reported as a library-led `*StartError` (see the abort row below).
 
 #### Scenario: Messages that used to double the prefix
 ```gherkin

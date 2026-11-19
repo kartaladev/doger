@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -714,7 +713,7 @@ func TestRootScope_ShutdownWinnerPanic(t *testing.T) {
 
 			root := NewWithOpts(&InjectorOpts{
 				// the first record of the winning shutdown
-				Logger: panickingLogger(func(rec logRecord) bool { return strings.Contains(rec.message, "requested shutdown") }, "log-boom"),
+				Logger: panickingLogger(func(rec logRecord) bool { return rec.message == "requested shutdown" }, "log-boom"),
 			})
 			is.PanicsWithValue("log-boom", func() { root.Shutdown() })
 

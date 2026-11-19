@@ -1421,6 +1421,19 @@ func TestStartError_Fields(t *testing.T) {
 			message: "doger: kind `k` failed for service `j` in scope `[root]`: boom",
 		},
 		{
+			name: "dependency's provider returns errBuild",
+			setup: func(root *RootScope) {
+				ProvideNamed(root, "b", func(i Injector) (*startWithErr, error) {
+					_, err := InvokeNamed[int](i, "c")
+					return &startWithErr{}, err
+				}, AsStarter())
+				ProvideNamed(root, "c", func(Injector) (int, error) { return 0, errBuild })
+			},
+			service: "b", op: StartOpBuild, cause: errBuild,
+			// b's own ServiceError layer is dropped from the text; c's stays
+			message: "doger: failed to build service `b` in scope `[root]`: service \"c\" in scope \"[root]\": build failed",
+		},
+		{
 			name: "missing declared dependency",
 			setup: func(root *RootScope) {
 				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return &startWithErr{}, nil }, DependsOnNamed("missing"), AsStarter())
@@ -1450,6 +1463,15 @@ func TestStartError_Fields(t *testing.T) {
 			is.ErrorIs(err, tt.cause)
 			is.EqualError(err, tt.message)
 			is.Equal(1, strings.Count(err.Error(), "doger: "), "the doger prefix appears once")
+			if tt.op == StartOpBuild {
+				// the ServiceError of the same service stays in the chain,
+				// though its text is not repeated
+				var serviceErr *ServiceError
+				if is.ErrorAs(err, &serviceErr) {
+					is.Equal(tt.service, serviceErr.Service)
+					is.Equal("[root]", serviceErr.Scope)
+				}
+			}
 		})
 	}
 }

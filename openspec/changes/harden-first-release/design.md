@@ -112,7 +112,7 @@ func (e *ServiceError) Unwrap() error
 - **Provider panics (BREAKING, see D10).** An error panic value is no longer returned as is: it is wrapped so it matches both `ErrProviderPanic` and the original via `errors.Is`/`errors.As`.
 - **`ErrScopeAlreadyDeclared`.** A duplicate child-scope name panics with a value matching it. A detached child's name (D3) can be declared again.
 - **Chosen message texts.** `ErrShutdown`: `doger: container is shut down`. Stage: `doger: invalid stage N`, `doger: unknown stage`. DependencySource: `doger: invalid dependency source N`, `doger: unknown dependency source`. Kinds: `doger: kind not created with NewKind`, `doger: nil handler for kind "k"`.
-- **Prefix scope.** Library-authored text carries `doger: ` once. Text led by the consumer's own cause is not prefixed, for example the abort outcome `boom (start aborted: container is shut down)`.
+- **Prefix scope.** Library-authored text carries `doger: ` once. The consumer-led rule is defensive: a message whose lead is the consumer's own error keeps that text first and unprefixed, and library text inside it does not repeat the prefix (`ledErrorf`). No public path produces such a message today, because every service failure of a run is a `*StartError`, which the library leads (``doger: failed to start service `a` in scope `[root]`: boom (start aborted: container is shut down)``); the rule is pinned through `abortOutcome` directly (`TestAbortOutcome`).
 - **Typed nil.** A typed-nil `*RootScope` or `*Scope` behaves exactly like a nil injector (`ErrNilInjector`).
 
 ### D7. Doger-owned Clock
@@ -136,7 +136,7 @@ These three methods are everything the root package uses today.
 
 | Level | Events |
 |---|---|
-| Debug | registration, invocation, build, and the panic value of a recovered panic |
+| Debug | registration, invocation, build, `requested shutdown` (the first record of the winning root Shutdown), and the panic value of a recovered panic |
 | Info | container start, ready, closing and closed |
 | Warn | a fallback to an unmonitored container, panics after the first one of an operation, a health state change to degraded |
 | Error | a health scheduler failure, a shutdown error, a recovered panic (service name and panic type only) |
