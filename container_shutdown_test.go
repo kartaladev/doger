@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -937,4 +938,153 @@ func TestContainerShutdown_GrandchildDetach(t *testing.T) {
 	_, found := root.ChildByName("a")
 	is.True(found, `root still holds "a"`)
 	is.Len(root.Children(), 1)
+}
+
+func TestContainerShutdown_SharedEagerOnce(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		shutdown func(root, clone *RootScope) []*ShutdownReport
+	}{
+		{name: "root_then_clone", shutdown: func(root, clone *RootScope) []*ShutdownReport {
+			return []*ShutdownReport{root.Shutdown(), clone.Shutdown()}
+		}},
+		{name: "clone_then_root", shutdown: func(root, clone *RootScope) []*ShutdownReport {
+			return []*ShutdownReport{clone.Shutdown(), root.Shutdown()}
+		}},
+		{name: "concurrently", shutdown: func(root, clone *RootScope) []*ShutdownReport {
+			reports := make([]*ShutdownReport, 2)
+			var wg sync.WaitGroup
+			wg.Go(func() { reports[0] = root.Shutdown() })
+			wg.Go(func() { reports[1] = clone.Shutdown() })
+			wg.Wait()
+			return reports
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+			is := assert.New(t)
+
+			pool := &shutdownTestCounter{}
+			root := New()
+			ProvideNamedValue(root, "pool", pool)
+			clone := root.Clone()
+
+			for _, report := range tt.shutdown(root, clone) {
+				is.True(report.Succeed, "report errors: %v", report.Errors)
+			}
+			is.Equal(int32(1), pool.calls.Load(), "Shutdown calls of pool")
+		})
+	}
+}
+
+func TestContainerShutdown_CloneLazyPerContainer(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	counts := &closedTestCounts{}
+	root := New()
+	provideClosedTestSvc(root, "svc", counts)
+	clone := root.Clone()
+	for _, container := range []*RootScope{root, clone} {
+		_, err := InvokeNamed[*closedTestSvc](container, "svc")
+		require.NoError(t, err)
+	}
+
+	root.Shutdown()
+	clone.Shutdown()
+
+	is.Equal(int32(2), counts.builds.Load(), "builds")
+	is.Equal(int32(2), counts.shutdowns.Load(), "Shutdown calls")
+}
+
+// reentrantSupervisor calls inner from its Shutdown(ctx) and records the
+// report and how long the call took.
+type reentrantSupervisor struct {
+	inner   func(ctx context.Context) *ShutdownReport
+	report  *ShutdownReport
+	elapsed time.Duration
+}
+
+func (s *reentrantSupervisor) Shutdown(ctx context.Context) error {
+	start := time.Now()
+	s.report = s.inner(ctx)
+	s.elapsed = time.Since(start)
+	if s.report.Succeed {
+		return nil
+	}
+	errs := make([]error, 0, len(s.report.Errors))
+	for _, err := range s.report.Errors {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+func TestContainerShutdown_ReentrantRootShutdown(t *testing.T) {
+	t.Parallel()
+
+	type ctxKey struct{}
+	tests := []struct {
+		name    string
+		inner   func(root *RootScope, ctx context.Context) *ShutdownReport
+		bounded bool // the inner call waits for its own 50ms deadline
+	}{
+		{name: "shutdown_context", inner: func(root *RootScope, ctx context.Context) *ShutdownReport {
+			return root.ShutdownWithContext(ctx)
+		}},
+		{name: "derived_context", inner: func(root *RootScope, ctx context.Context) *ShutdownReport {
+			return root.ShutdownWithContext(context.WithValue(ctx, ctxKey{}, "v"))
+		}},
+		{name: "unrelated_context", bounded: true, inner: func(root *RootScope, _ context.Context) *ShutdownReport {
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			return root.ShutdownWithContext(ctx)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				var closed atomic.Int32
+				root := NewWithOpts(&InjectorOpts{HookContainerClosed: []func(context.Context, *RootScope, *ShutdownReport){
+					func(context.Context, *RootScope, *ShutdownReport) { closed.Add(1) },
+				}})
+				supervisor := &reentrantSupervisor{inner: func(ctx context.Context) *ShutdownReport { return tt.inner(root, ctx) }}
+				db := &shutdownTestCounter{}
+				provideBuilt(t, root, "supervisor", supervisor)
+				provideBuilt(t, root, "db", db)
+
+				outer := root.Shutdown()
+
+				if tt.bounded {
+					is.Equal(50*time.Millisecond, supervisor.elapsed)
+					is.False(supervisor.report.Succeed)
+					for _, err := range supervisor.report.Errors {
+						is.ErrorIs(err, context.DeadlineExceeded)
+					}
+					is.False(outer.Succeed)
+					is.Len(outer.Errors, 1)
+					is.ErrorIs(reportError(outer, root.self, "supervisor"), context.DeadlineExceeded)
+				} else {
+					is.Zero(supervisor.elapsed, "returned at once")
+					is.True(supervisor.report.Succeed)
+					is.Empty(supervisor.report.Errors)
+					is.Empty(supervisor.report.Services)
+					is.True(outer.Succeed, "outer errors: %v", outer.Errors)
+				}
+				is.Equal(int32(1), db.calls.Load(), "Shutdown calls of db")
+				is.Equal(int32(1), closed.Load(), "Closed hook runs")
+			})
+		})
+	}
 }

@@ -119,10 +119,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 17. Shared eager values and re-entrant root shutdown
 
-- [ ] 17.1 RED: regression `TestContainerShutdown_SharedEagerOnce` plus `TestContainerShutdown_CloneLazyPerContainer` and `TestContainerShutdown_ReentrantRootShutdown` (scenarios "A shared eager value is shut down once", "Lazy services stay per container", "A re-entrant root shutdown returns at once"); verify `go test -race -run 'TestContainerShutdown_(SharedEagerOnce|CloneLazyPerContainer|ReentrantRootShutdown)' .` fails (2 calls; inner deadline error)
-- [ ] 17.2 GREEN: a shared shutdown-once cell on `serviceEager` copied by `clone`, and a private marker key on the context root shutdown hands to services so a marked re-entrant call returns an empty report (D14); verify the 17.1 tests pass and `make test` is green
-- [ ] 17.3 REFACTOR: none needed if the cell is a single `*sync.Once` field, otherwise Introduce Parameter Object for it; verify `make test` and `make lint` pass
-- [ ] 17.4 Docs: godoc for `Clone` (shared eager values) and `RootScope.ShutdownWithContext` (re-entrancy; `Shutdown()` drops the context); verify `go doc doger.RootScope.ShutdownWithContext` shows the text
+- [x] 17.1 RED: regression `TestContainerShutdown_SharedEagerOnce` plus `TestContainerShutdown_CloneLazyPerContainer` and `TestContainerShutdown_ReentrantRootShutdown` (scenarios "A shared eager value is shut down once", "Lazy services stay per container", "A re-entrant root shutdown returns at once"); verify `go test -race -run 'TestContainerShutdown_(SharedEagerOnce|CloneLazyPerContainer|ReentrantRootShutdown)' .` fails (2 calls; inner deadline error)
+- [x] 17.2 GREEN: a shared shutdown-once cell on `serviceEager` copied by `clone`, and a private marker key on the context root shutdown hands to services so a marked re-entrant call returns an empty report (D14); verify the 17.1 tests pass and `make test` is green
+- [x] 17.3 REFACTOR: none needed if the cell is a single `*sync.Once` field, otherwise Introduce Parameter Object for it; verify `make test` and `make lint` pass
+- [x] 17.4 Docs: godoc for `Clone` (shared eager values) and `RootScope.ShutdownWithContext` (re-entrancy; `Shutdown()` drops the context); verify `go doc doger.RootScope.ShutdownWithContext` shows the text
 
 ## 18. ShutdownReport API
 

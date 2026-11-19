@@ -214,6 +214,9 @@ func (s *RootScope) HealthCheckWithContext(ctx context.Context) map[string]error
 
 // Shutdown gracefully shuts down the root scope and all its descendant scopes.
 // It runs once per root container; see [RootScope.ShutdownWithContext].
+// It drops any context: called from code running inside this root's
+// shutdown, such as a service's Shutdown method, it waits for that shutdown,
+// so for itself. Call ShutdownWithContext with the context received there.
 func (s *RootScope) Shutdown() *ShutdownReport { return s.ShutdownWithContext(context.Background()) }
 
 // ShutdownWithContext gracefully shuts down the root scope and all its descendant scopes with context support.
@@ -275,9 +278,21 @@ func (s *RootScope) Shutdown() *ShutdownReport { return s.ShutdownWithContext(co
 // health scheduling and ends health recording for good; see
 // [Scope.ShutdownWithContext]. Scope.Shutdown on a child scope waits for a
 // start that is starting it; see [Scope.ShutdownWithContext].
+//
+// Re-entrancy: the context handed to services and scope hooks is derived
+// from ctx and marked with this root. A ShutdownWithContext on the same root
+// with that context, or one derived from it, such as from a service's
+// Shutdown(ctx), returns at once a successful report listing no service,
+// and the running shutdown completes normally. A call with any other
+// context waits for the running shutdown, bounded by its own context.
 func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if marked, _ := ctx.Value(rootShutdownKey{}).(*RootScope); marked == s {
+		// called from inside this root's shutdown, with its context: waiting
+		// would wait on itself
+		return emptyShutdownReport()
 	}
 
 	ticket := s.beginClose()
@@ -298,6 +313,20 @@ func (s *RootScope) ShutdownWithContext(ctx context.Context) *ShutdownReport {
 	s.dispatchShutdownPanics(first, panics)
 
 	return report
+}
+
+// rootShutdownKey is the context key marking the context a root shutdown
+// hands to services and scope hooks; its value is the *RootScope.
+type rootShutdownKey struct{}
+
+// emptyShutdownReport returns a successful report listing no service.
+func emptyShutdownReport() *ShutdownReport {
+	return &ShutdownReport{
+		Succeed:             true,
+		Services:            []ServiceDescription{},
+		Errors:              map[ServiceDescription]error{},
+		ServiceShutdownTime: map[ServiceDescription]time.Duration{},
+	}
 }
 
 // waitForClose waits for the winning Shutdown, bounded by ctx, and returns a
@@ -326,7 +355,9 @@ func (s *RootScope) shutdownAsWinner(ctx context.Context, ticket closeTicket, fi
 	// pointClosing
 	s.runObserverHooks(ctx, "closing", s.hooks.containerClosing.load(), first)
 
-	report = s.self.shutdownWithContext(ctx, first)
+	// services and scope hooks get a context marked with this root, so a
+	// re-entrant ShutdownWithContext with it returns at once
+	report = s.self.shutdownWithContext(context.WithValue(ctx, rootShutdownKey{}, s), first)
 	if startErr != nil {
 		report.Errors[newServiceDescription(s.ID(), s.Name(), "")] = startErr
 		report.Succeed = false
@@ -840,6 +871,11 @@ func (s *RootScope) AddScopeClosedHook(hook func(context.Context, *Scope)) {
 // The clone keeps the options, hooks included, and the kind handlers
 // (including a replaced Runnable handler), but not the lifecycle state: it
 // starts and shuts down independently.
+//
+// An eager value (ProvideValue, ProvideNamedValue) is shared by the source
+// and its clones: the first of them to shut it down calls its Shutdown, and
+// the others only drop their registration. A lazy service is built and
+// shut down once per container.
 //
 // Play: https://go.dev/play/p/DqIlXhZ8c4t
 func (s *RootScope) Clone() *RootScope {
