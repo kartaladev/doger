@@ -1809,6 +1809,7 @@ func TestHealthCheck_GoexitAllWaiters(t *testing.T) {
 			is.Equal(slog.LevelError, recovered[0].level)
 			is.Equal("healthcheck", recovered[0].attrs["point"])
 			is.Equal("db", recovered[0].attrs["service"])
+			is.Equal("runtime.Goexit", recovered[0].attrs["panic_type"])
 		}
 		i.Shutdown()
 	})

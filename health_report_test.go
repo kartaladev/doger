@@ -2499,6 +2499,20 @@ func TestHealthReport_MarshalJSON(t *testing.T) {
 	}
 }
 
+// healthReportTestFirstEntry returns the first service object of a decoded
+// report, failing the test when there is none.
+func healthReportTestFirstEntry(t *testing.T, decoded map[string]any) map[string]any {
+	t.Helper()
+
+	services, ok := decoded["services"].([]any)
+	require.True(t, ok, "services: %v", decoded["services"])
+	require.NotEmpty(t, services)
+	entry, ok := services[0].(map[string]any)
+	require.True(t, ok, "services[0]: %v", services[0])
+
+	return entry
+}
+
 func TestHealthReport_MarshalJSONEdgeCases(t *testing.T) {
 	t.Parallel()
 
@@ -2522,7 +2536,7 @@ func TestHealthReport_MarshalJSONEdgeCases(t *testing.T) {
 			report: HealthReport{Services: []ServiceHealth{{Service: db, PendingSince: healthReportTestEpoch}}},
 			check: func(t *testing.T, decoded map[string]any) {
 				t.Helper()
-				entry := decoded["services"].([]any)[0].(map[string]any) //nolint:forcetypeassert
+				entry := healthReportTestFirstEntry(t, decoded)
 				assert.Equal(t, "unknown", entry["state"])
 				assert.Equal(t, "2026-01-01T00:00:00Z", entry["pendingSince"])
 				assert.Equal(t, "0s", entry["duration"])
@@ -2535,8 +2549,27 @@ func TestHealthReport_MarshalJSONEdgeCases(t *testing.T) {
 			report: HealthReport{Services: []ServiceHealth{{Service: db, State: HealthUnhealthy, Err: fmt.Errorf("ping: %w", context.DeadlineExceeded)}}},
 			check: func(t *testing.T, decoded map[string]any) {
 				t.Helper()
-				entry := decoded["services"].([]any)[0].(map[string]any) //nolint:forcetypeassert
+				entry := healthReportTestFirstEntry(t, decoded)
 				assert.Equal(t, "ping: context deadline exceeded", entry["error"])
+			},
+		},
+		{
+			name:   "empty_error_message",
+			report: HealthReport{Services: []ServiceHealth{{Service: db, State: HealthUnhealthy, Err: errors.New("")}}},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				entry := healthReportTestFirstEntry(t, decoded)
+				assert.Contains(t, entry, "error", "a non-nil error keeps its key")
+				assert.Equal(t, any(""), entry["error"], "the empty message, as a string")
+			},
+		},
+		{
+			name:   "nil_tags",
+			report: HealthReport{Services: []ServiceHealth{{Service: db, State: HealthHealthy}}},
+			check: func(t *testing.T, decoded map[string]any) {
+				t.Helper()
+				entry := healthReportTestFirstEntry(t, decoded)
+				assert.Equal(t, []any{}, entry["tags"])
 			},
 		},
 	}

@@ -51,7 +51,8 @@ func (s HealthState) String() string {
 }
 
 // MarshalText encodes the state as its String form, so JSON shows it by
-// name. A value outside the declared constants fails.
+// name. A value outside the declared constants fails to marshal, and so
+// does a JSON encoding holding it: the library never reports one.
 func (s HealthState) MarshalText() ([]byte, error) {
 	name, ok := enumText(s, healthStateNames)
 	if !ok {
@@ -146,15 +147,18 @@ type serviceHealthJSON struct {
 	Tags         []string           `json:"tags"`
 	Optional     bool               `json:"optional"`
 	State        HealthState        `json:"state"`
-	Error        string             `json:"error,omitempty"`
+	Error        *string            `json:"error,omitempty"` // nil only when the check passed
 	CheckedAt    *time.Time         `json:"checkedAt,omitempty"`
 	PendingSince *time.Time         `json:"pendingSince,omitempty"`
 	Duration     string             `json:"duration"`
 }
 
 // MarshalJSON encodes the entry with lower-camel keys: the state by name,
-// the error as its message (omitted when nil), CheckedAt and PendingSince in
-// RFC 3339 (omitted when zero) and Duration as a Go duration string.
+// the error as its message (omitted only when Err is nil, so an error with an
+// empty message keeps the key), CheckedAt and PendingSince in RFC 3339
+// (omitted when zero) and Duration as a Go duration string. It fails for a
+// State outside the declared constants, which only an entry built by hand
+// can hold.
 func (h ServiceHealth) MarshalJSON() ([]byte, error) {
 	entry := serviceHealthJSON{
 		Service:      h.Service,
@@ -169,7 +173,8 @@ func (h ServiceHealth) MarshalJSON() ([]byte, error) {
 		entry.Tags = []string{}
 	}
 	if h.Err != nil {
-		entry.Error = h.Err.Error()
+		message := h.Err.Error()
+		entry.Error = &message
 	}
 
 	return json.Marshal(entry)
@@ -187,7 +192,9 @@ type healthReportJSON struct {
 // MarshalJSON encodes the report for monitoring, with lower-camel keys: the
 // state and phase by name, CheckedAt in RFC 3339 (omitted when zero) and
 // services as an array, [] when there is none; see ServiceHealth.MarshalJSON
-// for each entry.
+// for each entry. It never fails for a report the library returns; a report
+// built by hand fails when its State, its Phase or an entry's State is
+// outside the declared constants.
 func (r HealthReport) MarshalJSON() ([]byte, error) {
 	report := healthReportJSON{
 		State:     r.State,

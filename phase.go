@@ -40,7 +40,8 @@ func (p ContainerPhase) String() string {
 var containerPhaseNames = []string{"idle", "starting", "started", "ready", "failed", "closing", "closed"}
 
 // MarshalText encodes the phase as its String form, so JSON shows it by
-// name. A value outside the declared constants fails.
+// name. A value outside the declared constants fails to marshal, and so
+// does a JSON encoding holding it: the library never reports one.
 func (p ContainerPhase) MarshalText() ([]byte, error) {
 	name, ok := enumText(p, containerPhaseNames)
 	if !ok {

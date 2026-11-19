@@ -352,7 +352,7 @@ Examples:
 <!-- cases: 10 backward compatibility: String() output is unchanged; text methods are additive -->
 
 ### Requirement: A health report marshals to JSON for monitoring
-`json.Marshal` of a `HealthReport` SHALL succeed and SHALL emit lower-camel keys: `state` and `phase` as their text form, `monitored`, `checkedAt`, and `services`. Each service SHALL emit `service` (`scopeId`, `scopeName`, `service`), `tags`, `optional`, `state`, `error` (the error's message, omitted when nil), `checkedAt` and `pendingSince` (RFC 3339, omitted when zero), and `duration` (a Go duration string).
+`json.Marshal` of a `HealthReport` the library returns SHALL succeed and SHALL emit lower-camel keys: `state` and `phase` as their text form, `monitored`, `checkedAt`, and `services`. Each service SHALL emit `service` (`scopeId`, `scopeName`, `service`), `tags`, `optional`, `state`, `error` (the error's message, also when it is empty; omitted only when the error is nil), `checkedAt` and `pendingSince` (RFC 3339, omitted when zero), and `duration` (a Go duration string).
 
 #### Scenario: Report JSON
 ```gherkin
@@ -387,7 +387,7 @@ Examples:
 <!-- cases: N/A 2 overrides: consumers needing another shape map the exported fields themselves -->
 <!-- cases: 3 zero values: the zero HealthReport (services as [] not null; zero times omitted); a nil Err omitted -->
 <!-- cases: 4 boundaries: zero, one service; zero and positive durations -->
-<!-- cases: 5 errors: wrapped errors are emitted as their full message; json.Marshal never fails on a report -->
+<!-- cases: 5 errors: wrapped errors are emitted as their full message; an error with an empty message keeps the "error" key; json.Marshal never fails on a report the library returns, while a hand-built report with an out-of-range State or Phase fails, as the strict enum text methods do -->
 <!-- cases: N/A 6 not found/duplicate: not applicable -->
 <!-- cases: 7 lifecycle: an entry with a check in flight (pendingSince) -->
 <!-- cases: N/A 8 concurrency: a report is the caller's own copy (existing requirement) -->

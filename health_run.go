@@ -769,7 +769,7 @@ func (s *RootScope) runCheckGuarded(call *sharedCall, finish func(checkOutcome))
 	returned := false
 	defer func() {
 		if !returned {
-			s.logRecoveredPanic("healthcheck", call.target.name, "runtime.Goexit")
+			s.logRecoveredPanicAs("healthcheck", call.target.name, "runtime.Goexit", "runtime.Goexit")
 			finish(checkOutcome{err: fmt.Errorf("%w: runtime.Goexit", ErrHealthCheckPanic)})
 		}
 	}()
