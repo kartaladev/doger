@@ -273,9 +273,9 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 39. A Goexit in a check does not block later checks
 
-- [ ] 39.1 RED: regression tests `TestHealthCheck_GoexitDoesNotWedge`, `TestHealthCheck_GoexitAllWaiters` and `TestHealthRound_GoexitKeepsRecording`; verify `go test -race -run Goexit .` fails (second call times out, HealthCheck invoked 1 time)
-- [ ] 39.2 GREEN: defer `finishCall` in `runCall` with a "did not return" flag producing `fmt.Errorf("%w: runtime.Goexit", ErrHealthCheckPanic)`, logged at Error without calling HookContainerPanic; verify the 39.1 tests pass with goleak
-- [ ] 39.3 REFACTOR: Extract Function `runCheckGuarded` wrapping the check, recover and Goexit detection; verify `make test` and `make lint` pass
+- [x] 39.1 RED: regression tests `TestHealthCheck_GoexitDoesNotWedge`, `TestHealthCheck_GoexitAllWaiters` and `TestHealthRound_GoexitKeepsRecording`; verify `go test -race -run Goexit .` fails (second call times out, HealthCheck invoked 1 time)
+- [x] 39.2 GREEN: defer `finishCall` in `runCall` with a "did not return" flag producing `fmt.Errorf("%w: runtime.Goexit", ErrHealthCheckPanic)`, logged at Error without calling HookContainerPanic; verify the 39.1 tests pass with goleak
+- [x] 39.3 REFACTOR: Extract Function `runCheckGuarded` wrapping the check, recover and Goexit detection; verify `make test` and `make lint` pass
 
 ## 40. A monitored read joins the first check in flight
 

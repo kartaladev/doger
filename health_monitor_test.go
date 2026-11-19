@@ -1478,3 +1478,27 @@ func BenchmarkHealthRound(b *testing.B) {
 		scheduler.runRound()
 	}
 }
+
+func TestHealthRound_GoexitKeepsRecording(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		scheduler := &manualScheduler{}
+		i := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler})
+		var calls atomic.Int32
+		ProvideNamedValue(i, "db", healthRunTestGoexitOnce(&calls))
+		require.NoError(t, i.Start())
+		defer i.Shutdown()
+
+		scheduler.runRound()
+		entry := healthReportTestEntry(t, i.HealthReport(), "db")
+		is.Equal(HealthUnhealthy, entry.State)
+		is.ErrorIs(entry.Err, ErrHealthCheckPanic)
+
+		scheduler.runRound()
+		is.Equal(HealthHealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
+	})
+}

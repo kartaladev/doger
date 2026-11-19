@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"runtime"
@@ -1700,4 +1701,115 @@ func (healthRunTestGoroutineScheduler) ScheduleHealthRounds(_ Clock, _ func(cont
 	done := make(chan struct{})
 	go func() { <-done }()
 	return func(context.Context) error { close(done); return nil }, nil
+}
+
+// healthRunTestGoexitSuffix ends the message of a check that exited its
+// goroutine.
+const healthRunTestGoexitSuffix = "health check panic: runtime.Goexit"
+
+// healthRunTestGoexitOnce is a check calling runtime.Goexit on its first
+// call and returning nil afterwards, counting its calls.
+func healthRunTestGoexitOnce(calls *atomic.Int32) healthReportTestFunc {
+	return healthReportTestFunc{check: func(context.Context) error {
+		if calls.Add(1) == 1 {
+			runtime.Goexit()
+		}
+		return nil
+	}}
+}
+
+func TestHealthCheck_GoexitDoesNotWedge(t *testing.T) {
+	t.Parallel()
+
+	named := func(_ *testing.T, i *RootScope) error { return HealthCheckNamed(i, "db") }
+	forced := func(_ *testing.T, i *RootScope) error { return i.HealthCheck()["db"] }
+	report := func(t *testing.T, i *RootScope) error {
+		t.Helper()
+		entry := healthReportTestEntry(t, i.HealthReport(), "db")
+		if entry.Err == nil && entry.State != HealthHealthy {
+			return fmt.Errorf("state %v", entry.State)
+		}
+		return entry.Err
+	}
+
+	tests := []struct {
+		name        string
+		parallelism uint
+		entry       func(t *testing.T, i *RootScope) error
+	}{
+		{name: "named_unlimited", entry: named},
+		{name: "forced_unlimited", entry: forced},
+		{name: "forced_parallelism_1", parallelism: 1, entry: forced},
+		{name: "report_unlimited", entry: report},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				i := NewWithOpts(&InjectorOpts{
+					HealthCheckTimeout:     50 * time.Millisecond,
+					HealthCheckParallelism: tt.parallelism,
+					HealthReportCacheTTL:   -1,
+				})
+				var calls atomic.Int32
+				ProvideNamedValue(i, "db", healthRunTestGoexitOnce(&calls))
+
+				first := tt.entry(t, i)
+				is.ErrorIs(first, ErrHealthCheckPanic)
+				if is.Error(first) {
+					is.True(strings.HasSuffix(first.Error(), healthRunTestGoexitSuffix), "first: %v", first)
+				}
+				is.NoError(tt.entry(t, i), "second call")
+				is.Equal(int32(2), calls.Load(), "calls of the check")
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_GoexitAllWaiters(t *testing.T) {
+	t.Parallel()
+
+	const waiters = 10
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		panics := &healthRunTestPanicRecorder{}
+		log := newLogRecorder(slog.LevelInfo)
+		i := NewWithOpts(&InjectorOpts{HookContainerPanic: panics.hook, Logger: log.logger()})
+		release := make(chan struct{})
+		ProvideNamedValue(i, "db", healthReportTestFunc{check: func(context.Context) error {
+			<-release
+			runtime.Goexit()
+			return nil
+		}})
+
+		results := make(chan error, waiters)
+		for range waiters {
+			go func() { results <- HealthCheckNamed(i, "db") }()
+		}
+		synctest.Wait()
+		close(release)
+
+		for range waiters {
+			err := <-results
+			is.ErrorIs(err, ErrHealthCheckPanic)
+			if is.Error(err) {
+				is.True(strings.HasSuffix(err.Error(), healthRunTestGoexitSuffix), "got %v", err)
+			}
+		}
+		is.Empty(panics.recorded(), "HookContainerPanic calls")
+		recovered := log.withMessage("panic recovered")
+		if is.Len(recovered, 1, "one Error record for the one check") {
+			is.Equal(slog.LevelError, recovered[0].level)
+			is.Equal("healthcheck", recovered[0].attrs["point"])
+			is.Equal("db", recovered[0].attrs["service"])
+		}
+		i.Shutdown()
+	})
 }

@@ -757,7 +757,26 @@ func (s *RootScope) holdSlot(call *sharedCall, release func()) (stop func()) {
 
 // runCall runs the check of call and finishes it.
 func (s *RootScope) runCall(call *sharedCall) {
-	s.finishCall(call, call.check(call.ctx), true)
+	s.runCheckGuarded(call, func(outcome checkOutcome) { s.finishCall(call, outcome, true) })
+}
+
+// runCheckGuarded runs the check of call, whose panics the check itself
+// recovers (see runHealthCheck), and passes its outcome to finish, also when
+// the check ends its goroutine with runtime.Goexit: the outcome is then an
+// error matching ErrHealthCheckPanic, logged at Error without calling
+// HookContainerPanic, so the waiters are released and the next check runs.
+func (s *RootScope) runCheckGuarded(call *sharedCall, finish func(checkOutcome)) {
+	returned := false
+	defer func() {
+		if !returned {
+			s.logRecoveredPanic("healthcheck", call.target.name, "runtime.Goexit")
+			finish(checkOutcome{err: fmt.Errorf("%w: runtime.Goexit", ErrHealthCheckPanic)})
+		}
+	}()
+
+	outcome := call.check(call.ctx)
+	returned = true
+	finish(outcome)
 }
 
 // finishCall decides the result of each waiter of call, whose check
