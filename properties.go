@@ -198,7 +198,7 @@ func propertyPrefix(name, instance string) string {
 // created with its own InjectorOpts.PropertySource reads from that source.
 // Outside any private extension scope it returns a view where every key
 // misses, and false: in the root, in an ordinary child scope, and in the
-// providers of a flattened extension (see [Flatten]), which run in the root
+// providers of a flattened extension (see [ExtendIntoRoot]), which run in the root
 // and so cannot be told apart from the application's. A flattened extension
 // reads its configuration in its Extend instead. A nil i, or a typed-nil
 // *RootScope or *Scope, panics with an error matching [ErrNilInjector].

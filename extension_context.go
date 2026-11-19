@@ -61,7 +61,7 @@ func (x *ExtensionContext) Instance() string { return x.instance }
 // of its private scope (or its descendants) was resolved; once one was, that
 // Extend fails with [ErrExtensionConflict]. The replacing Extend may rename
 // the private scope ([ExtendScopeName]) or flatten the extension
-// ([Flatten]). An install its author places flat ([PlacementFlat]) cannot be
+// ([ExtendIntoRoot]). An install its author places flat ([PlacementFlat]) cannot be
 // rolled back, so it is never replaced: the explicit Extend conflicts. When
 // the replacing Extend fails, or declines with [ErrExtensionDisabled], the
 // required install is installed again from its value, so the extensions

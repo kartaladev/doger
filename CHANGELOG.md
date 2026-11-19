@@ -18,7 +18,7 @@ Each entry gives the change and its migration.
 |---|---|---|
 | `As`, `AsNamed`, `MustAs`, `MustAsNamed` | `Alias`, `AliasNamed`, `MustAlias`, `MustAliasNamed` | Rename the calls. `Bind`/`BindNamed` are unchanged. |
 | `ExportAs(name)` | `WithExportName(name)` | Rename the call. |
-| `Flatten()` | `ExtendIntoRoot()` | Rename the call. |
+| `Flatten()` | `ExtendIntoRoot()` | Rename the call. `Extend` with a nil root, typed-nil included, returns `ErrNilInjector`. |
 | `HealthReportOption` (struct) | `type HealthReportOption func(*healthReportOptions)` | None for callers of `MatchHealthTags`/`IgnoreContainerPhase`. A zero value no longer exists. |
 | `Stage` and `DependencySource` start at 0 | Constants start at 1; 0 is invalid, its `String()` is `"unknown"`, and marshalling or using it fails | Use the named constants. |
 | `var Runnable` | `func Runnable() Kind[Runner, struct{}]` | `Runnable.Handle(...)` becomes `Runnable().Handle(...)`, and `Runnable.With(m)` becomes `Runnable().With(m)`. |

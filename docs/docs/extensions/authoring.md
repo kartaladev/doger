@@ -108,7 +108,7 @@ An install made only through `Require` is replaced by a later explicit `doger.Ex
 
 - During `Extend`, read properties with `x.Properties().Lookup("addr")`. The view is prefixed with your name and instance key: `redis.addr`, or `redis/queue.addr` for the instance `queue`.
 - In providers, which run later, use `doger.ExtensionProperties(i)` with the injector the provider receives: it follows the container, so a clone with its own property source reads from it. The context `x` is valid only while `Extend` runs. A provider registered in a scope you create below your private scope gets your view too.
-- When the installer flattens your extension (`doger.Flatten()`), your providers run in the root, where `ExtensionProperties` returns a view that always misses (and `false`). To work flattened too, read your configuration in `Extend`, with `x.Properties()`, and capture it in your providers' closures, as the example above does with the `addr` option.
+- When the installer flattens your extension (`doger.ExtendIntoRoot()`), your providers run in the root, where `ExtensionProperties` returns a view that always misses (and `false`). To work flattened too, read your configuration in `Extend`, with `x.Properties()`, and capture it in your providers' closures, as the example above does with the `addr` option.
 - Keys are lowercase alphanumeric words joined by single dashes, in dot-separated segments (`pool-size`, `tls.enabled`). An invalid key misses.
 - Give precedence to your constructor's options, then to properties, then to your defaults. The library does not enforce it.
 
@@ -122,4 +122,4 @@ if value, ok := x.Properties().Lookup("enabled"); ok && value == "false" {
 }
 ```
 
-`Extend` then rolls back, logs one line naming the extension, and returns `nil`. Installed with `doger.Flatten()`, nothing is rolled back: what you registered before declining stays in the root, so decline before registering anything. If shutting the declined attempt down fails, `Extend` returns an `*ExtensionError` holding the failed report instead, which does not match `ErrExtensionDisabled`, so a leak is never mistaken for a clean decline; the extension is still recorded as disabled. An extension that requires a disabled one gets an error matching `ErrRequiredExtensionDisabled`, which fails it instead of disabling it in turn.
+`Extend` then rolls back, logs one line naming the extension, and returns `nil`. Installed with `doger.ExtendIntoRoot()`, nothing is rolled back: what you registered before declining stays in the root, so decline before registering anything. If shutting the declined attempt down fails, `Extend` returns an `*ExtensionError` holding the failed report instead, which does not match `ErrExtensionDisabled`, so a leak is never mistaken for a clean decline; the extension is still recorded as disabled. An extension that requires a disabled one gets an error matching `ErrRequiredExtensionDisabled`, which fails it instead of disabling it in turn.

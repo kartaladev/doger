@@ -23,7 +23,7 @@ var ErrInvalidExtension = errors.New("doger: invalid extension")
 // Extend to decline installing, for example when its configuration turns it
 // off. [Extend] then rolls back what it registered, records the identity as
 // disabled, logs one line naming it, and returns nil. A flattened extension
-// (see [Flatten]) is not rolled back: what it registered before declining
+// (see [ExtendIntoRoot]) is not rolled back: what it registered before declining
 // stays in the root. When shutting the declined attempt down fails, Extend
 // returns an [*ExtensionError] wrapping the failed report instead, which
 // does not match ErrExtensionDisabled; the identity is still recorded as
@@ -122,7 +122,7 @@ const (
 
 // ExtensionPlacement is the optional interface of an extension choosing its
 // default placement. An extension without it is installed privately. The
-// installer has the last word: [Flatten] installs into the root whatever the
+// installer has the last word: [ExtendIntoRoot] installs into the root whatever the
 // extension chose.
 type ExtensionPlacement interface {
 	// Placement returns where the extension registers its services.
@@ -134,24 +134,24 @@ type ExtendOption func(*extendOptions)
 
 // extendOptions is the configuration of an Extend call.
 type extendOptions struct {
-	flatten      bool
+	intoRoot     bool
 	scopeName    string
 	scopeNameSet bool
 }
 
-// Flatten installs the extension into the root's own scope instead of a
+// ExtendIntoRoot installs the extension into the root's own scope instead of a
 // private scope, whatever placement the extension declares, and makes its
 // exports no-ops. A flattened install that fails, or declines with
 // [ErrExtensionDisabled], is not rolled back: the services it registered
 // before failing or declining stay registered in the root.
-func Flatten() ExtendOption {
-	return func(options *extendOptions) { options.flatten = true }
+func ExtendIntoRoot() ExtendOption {
+	return func(options *extendOptions) { options.intoRoot = true }
 }
 
 // ExtendScopeName names the extension's private scope name instead of
 // "ext:<name>[/<instance>]", for example to avoid a clash with another scope
 // or extension of the same name. It has no effect when the extension is
-// installed flat (see [Flatten] and [PlacementFlat]). An empty name makes
+// installed flat (see [ExtendIntoRoot] and [PlacementFlat]). An empty name makes
 // [Extend] fail with an error matching [ErrInvalidExtension].
 func ExtendScopeName(name string) ExtendOption {
 	return func(options *extendOptions) {
@@ -164,7 +164,8 @@ func ExtendScopeName(name string) ExtendOption {
 // lowercase alphanumeric words joined by single dashes.
 var extensionNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// Extend installs ext into root; a nil root gives [ErrNilInjector]. It
+// Extend installs ext into root. A nil root, typed-nil included, gives
+// [ErrNilInjector]: there is no default container. It
 // calls ext.Extend once, with an [ExtensionContext] whose Scope is a new
 // private child scope of root, named "ext:<name>" or, for an extension with
 // an instance key, "ext:<name>/<instance>". [ExtendScopeName] renames it.
@@ -191,7 +192,7 @@ var extensionNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // The detach and the removal complete even when a scope hook panics during
 // that shutdown; the panic is raised afterwards, as for any shutdown. A
 // failed shutdown report is joined to the error. Extensions the failing one
-// required stay installed. A flattened install (see [Flatten]) is not rolled
+// required stay installed. A flattened install (see [ExtendIntoRoot]) is not rolled
 // back: its registrations stay in the root.
 //
 // Phase: Extend is allowed while the container is idle, starting (from a
@@ -875,10 +876,10 @@ type installPlan struct {
 }
 
 // planInstall returns where ext, the extension name with the instance key
-// instance, is installed: the root's own scope with Flatten or when the
+// instance, is installed: the root's own scope with ExtendIntoRoot or when the
 // author asks for PlacementFlat, its private scope otherwise.
 func planInstall(ext Extension, name, instance string, options extendOptions) (installPlan, error) {
-	flat := options.flatten
+	flat := options.intoRoot
 	if placed, ok := ext.(ExtensionPlacement); ok && !flat {
 		placement, err := callExtension("Placement", placed.Placement)
 		if err != nil {

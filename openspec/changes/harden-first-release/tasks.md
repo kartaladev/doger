@@ -239,10 +239,10 @@ Every behavior group is RED → GREEN → REFACTOR. A RED task must be seen fail
 
 ## 35. Extensions: ExtendIntoRoot, explicit root, Logger decline record
 
-- [ ] 35.1 RED: add `TestExtend_NilRootRejected` (the former `TestExtend_NilRoot` is now `TestExtend_UnderRoot`), replace `Flatten()` with `ExtendIntoRoot()` in the placement/repeat/no-rollback/disabled/after-require/health tests, assert one Info record in `TestExtend_Disabled`, and add `AsStarter()` to Starter fixtures of `TestExtend_Phases`/`TestExtend_Lifecycle` (extensions scenarios); verify `go test -race -run 'TestExtend_|TestRequire_' .` fails to compile naming only `ExtendIntoRoot`
-- [ ] 35.2 GREEN: gopls Rename `Flatten`→`ExtendIntoRoot`, `Extend` returns `ErrNilInjector` for nil/typed-nil root, and the decline is logged as one Info record; verify the 35.1 tests pass and `make test` is green
-- [ ] 35.3 REFACTOR: Rename Variable for internals named "flatten" visible in errors or logs; verify `make test` and `make lint` pass
-- [ ] 35.4 Docs: update the extension guide, `ExtendIntoRoot` godoc and example and the migration row (`Flatten` → `ExtendIntoRoot`; nil root); verify `go test -run ExampleExtend .` passes
+- [x] 35.1 RED: add `TestExtend_NilRootRejected` (the former `TestExtend_NilRoot` is now `TestExtend_UnderRoot`), replace `Flatten()` with `ExtendIntoRoot()` in the placement/repeat/no-rollback/disabled/after-require/health tests, assert one Info record in `TestExtend_Disabled`, and add `AsStarter()` to Starter fixtures of `TestExtend_Phases`/`TestExtend_Lifecycle` (extensions scenarios); verify `go test -race -run 'TestExtend_|TestRequire_' .` fails to compile naming only `ExtendIntoRoot`
+- [x] 35.2 GREEN: gopls Rename `Flatten`→`ExtendIntoRoot`, `Extend` returns `ErrNilInjector` for nil/typed-nil root, and the decline is logged as one Info record; verify the 35.1 tests pass and `make test` is green
+- [x] 35.3 REFACTOR: Rename Variable for internals named "flatten" visible in errors or logs; verify `make test` and `make lint` pass
+- [x] 35.4 Docs: update the extension guide, `ExtendIntoRoot` godoc and example and the migration row (`Flatten` → `ExtendIntoRoot`; nil root); verify `go test -run ExampleExtend .` passes
 
 ## 36. Stale spec text follows the API changes
 

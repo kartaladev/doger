@@ -141,6 +141,35 @@ func TestExtend_UnderRoot(t *testing.T) {
 	assert.Equal(t, []string{"ext:redis"}, childNames(root))
 }
 
+func TestExtend_NilRootRejected(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		root *RootScope
+	}{
+		{name: "nil", root: nil},
+		{name: "typed nil *RootScope", root: (*RootScope)(nil)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls atomic.Int32
+			ext := &testExtension{name: "redis", extend: func(*ExtensionContext) error {
+				calls.Add(1)
+				return nil
+			}}
+
+			err := extendNoPanic(t, tt.root, ext)
+
+			assert.ErrorIs(t, err, ErrNilInjector)
+			assert.Zero(t, calls.Load(), "Extend of the extension was not called")
+		})
+	}
+}
+
 func TestExtend_Invalid(t *testing.T) {
 	t.Parallel()
 
@@ -247,7 +276,7 @@ func TestExtend_Placement(t *testing.T) {
 		{name: "default", scope: "ext:redis"},
 		{name: "author_private", placement: new(PlacementPrivate), scope: "ext:redis"},
 		{name: "author_flat", placement: new(PlacementFlat), scope: ""},
-		{name: "flatten", opts: []ExtendOption{Flatten()}, scope: ""},
+		{name: "flatten", opts: []ExtendOption{ExtendIntoRoot()}, scope: ""},
 		{name: "flat_ignores_scope_name", placement: new(PlacementFlat), opts: []ExtendOption{ExtendScopeName("cache")}, scope: ""},
 		{name: "scope_name", opts: []ExtendOption{ExtendScopeName("cache")}, scope: "cache"},
 	}
@@ -464,7 +493,7 @@ func TestExtend_Repeat(t *testing.T) {
 			name:     "other_options",
 			first:    func(c *atomic.Int32) Extension { return &redisExtension{calls: c} },
 			second:   func(c *atomic.Int32) Extension { return &redisExtension{calls: c} },
-			opts:     []ExtendOption{Flatten()},
+			opts:     []ExtendOption{ExtendIntoRoot()},
 			conflict: true,
 			children: []string{"ext:redis"},
 			calls:    1,
@@ -664,7 +693,7 @@ func TestExtend_FailedExportRollsBackExports(t *testing.T) {
 	assert.False(t, root.self.serviceExist(NameOf[*extPool]()))
 }
 
-func TestExtend_FlattenNoRollback(t *testing.T) {
+func TestExtend_ExtendIntoRootNoRollback(t *testing.T) {
 	t.Parallel()
 
 	root := New()
@@ -673,7 +702,7 @@ func TestExtend_FlattenNoRollback(t *testing.T) {
 		return errors.New("dial failed")
 	}}
 
-	err := extendNoPanic(t, root, ext, Flatten())
+	err := extendNoPanic(t, root, ext, ExtendIntoRoot())
 
 	require.ErrorContains(t, err, "dial failed")
 	assert.True(t, root.self.serviceExist(NameOf[*extPool]()))
@@ -949,6 +978,7 @@ func TestExtend_Disabled(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Len(t, logs.containing(tt.line), 1)
+			assert.Len(t, logs.containing("extension disabled"), 1, "one Info record for the decline")
 			assert.Empty(t, childNames(root))
 		})
 	}
@@ -960,11 +990,11 @@ func TestExtend_DisabledFlattened(t *testing.T) {
 	root := New()
 	ext := disabledExtension[kindMetrics]("metrics")
 
-	err := extendNoPanic(t, root, ext, Flatten())
+	err := extendNoPanic(t, root, ext, ExtendIntoRoot())
 
 	require.NoError(t, err)
 	assert.True(t, root.self.serviceExist(NameOf[*extPool]()))
-	require.NoError(t, extendNoPanic(t, root, ext, Flatten()))
+	require.NoError(t, extendNoPanic(t, root, ext, ExtendIntoRoot()))
 }
 
 // extFailingExporter is a value whose Shutdown fails.
@@ -1218,7 +1248,7 @@ func TestExtend_AfterRequire(t *testing.T) {
 		{
 			name:    "flatten",
 			step:    func(*testing.T, *RootScope) {},
-			opts:    []ExtendOption{Flatten()},
+			opts:    []ExtendOption{ExtendIntoRoot()},
 			addr:    "prod:6379",
 			noChild: true,
 		},
@@ -1399,7 +1429,7 @@ func (failingStarter) Start(context.Context) error { return errors.New("start fa
 // *extStarterPool, counting its starts in starts, and exporting it.
 func starterExtension(starts *atomic.Int32) Extension {
 	return &testExtension{name: "redis", extend: func(x *ExtensionContext) error {
-		Provide(x.Scope(), func(Injector) (*extStarterPool, error) { return &extStarterPool{starts: starts}, nil })
+		Provide(x.Scope(), func(Injector) (*extStarterPool, error) { return &extStarterPool{starts: starts}, nil }, AsStarter())
 		return ExtensionExport[*extStarterPool](x)
 	}}
 }
@@ -1632,7 +1662,7 @@ func TestExtend_Lifecycle(t *testing.T) {
 	pool := &extLifecyclePool{}
 	poolName := NameOf[*extLifecyclePool]()
 	require.NoError(t, Extend(root, &testExtension{name: "redis", extend: func(x *ExtensionContext) error {
-		Provide(x.Scope(), func(Injector) (*extLifecyclePool, error) { return pool, nil })
+		Provide(x.Scope(), func(Injector) (*extLifecyclePool, error) { return pool, nil }, AsStarter())
 		return ExtensionExport[*extLifecyclePool](x)
 	}}))
 	Provide(root, func(i Injector) (*extApp, error) {
@@ -1693,7 +1723,7 @@ func TestExtend_FlattenedHealthCheck(t *testing.T) {
 	require.NoError(t, extendNoPanic(t, root, &testExtension{name: "redis", extend: func(x *ExtensionContext) error {
 		Provide(x.Scope(), func(Injector) (*extCheckedPool, error) { return &extCheckedPool{}, nil })
 		return nil
-	}}, Flatten()))
+	}}, ExtendIntoRoot()))
 	_, err := Invoke[*extCheckedPool](root)
 	require.NoError(t, err)
 	jobs := root.Scope("jobs")

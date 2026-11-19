@@ -18,7 +18,7 @@ if err := doger.Extend(root, dogerredis.Extension(dogerredis.Addr("cache:6379"))
 client := doger.MustInvoke[*redis.Client](root)
 ```
 
-`Extend` takes the root container and calls the extension's `Extend` once. A nil root gives an error matching `doger.ErrNilInjector`.
+`Extend` takes the root container and calls the extension's `Extend` once. A nil root, including a typed-nil `*doger.RootScope`, gives an error matching `doger.ErrNilInjector`: there is no default container.
 
 ## Where the services go {#placement}
 
@@ -27,11 +27,11 @@ By default, an extension registers its services into a **private child scope** o
 | Control                          | Effect                                                                                    |
 | -------------------------------- | ----------------------------------------------------------------------------------------- |
 | (default)                        | the extension's choice: private scope plus exports, or flat                               |
-| `doger.Flatten()`                | register into the root's own scope, whatever the extension chose; exports are then no-ops |
+| `doger.ExtendIntoRoot()`         | register into the root's own scope, whatever the extension chose; exports are then no-ops |
 | `doger.ExtendScopeName("cache")` | name the private scope `cache` instead of `ext:<name>`, for example to avoid a clash      |
 
 ```go
-doger.Extend(root, dogerredis.Extension(), doger.Flatten())
+doger.Extend(root, dogerredis.Extension(), doger.ExtendIntoRoot())
 doger.Extend(root, otherredis.Extension(), doger.ExtendScopeName("other-redis"))
 ```
 
