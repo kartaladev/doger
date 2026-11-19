@@ -10,3 +10,6 @@ Makefile    text eol=lf
 go.mod      text eol=lf
 go.sum      text eol=lf
 go.work     text eol=lf
+# the README and docs Go blocks are compared line for line with compiled
+# snippets (readme_snippets_test.go, docs_snippets_test.go)
+*.md        text eol=lf

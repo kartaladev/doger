@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"regexp"
 	"runtime"
 	"testing"
@@ -258,7 +257,7 @@ func docsRegions(t *testing.T) (regions map[string]string, optional map[string]b
 
 	regions, optional = map[string]string{}, map[string]bool{}
 	for path, mayLack := range docsSnippetFiles {
-		content, err := os.ReadFile(path) //nolint:gosec // a fixed path of this repository
+		content, err := readLF(path)
 		if mayLack && errors.Is(err, fs.ErrNotExist) {
 			optional["clock"] = true
 			continue
@@ -266,7 +265,7 @@ func docsRegions(t *testing.T) (regions map[string]string, optional map[string]b
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, match := range docsRegion.FindAllStringSubmatch(string(content), -1) {
+		for _, match := range docsRegion.FindAllStringSubmatch(content, -1) {
 			regions[match[1]] = dedent(match[2])
 		}
 	}
@@ -280,14 +279,14 @@ func docsRegions(t *testing.T) (regions map[string]string, optional map[string]b
 func TestDocs_MigrationSnippetsCompiled(t *testing.T) {
 	t.Parallel()
 
-	doc, err := os.ReadFile("docs/docs/migrating/migrating-from-samber-do.md")
+	doc, err := readLF("docs/docs/migrating/migrating-from-samber-do.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	regions, optional := docsRegions(t)
 
-	blocks := docsSnippet.FindAllStringSubmatch(string(doc), -1)
+	blocks := docsSnippet.FindAllStringSubmatch(doc, -1)
 	if len(blocks) == 0 {
 		t.Fatal("the migration guide has no Go block")
 	}

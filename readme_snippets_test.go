@@ -74,7 +74,7 @@ var readmeSnippetFiles = map[string]bool{
 func TestReadme_SnippetsCompiled(t *testing.T) {
 	t.Parallel()
 
-	readme, err := os.ReadFile("README.md")
+	readme, err := readLF("README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestReadme_SnippetsCompiled(t *testing.T) {
 	regions := map[string]string{}
 	missing := map[string]bool{} // regions of an absent optional file
 	for path, optional := range readmeSnippetFiles {
-		content, err := os.ReadFile(path) //nolint:gosec // G304: path comes from the fixed table of repository files above
+		content, err := readLF(path)
 		if optional && errors.Is(err, fs.ErrNotExist) {
 			missing["gocron"] = true
 			continue
@@ -90,12 +90,12 @@ func TestReadme_SnippetsCompiled(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, match := range readmeRegion.FindAllStringSubmatch(string(content), -1) {
+		for _, match := range readmeRegion.FindAllStringSubmatch(content, -1) {
 			regions[match[1]] = dedent(match[2])
 		}
 	}
 
-	blocks := readmeSnippet.FindAllStringSubmatch(string(readme), -1)
+	blocks := readmeSnippet.FindAllStringSubmatch(readme, -1)
 	if len(blocks) == 0 {
 		t.Fatal("README.md has no Go block")
 	}
@@ -118,6 +118,14 @@ func TestReadme_SnippetsCompiled(t *testing.T) {
 			t.Errorf("snippet %q differs from its compiled region\nREADME:\n%s\ncompiled:\n%s", name, text, region)
 		}
 	}
+}
+
+// readLF returns the text of the repository file path with CRLF line
+// endings turned into LF, so a Windows checkout with core.autocrlf parses
+// as on any other OS.
+func readLF(path string) (string, error) {
+	content, err := os.ReadFile(path) //nolint:gosec // G304: a fixed path of this repository
+	return strings.ReplaceAll(string(content), "\r\n", "\n"), err
 }
 
 // dedent removes trailing spaces, surrounding blank lines and the
