@@ -408,9 +408,12 @@ func TestHealthRound_Results(t *testing.T) {
 		advance time.Duration
 		returns bool
 		cState  HealthState
+		pending bool // "c" is still in flight at the read
 	}{
 		{name: "default_10s", advance: DefaultHealthReportCheckTimeout, returns: true, cState: HealthUnhealthy},
-		{name: "default_9999ms", advance: DefaultHealthReportCheckTimeout - time.Millisecond, cState: HealthUnknown},
+		// the check of "c" is still in flight: a read joins it, so this one
+		// stops waiting at once and shows it pending
+		{name: "default_9999ms", advance: DefaultHealthReportCheckTimeout - time.Millisecond, cState: HealthUnhealthy, pending: true},
 		{name: "50ms", timeout: 50 * time.Millisecond, advance: 50 * time.Millisecond, returns: true, cState: HealthUnhealthy},
 	}
 
@@ -445,15 +448,20 @@ func TestHealthRound_Results(t *testing.T) {
 					is.False(tt.returns, "the round did not return at the bound")
 				}
 
-				report := i.HealthReport()
+				ctx, cancel := context.WithCancel(context.Background())
+				if tt.pending {
+					cancel()
+				}
+				report := i.HealthReportWithContext(ctx)
+				cancel()
 				is.Equal(HealthHealthy, healthReportTestEntry(t, report, "a").State)
 				is.Equal(HealthUnhealthy, healthReportTestEntry(t, report, "b").State)
 				entryC := healthReportTestEntry(t, report, "c")
 				is.Equal(tt.cState, entryC.State)
-				if tt.cState == HealthUnknown {
+				is.ErrorIs(entryC.Err, ErrHealthCheckTimeout)
+				if tt.pending {
+					is.ErrorIs(entryC.Err, context.Canceled)
 					is.NotZero(entryC.PendingSince)
-				} else {
-					is.ErrorIs(entryC.Err, ErrHealthCheckTimeout)
 				}
 
 				close(c.release)

@@ -279,10 +279,10 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 40. A monitored read joins the first check in flight
 
-- [ ] 40.1 RED: add `TestHealthReport_ReadAfterReadyJoinsFirstRound` and `TestHealthReport_ConcurrentFirstReadsShareRound` and update `TestHealthReport_MonitoredFirstCheck` rows; verify `go test -race -run 'TestHealthReport_(ReadAfterReady|ConcurrentFirstReads|MonitoredFirstCheck)' .` fails (got HealthUnknown)
-- [ ] 40.2 GREEN: a monitored read of a never-checked service joins its in-flight first check under the read's bound; verify the 40.1 tests pass and `make test` is green
-- [ ] 40.3 REFACTOR: Inline the monitored and unmonitored branches into one `needsWait` predicate; verify `make test` and `make lint` pass
-- [ ] 40.4 Docs: align the godoc of `HealthReportWithContext`, `HealthReport.Monitored` and `HealthScheduler` with the joined read; verify `go doc HealthReport.Monitored` shows it
+- [x] 40.1 RED: add `TestHealthReport_ReadAfterReadyJoinsFirstRound` and `TestHealthReport_ConcurrentFirstReadsShareRound` and update `TestHealthReport_MonitoredFirstCheck` rows; verify `go test -race -run 'TestHealthReport_(ReadAfterReady|ConcurrentFirstReads|MonitoredFirstCheck)' .` fails (got HealthUnknown)
+- [x] 40.2 GREEN: a monitored read of a never-checked service joins its in-flight first check under the read's bound; verify the 40.1 tests pass and `make test` is green
+- [x] 40.3 REFACTOR: Inline the monitored and unmonitored branches into one `needsWait` predicate; verify `make test` and `make lint` pass
+- [x] 40.4 Docs: align the godoc of `HealthReportWithContext`, `HealthReport.Monitored` and `HealthScheduler` with the joined read; verify `go doc HealthReport.Monitored` shows it
 
 ## 41. HealthReportOption is a functional option
 

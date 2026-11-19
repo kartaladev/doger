@@ -88,6 +88,10 @@ type HealthReport struct {
 	// Phase is the container phase at the read.
 	Phase ContainerPhase
 	// Monitored reports whether a HealthScheduler keeps the results fresh.
+	// A monitored read returns the recorded results and checks only the
+	// covered services never checked yet; one whose first check is in
+	// flight, started by a round or another read, is joined: the read waits
+	// for it within its context and the report bound.
 	Monitored bool
 	// CheckedAt is the latest CheckedAt of the entries.
 	CheckedAt time.Time
@@ -149,9 +153,14 @@ func (s *Scope) HealthReport(opts ...HealthReportOption) HealthReport {
 // not health checkers at the read (plain values, transient services, lazy
 // services not built yet).
 //
-// A recorded result is reused for HealthReportCacheTTL; a service whose
-// result is missing or older is checked during the read, sharing any check
-// in flight with other callers, within ctx and the report bound:
+// On a container whose HealthScheduler keeps the results fresh (see
+// HealthReport.Monitored), a recorded result is always reused and only a
+// service with no recorded result is checked during the read: its first
+// check, when in flight from a round or another read, is joined. Otherwise
+// a recorded result is reused for HealthReportCacheTTL and a service whose
+// result is missing or older is checked during the read. Either way the read
+// shares any check in flight with other callers, within ctx and the report
+// bound:
 // HealthCheckTimeout when positive, DefaultHealthReportCheckTimeout when 0,
 // none when negative; HealthCheckGlobalTimeout does not apply. A check still
 // running at the report bound is recorded as timed out then, and its later
@@ -317,12 +326,8 @@ func (s *RootScope) healthReport(ctx context.Context, query reportQuery) HealthR
 	}
 
 	report.Monitored = s.health.monitored(report.Phase)
-	switch {
-	case report.Monitored:
-		s.checkOnDemand(ctx, covered, s.health.neverChecked)
-	case report.Phase == PhaseIdle || report.Phase == PhaseFailed || report.Phase == PhaseReady:
-		ttl, now := s.opts.healthReportCacheTTL(), s.opts.Clock.Now()
-		s.checkOnDemand(ctx, covered, func(service any) bool { return s.health.stale(service, now, ttl) })
+	if needsWait := s.needsWait(report.Monitored, report.Phase); needsWait != nil {
+		s.checkOnDemand(ctx, covered, needsWait)
 	}
 
 	report.Services = s.reportEntries(covered)
@@ -333,6 +338,23 @@ func (s *RootScope) healthReport(ctx context.Context, query reportQuery) HealthR
 	report.CheckedAt = latestCheck(report.Services)
 
 	return report
+}
+
+// needsWait returns the predicate selecting the services a read in phase
+// checks, or waits for when their check is in flight: on a monitored
+// container those never checked, otherwise those whose result is missing or
+// older than HealthReportCacheTTL. It returns nil in a phase whose reads
+// check nothing.
+func (s *RootScope) needsWait(monitored bool, phase ContainerPhase) func(service any) bool {
+	switch {
+	case monitored:
+		return s.health.neverChecked
+	case phase == PhaseIdle || phase == PhaseFailed || phase == PhaseReady:
+		ttl, now := s.opts.healthReportCacheTTL(), s.opts.Clock.Now()
+		return func(service any) bool { return s.health.stale(service, now, ttl) }
+	default:
+		return nil
+	}
 }
 
 // eligibleForReport reports whether a started container's reports and

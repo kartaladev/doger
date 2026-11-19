@@ -585,7 +585,7 @@ func TestHealthReport_MonitoredFirstCheck(t *testing.T) {
 		is.Equal(HealthHealthy, healthReportTestEntry(t, report, "db").State)
 	})
 
-	t.Run("in_flight_from_another_reader", func(t *testing.T) {
+	t.Run("in_flight_from_another_reader_released_5ms_later", func(t *testing.T) {
 		t.Parallel()
 		testWithTimeout(t, 5*time.Second)
 
@@ -601,19 +601,181 @@ func TestHealthReport_MonitoredFirstCheck(t *testing.T) {
 
 			first := make(chan HealthReport, 1)
 			go func() { first <- i.HealthReport() }()
-			require.Eventually(t, func() bool { return db.calls.Load() == 1 }, time.Second, time.Millisecond)
+			synctest.Wait()
+			require.Equal(t, int32(1), db.calls.Load(), "the other reader's check is in flight")
+
+			go func() {
+				time.Sleep(5 * time.Millisecond)
+				close(db.release)
+			}()
+			report := i.HealthReport()
+			is.True(report.Monitored)
+			is.Equal(HealthHealthy, healthReportTestEntry(t, report, "db").State)
+			is.Equal(int32(1), db.calls.Load(), "calls of the check")
+			<-first
+		})
+	})
+
+	t.Run("in_flight_from_another_reader_ctx_at_20ms", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			scheduler := &manualScheduler{}
+			i := NewWithOpts(&InjectorOpts{Clock: newFakeClockAt(healthReportTestEpoch), HealthScheduler: scheduler})
+			db := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "db", db)
+			require.NoError(t, i.Start())
+			defer i.Shutdown()
+
+			first := make(chan HealthReport, 1)
+			go func() { first <- i.HealthReport() }()
+			synctest.Wait()
+			require.Equal(t, int32(1), db.calls.Load(), "the other reader's check is in flight")
 
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
 			report := i.HealthReportWithContext(ctx)
 			is.True(report.Monitored)
 			entry := healthReportTestEntry(t, report, "db")
-			is.Equal(HealthUnknown, entry.State)
-			is.Equal(healthReportTestEpoch, entry.PendingSince)
+			is.Equal(HealthUnhealthy, entry.State)
+			is.ErrorIs(entry.Err, ErrHealthCheckTimeout)
+			is.ErrorIs(entry.Err, context.DeadlineExceeded)
+			is.Equal(int32(1), db.calls.Load(), "calls of the check")
 
 			close(db.release)
 			<-first
 		})
+	})
+}
+
+// healthReportTestEagerScheduler is a HealthScheduler whose
+// ScheduleHealthRounds starts one round on its own goroutine at once.
+type healthReportTestEagerScheduler struct {
+	done chan struct{} // closed once the round returned
+}
+
+func (e *healthReportTestEagerScheduler) ScheduleHealthRounds(_ Clock, round func(ctx context.Context)) (func(ctx context.Context) error, error) {
+	e.done = make(chan struct{})
+	go func() {
+		defer close(e.done)
+		round(context.Background())
+	}()
+
+	return func(context.Context) error { return nil }, nil
+}
+
+func TestHealthReport_ReadAfterReadyJoinsFirstRound(t *testing.T) {
+	t.Parallel()
+
+	errDown := errors.New("down")
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		result  error
+		release bool          // the check is released; otherwise the clock advances
+		advance time.Duration // fake clock advance when not released
+		timeOut bool          // the entry is the read's timeout
+	}{
+		{name: "default_released_nil", release: true},
+		{name: "default_released_down", result: errDown, release: true},
+		{name: "default_advance_10s", advance: 10 * time.Second, timeOut: true},
+		{name: "50ms_advance_50ms", timeout: 50 * time.Millisecond, advance: 50 * time.Millisecond, timeOut: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				fc := newFakeClock()
+				scheduler := &healthReportTestEagerScheduler{}
+				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckTimeout: tt.timeout, HealthScheduler: scheduler})
+				db := newHealthRunTestBlocking(tt.result)
+				ProvideNamedValue(i, "db", db)
+				require.NoError(t, i.Start())
+				synctest.Wait()
+				require.Equal(t, int32(1), db.calls.Load(), "the round's check is in flight")
+
+				reports := make(chan HealthReport, 1)
+				go func() { reports <- i.HealthReport() }()
+				synctest.Wait()
+				if tt.release {
+					close(db.release)
+				} else {
+					fc.Advance(tt.advance)
+				}
+				report := <-reports
+
+				is.True(report.Monitored)
+				entry := healthReportTestEntry(t, report, "db")
+				switch {
+				case tt.timeOut:
+					is.Equal(HealthUnhealthy, entry.State)
+					is.ErrorIs(entry.Err, ErrHealthCheckTimeout)
+					is.ErrorIs(entry.Err, context.DeadlineExceeded)
+				case tt.result != nil:
+					is.Equal(HealthUnhealthy, entry.State)
+					is.Same(tt.result, entry.Err)
+				default:
+					is.Equal(HealthHealthy, entry.State)
+				}
+				is.Equal(int32(1), db.calls.Load(), "calls of the check")
+
+				if !tt.release {
+					close(db.release)
+				}
+				<-scheduler.done
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthReport_ConcurrentFirstReadsShareRound(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	const readers = 50
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		scheduler := &manualScheduler{}
+		i := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler})
+		db := newHealthRunTestBlocking(nil)
+		ProvideNamedValue(i, "db", db)
+		require.NoError(t, i.Start())
+		defer i.Shutdown()
+
+		round := make(chan struct{})
+		go func() {
+			defer close(round)
+			scheduler.runRound()
+		}()
+		synctest.Wait()
+		require.Equal(t, int32(1), db.calls.Load(), "the round's check is in flight")
+
+		reports := make(chan HealthReport, readers)
+		for range readers {
+			go func() { reports <- i.HealthReport() }()
+		}
+		synctest.Wait()
+		close(db.release)
+
+		for range readers {
+			report := <-reports
+			is.True(report.Monitored)
+			is.Equal(HealthHealthy, healthReportTestEntry(t, report, "db").State)
+		}
+		is.Equal(int32(1), db.calls.Load(), "calls of the check")
+		<-round
 	})
 }
 
