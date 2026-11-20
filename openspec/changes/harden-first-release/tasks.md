@@ -398,10 +398,10 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 ## 56. Integration checks
 
-- [ ] 56.1 Run `make test-all lint-all vuln`; verify every module is green on the local OS
-- [ ] 56.2 Run every audit reproducer from the audit scratchpad against the final tree in a temporary package (not committed); verify each now passes or is superseded by its scenario test
-- [ ] 56.3 Run `openspec validate harden-first-release` (without `--strict`, which rejects the fenced Gherkin scenarios, design D18) and cross-check every `#### Scenario:` header against a passing test in the design.md Test Strategy table; verify no scenario is unmapped
-- [ ] 56.4 Run `scripts/release-dry-run.sh v0.99.0` against a local file proxy; verify a clean consumer gets and builds the root and every submodule without `go.work`
+- [x] 56.1 Run `make test-all lint-all vuln`; verify every module is green on the local OS
+- [x] 56.2 Run every audit reproducer from the audit scratchpad against the final tree in a temporary package (not committed); verify each now passes or is superseded by its scenario test
+- [x] 56.3 Run `openspec validate harden-first-release` (without `--strict`, which rejects the fenced Gherkin scenarios, design D18) and cross-check every `#### Scenario:` header against a passing test in the design.md Test Strategy table; verify no scenario is unmapped
+- [x] 56.4 Run `scripts/release-dry-run.sh v0.99.0` against a local file proxy; verify a clean consumer gets and builds the root and every submodule without `go.work`
 
 
 ## Workflow follow-up
