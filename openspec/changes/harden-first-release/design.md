@@ -270,6 +270,7 @@ Each item gets a benchmark in `bench/` that runs before and after, with results 
   - It creates the GitHub release with `generate_release_notes: true`.
 - **Lint.** `.golangci.yml` enables `gosec`, `errorlint` and `noctx`, with each suppression justified inline.
 - **Also released and checked.** The release also tags `clock/clockwork/<semver>`. Three scripts back the `release-integrity` scenarios: `scripts/check-workflows.sh` (pinning, permissions, matrix, provenance, dependabot, policy files; `--self-test`), `scripts/release-dry-run.sh <semver>` (mirrors release post-processing into a file proxy and builds a clean `GOWORK=off` consumer) and `scripts/test-make-targets.sh` (plants failures per module).
+- **Spec validation without `--strict`.** The schema writes each scenario as one fenced ```gherkin block, and the OpenSpec validator (1.17.0, and 2.1.1 as checked) reads only `- **WHEN**`/`- **THEN**` bullets, so `--strict` fails every scenario with "missing a WHEN/GIVEN step and a THEN step". Specs are validated with plain `openspec validate`; the fenced steps and the 500-character limit on ADDED requirement descriptions are review rules. Rejected: rewriting the scenarios as bullets (it loses the `Examples:` tables that map to table-driven subtests), writing every step twice (the copies drift), and a custom check script (not worth maintaining).
 - **Accepted advisories.** SECURITY.md records echo's GO-2026-6875 and GO-2026-6872 as accepted (no upstream fix; the vulnerable symbols are not called).
 - **Raised permissions.** Only these jobs raise permissions above `contents: read`: the `doc.yml` deploy job (`pages: write`, `id-token: write`), the `security.yml` `codeql` and `trivy-codeql` jobs (`security-events: write`, to upload to code scanning), the `release.yml` release job (`contents: write`) and the `dependabot-automerge` job (`contents: write`, `pull-requests: write`).
 
@@ -364,13 +365,15 @@ Hot paths and the tests that cover them:
 | The signal helper accepts a nil context | root_scope_unix_test.go: TestRootScope_ShutdownOnSignalsWithContext_NilContext | unix, race |
 | A hung Shutdown does not hold the call past its deadline | shutdown_context_test.go: TestShutdownContext_HungShutdownBounded (/root_Shutdown, /root_ShutdownErr, /root_ShutdownCtx, /root_ShutdownCtxErr, /child, /child_via_root) | table, synctest, goleak |
 | A slow Shutdown is waited for when the context allows it | shutdown_context_test.go: TestShutdownContext_SlowShutdownWaited (/background, /longer_deadline, /instant) | table, synctest |
-| A stuck provider does not hold a bounded shutdown | shutdown_context_test.go: TestShutdownContext_InFlightBuildBounded (/late_success, /late_failure) | table, synctest, goleak |
+| A stuck provider does not hold a bounded shutdown | shutdown_context_test.go: TestShutdownContext_InFlightBuildBounded (/late_instance, /late_failure) | table, synctest, goleak |
 | An unbounded shutdown waits for the build | shutdown_context_test.go: TestShutdownContext_InFlightBuildWaited (guard), TestShutdownContext_UnboundedWaitsForLateInstance (/late_shutdown_error, /late_shutdown_panic) | synctest |
 | ShutdownNamedWithContext honors its bound with a build in flight | shutdown_context_test.go: TestShutdownContext_ShutdownNamedBoundedInFlight (/other_goroutine, /provider_shuts_itself_down) | table, synctest |
 | A late instance has a single owner and never holds the invoker | shutdown_context_test.go: TestShutdownContext_InvokerNotHeldByLateShutdown (/root, /named, /ended), TestShutdownContext_HandoverThenCtxEnds, TestShutdownContext_HandoverCtxBranchBounded, TestShutdownContext_FallbackLatePanicLogged | table, synctest, stress ×200 |
 | A provider shutting its own service down does not wait | shutdown_context_test.go: TestShutdownContext_SelfShutdownUnbounded, TestShutdownContext_ShutdownNamedBoundedInFlight/provider_shuts_itself_down | synctest |
+| The invoker is never held by a late Shutdown | shutdown_context_test.go: TestShutdownContext_InvokerNotHeldByLateShutdown (/root, /named, /ended) | table, synctest |
+| The late instance is shut down by the shutdown, in dependency order | shutdown_context_test.go: TestShutdownContext_UnboundedWaitsForLateInstance (/late_shutdown_error, /late_shutdown_panic) | table, synctest |
 | Abandoned services are reported once and their late panics logged | shutdown_context_test.go: TestShutdownContext_AbandonUnscheduledOnce, TestShutdownContext_AbandonedShutdownPanicIsLogged (/no_hook, /with_hook) | stress ×300, synctest |
-| Health bookkeeping per service never holds or crashes a shutdown | shutdown_context_test.go: TestShutdownContext_HealthHookDuringBoundedShutdown, TestShutdownContext_HealthHookRepanicDuringShutdown | synctest, subprocess |
+| Health hooks run per service during a bounded shutdown | shutdown_context_test.go: TestShutdownContext_HealthHookDuringBoundedShutdown, TestShutdownContext_HealthHookRepanicDuringShutdown | synctest, subprocess |
 | Target is shut down once | service_alias_test.go: TestServiceAlias_ShutdownTargetOnce (existing; As → Alias) | table |
 | Repeated runs are stable | service_alias_test.go: TestServiceAlias_ShutdownTargetOnce_Stable (existing) | race ×200 |
 | Invoking the alias after its target is shut down | service_alias_test.go: TestServiceAlias_InvokeAfterTargetShutdown (existing) | unit |
@@ -422,6 +425,7 @@ Hot paths and the tests that cover them:
 | Provider panic values become invocation errors | invoke_test.go: TestInvoke_ProviderPanic (existing, rows updated) | table |
 | Consumers can restore the legacy nil-panic behavior | invoke_test.go: TestInvoke_ProviderPanicNil_GODEBUGOverride (existing) | unit |
 | Panic in a nested provider | provider_panic_handling_test.go: TestProviderPanic_NestedProvider | unit |
+| A provider exiting with runtime.Goexit releases its waiters | concurrent_resolution_test.go: TestConcurrentResolution_WaitersShareFailure (/goexit) | table |
 | Selecting a service whose value is a nil interface | type_resolution_test.go: TestInvokeAs_NilInterfaceInstance | table |
 | A non-nil selection is unchanged | type_resolution_test.go: TestInvokeAs_NonNilInstance | unit |
 | The invoking service is not a candidate | invoke_test.go: TestInvokeAs_SkipsInvoker (existing, renamed calls) | table |
@@ -690,6 +694,7 @@ Hot paths and the tests that cover them:
 | Hooks run one at a time, in order of addition | health_monitor_test.go: TestHookServiceHealthChanged_Serialized (existing) | race |
 | A hook may call health APIs | health_monitor_test.go: TestHookServiceHealthChanged_Reentrant (existing) | unit |
 | Nil hooks are skipped | health_monitor_test.go: TestHealthHooks_NilSkipped (existing; Logger handler) | unit |
+| A shutdown through the root's own *Scope ends health recording | health_monitor_test.go: TestHealthScheduler_RootScopeShutdownEndsRecording (/HealthReport, /HealthCheck_then_HealthReport) | table, synctest |
 | Single-service bound | healthcheck_timeout_test.go: TestHealthCheckSingleTimeout (existing, default rows) | table, fake clock |
 | Invalid classification | options_test.go: TestHealthOptions_InvalidPanics (existing, doger: rows) | table, panic |
 | Classification across clone, override and alias | health_report_test.go: TestHealthClassification_CloneOverrideDefaultAlias (existing, Alias) | table |
@@ -705,6 +710,7 @@ Hot paths and the tests that cover them:
 | A service that leaves before its check starts is not recorded | health_report_test.go: TestHealthReport_NotRecordedLeftBeforeStart (existing) | unit |
 | A timeout of a check started after its service left is not recorded | health_report_test.go: TestHealthReport_TimeoutNotRecordedLeftBeforeStart (existing) | unit |
 | A service that left before the read reached it is not checked | health_report_test.go: TestHealthReport_LeftBeforeReadNotChecked (existing) | unit |
+| A hand-built report with an out-of-range enum does not marshal | health_report_test.go: TestHealthReport_MarshalJSONOutOfRange (/state_42, /phase_minus_1, /entry_state_9) | table |
 | Repeated options | options_test.go: TestProvideOptions_Repeated (existing) | table |
 | Invalid opt-in combinations | options_test.go: TestProvideOptions_Invalid (existing, doger: rows) | table, panic |
 | Options on a default apply only when it uses its own provider | options_test.go: TestProvideOptions_AsDefaultCombined (existing) | table |
@@ -727,6 +733,10 @@ Hot paths and the tests that cover them:
 | Default re-panics after the operation completes | container_hooks_test.go: existing (`ErrShutdown` rows) | table |
 | HookContainerPanic overrides the default | container_hooks_test.go: existing, rewritten to a recording slog handler (Error `panic recovered` with point + Debug `panic value` "boom") | table |
 | Hooks around each Starter | root_start_test.go: existing per-service start hook test, migrated to `(ctx, scope, name)` / `(ctx, scope, name, elapsed, err)`; Starters opted in with `AsStarter()` | unit |
+| A scope created during a running start does not wait | root_refresh_test.go: TestScopeShutdown_CreatedDuringStart | unit |
+| A scope created under a shutting-down scope is skipped | root_refresh_test.go: TestScopeShutdown_DescendantSkipped | unit |
+| A start that begins during a child shutdown skips the scope | root_refresh_test.go: TestScopeShutdown_LaterStartSkips | unit |
+| Child shutdown waits for a running start | root_refresh_test.go: TestScopeShutdown_WaitsForStart (/root.Start(), /root.Refresh(), /tenant.Start()) | table, synctest |
 | Source selection | properties_test.go: existing (panic message → `doger:`) | table |
 | A source registered after the first read is not used | properties_test.go: existing | unit |
 | Registering the interface name after the first read panics | properties_test.go: existing (message → `doger:`) | unit |
@@ -739,6 +749,7 @@ Hot paths and the tests that cover them:
 | Creating a live collection builds nothing | collection_test.go: existing | unit |
 | Reads after shutdown and failures | collection_test.go: existing | table |
 | Concurrent reads are race-free | collection_test.go: existing | race |
+| A zero Collection is bound to no container | collection_test.go: TestCollection_ZeroValueReadsFail (/all, /map) | table |
 | Starting hook allows or vetoes Scope.Start | scope_hooks_test.go: existing (veto-panic row → `doger: scope \`tenant\` start aborted: scope starting hook panicked: veto-boom`) | table |
 | Closing and Closed around child scope shutdown | scope_hooks_test.go: existing, the Logf-panic row becomes a panicking slog handler; message → `doger:` | table |
 | Overlapping shutdowns of a child scope join | scope_hooks_test.go / scope_test.go: existing, Logf-panic fixture becomes a panicking slog handler | table |
@@ -758,3 +769,7 @@ Hot paths and the tests that cover them:
 | Concurrent declarations of one child scope name | resolution_errors_test.go: TestResolutionErrors_DuplicateScopeConcurrent (new) | race |
 | Which calls record a started check | logging_test.go: TestLogging_HealthCheckStarted/{HealthCheckNamed, a_second_caller_joins_the_check_in_flight, an_already-cancelled_context, root.HealthCheck, queued_then_abandoned, scheduled_round, child_scope} (new) | table |
 | The record is invisible above Debug | logging_test.go: TestLogging_HealthCheckStartedInfoLevel (new) | unit |
+| Transient and singleton members across calls | invoke_all_test.go: TestInvokeAll_TransientFresh | unit |
+| Later registration is not visible in an earlier snapshot | invoke_all_test.go: TestInvokeAll_Snapshot | unit |
+| Caller mutation does not leak | invoke_all_test.go: TestInvokeAll_CallerMutation, TestInvokeAllMap_CallerMutation | unit |
+| Collections after shutdown | invoke_all_test.go: TestInvokeAll_AfterShutdown (/InvokeAll, /InvokeAllMap) | table |

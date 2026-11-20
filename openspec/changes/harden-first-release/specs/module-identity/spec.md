@@ -85,7 +85,7 @@ Examples:
 ## ADDED Requirements
 
 ### Requirement: Every library message carries the doger prefix exactly once
-Every error message, panic value message and error sentinel the library originates SHALL start with `doger: ` exactly once and SHALL NOT contain `DI: `, including messages that wrap another library error. As a defensive rule, a message whose lead is a consumer's error SHALL keep that text first and unprefixed, and library text inside it SHALL NOT repeat the prefix; no public path produces one today, because a failing service of a start run is reported as a library-led `*StartError` (see the abort row below).
+Every error message, panic value message and error sentinel the library originates SHALL start with `doger: ` exactly once and SHALL NOT contain `DI: `, including messages that wrap another library error. As a defensive rule, a message whose lead is a consumer's error SHALL keep that text first and unprefixed, and library text inside it SHALL NOT repeat the prefix.
 
 #### Scenario: Messages that used to double the prefix
 ```gherkin
@@ -116,6 +116,7 @@ And no message contains "doger: " twice
 <!-- cases: N/A 2 overrides: none -->
 <!-- cases: N/A 3 zero values: none -->
 <!-- cases: 4 boundaries: one wrapping layer and two (nested ServiceError); a consumer-led abort outcome keeps the consumer text first -->
+<!-- cases: note: no public path produces a consumer-led message today, because a failing service of a start run is reported as a library-led *StartError (the abort row) -->
 <!-- cases: 5 errors: sentinel and wrapped messages -->
 <!-- cases: 6 duplicate: duplicate service and duplicate scope panics -->
 <!-- cases: 7 lifecycle: Start after shutdown row (previously "DI: cannot start: DI: container is shut down") -->

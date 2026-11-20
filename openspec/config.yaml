@@ -46,4 +46,4 @@ operations:
   archive:
     guidance:
       - Confirm `make test` and `make lint` pass and every scenario maps to a passing test before archiving
-      - Run `openspec validate <change> --strict` before archiving
+      - Run `openspec validate <change>` before archiving, without `--strict` - it rejects the fenced Gherkin scenarios the schema requires

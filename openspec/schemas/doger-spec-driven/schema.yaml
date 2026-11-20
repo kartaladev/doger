@@ -139,6 +139,10 @@ artifacts:
       - The ```gherkin fence is for readability and highlighting; nothing
         executes it. Do not add `Feature:`/`Scenario:` keywords inside the
         fence - the `#### Scenario:` header is the scenario name.
+      - Validate with plain `openspec validate`, and never plan a task that
+        gates on `openspec validate --strict`: the OpenSpec validator reads
+        only `- **WHEN**`/`- **THEN**` bullets, so `--strict` fails every
+        fenced scenario.
       - Scenarios must be deterministic: no reliance on map iteration order,
         wall-clock timing or goroutine scheduling unless the scenario pins it
         down (e.g. with a channel handshake, a fake clock, or "within 1s").

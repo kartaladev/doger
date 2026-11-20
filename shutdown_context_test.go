@@ -390,9 +390,10 @@ func TestShutdownContext_UnboundedWaitsForLateInstance(t *testing.T) {
 		name   string
 		panics bool
 		match  error
+		text   string
 	}{
-		{name: "late_shutdown_error"},
-		{name: "late_shutdown_panic", panics: true, match: ErrShutdownPanic},
+		{name: "late_shutdown_error", text: "conn close failed"},
+		{name: "late_shutdown_panic", panics: true, match: ErrShutdownPanic, text: "conn boom"},
 	}
 
 	for _, tt := range tests {
@@ -427,7 +428,7 @@ func TestShutdownContext_UnboundedWaitsForLateInstance(t *testing.T) {
 
 				is.Equal([]string{"conn", "db"}, atReturn, "the late instance shut down before its dependency, before the call returned")
 				err := reportError(report, root.self, "conn")
-				is.ErrorContains(err, "conn")
+				is.ErrorContains(err, tt.text)
 				if tt.match != nil {
 					is.ErrorIs(err, tt.match)
 				}
@@ -829,8 +830,15 @@ func TestShutdownContext_InvokerNotHeldByLateShutdown(t *testing.T) {
 					<-release
 					return &drainingConn{calls: &calls, ctx: &received}, nil
 				})
-				invoked := make(chan time.Time, 1)
-				go func() { _, _ = InvokeNamed[*drainingConn](root, "conn"); invoked <- time.Now() }()
+				type outcome struct {
+					at  time.Time
+					err error
+				}
+				invoked := make(chan outcome, 1)
+				go func() {
+					_, err := InvokeNamed[*drainingConn](root, "conn")
+					invoked <- outcome{time.Now(), err}
+				}()
 				synctest.Wait()
 				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 				defer cancel()
@@ -845,16 +853,18 @@ func TestShutdownContext_InvokerNotHeldByLateShutdown(t *testing.T) {
 
 				released := time.Now()
 				close(release)
-				is.Zero((<-invoked).Sub(released), "the invoker returns at once")
+				got := <-invoked
+				is.Zero(got.at.Sub(released), "the invoker returns at once")
+				is.ErrorIs(got.err, ErrShutdown, "the late instance is not handed out")
 				synctest.Wait()
 				is.Equal(int32(1), calls.Load(), "the late instance was shut down")
 				// with the shutdown's own context, ended, not a fresh one
-				if got := received.Load(); is.NotNil(got) {
+				if shutdownCtx := received.Load(); is.NotNil(shutdownCtx) {
 					want, _ := ctx.Deadline()
-					deadline, ok := (*got).Deadline()
+					deadline, ok := (*shutdownCtx).Deadline()
 					is.True(ok, "the Shutdown context has the shutdown's deadline")
 					is.Equal(want, deadline)
-					is.ErrorIs((*got).Err(), context.DeadlineExceeded)
+					is.ErrorIs((*shutdownCtx).Err(), context.DeadlineExceeded)
 				}
 			})
 		})

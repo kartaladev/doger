@@ -92,7 +92,7 @@ Examples:
 <!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - a hook panic used to crash the process -->
 
 ### Requirement: The first shutdown panic reaches HookContainerPanic
-Once a root or child shutdown has completed, including its Closed hooks, the first panic recovered from a service `Shutdown` or a per-service shutdown hook SHALL be passed to `HookContainerPanic`, with the point `"service-shutdown"` and the recovered value. Later panics of the same shutdown SHALL only be logged at Error level, and so SHALL a panic of an abandoned `Shutdown` (shutdown-context) that arrives once the shutdown's dispatch ran. With no `HookContainerPanic` set, the panic SHALL only be reported and logged.
+Once a root or child shutdown has completed, Closed hooks included, the first panic recovered from a service `Shutdown` or a per-service shutdown hook SHALL be passed to `HookContainerPanic` with the point `"service-shutdown"` and the recovered value. Later panics of that shutdown, and a panic of an abandoned `Shutdown` (shutdown-context) arriving after its dispatch ran, SHALL only be logged at Error level. With no `HookContainerPanic`, the panic SHALL only be reported and logged.
 
 #### Scenario: The first shutdown panic goes to HookContainerPanic
 ```gherkin

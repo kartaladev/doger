@@ -352,15 +352,15 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 - [x] 51.1 Add `scripts/check-workflows.sh` (SHA-pinned `uses`, top-level `permissions: contents: read` and allowed raises, test.yml matrix, release.yml provenance, dependabot condition and directories, go.mod floors, policy files, `--self-test`); verify it fails on the current tree (RED baseline)
 - [x] 51.2 Pin every action in `.github/workflows/*` to a 40-char SHA with a `# vX.Y.Z` comment and add top-level `permissions: contents: read` with per-job raises only in the `doc.yml` deploy job, the `security.yml` `codeql` and `trivy-codeql` jobs, the `release.yml` release job and dependabot-automerge (scenarios "Workflow pinning and permissions are checked", "A tag-pinned action fails the check"); verify the pinning and permissions sections of the script pass
-- [ ] 51.3 `test.yml` runs `make test-all` on ubuntu, macos and windows with Go 1.27.x and stable, and `lint.yml` runs `make lint-all` (scenarios "CI runs the module loop on three operating systems", "A clean tree passes make test-all", "make modules lists every workspace module"); verify the matrix check passes and CI is green on all 3 OSes
+- [x] 51.3 `test.yml` runs `make test-all` on ubuntu, macos and windows with Go 1.27.x and stable, and `lint.yml` runs `make lint-all` (scenarios "CI runs the module loop on three operating systems", "A clean tree passes make test-all", "make modules lists every workspace module"); verify the matrix check passes and CI is green on all 3 OSes
 - [x] 51.4 Restrict dependabot auto-merge to `dependabot[bot]` authors and semver patch/minor updates, and add `/scheduler/**` and `/clock/**` gomod entries (scenarios "Auto-merge decision", "Every module directory is covered"); verify the dependabot checks of the script pass
-- [ ] 51.5 Set Bearer's `log-level` in `bearer.yml` to its default and delete `vercel.json`; verify the policy check passes and the security workflow runs
+- [x] 51.5 Set Bearer's `log-level` in `bearer.yml` to its default and delete `vercel.json`; verify the policy check passes and the security workflow runs
 
 ## 52. Release provenance and dry run
 
 - [x] 52.1 Add `scripts/release-dry-run.sh <semver>` mirroring release.yml post-processing into a file proxy and checking that a clean `GOWORK=off` consumer gets and builds every released module with the root pinned, no `replace` and no test-only requirements; verify it fails on the current tree because `scheduler/gocron` still requires testify and goleak (RED)
 - [x] 52.2 Change release.yml: job `if: github.ref == 'refs/heads/main'` and `environment: release`, `go mod tidy` in every released module before pinning, `go build`/`go vet` after pinning, `make vuln` before tagging, tag `clock/clockwork`, and `generate_release_notes: true` (scenarios "The release workflow enforces provenance", "A dispatch from another branch is refused", "Test-only requirements are stripped", "Runtime requirements are kept", "Released adapters pin the root release"); verify `scripts/release-dry-run.sh v0.99.0` and the release section of `scripts/check-workflows.sh` pass
-- [ ] 52.3 Add a CI job `release-dry-run` in `test.yml` running `scripts/release-dry-run.sh v0.99.0`, its invalid-version rows and `scripts/check-workflows.sh` (scenarios "A clean consumer builds every released module", "The dry run rejects an invalid version"); verify the job is green
+- [x] 52.3 Add a CI job `release-dry-run` in `test.yml` running `scripts/release-dry-run.sh v0.99.0`, its invalid-version rows and `scripts/check-workflows.sh` (scenarios "A clean consumer builds every released module", "The dry run rejects an invalid version"); verify the job is green
 - [x] 52.4 Add CHANGELOG.md with an "Unreleased" section listing every BREAKING row of design.md D10/D9 with its migration, and `.github/CODEOWNERS` (scenario "Policy files are present"); verify the policy section of `scripts/check-workflows.sh` passes
 
 ## 53. Close the audit's test-suite gaps (existing behavior, tests only)
@@ -400,7 +400,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 
 - [ ] 56.1 Run `make test-all lint-all vuln`; verify every module is green on the local OS
 - [ ] 56.2 Run every audit reproducer from the audit scratchpad against the final tree in a temporary package (not committed); verify each now passes or is superseded by its scenario test
-- [ ] 56.3 Run `openspec validate harden-first-release --strict` and cross-check every `#### Scenario:` header against a passing test in the design.md Test Strategy table; verify no scenario is unmapped
+- [ ] 56.3 Run `openspec validate harden-first-release` (without `--strict`, which rejects the fenced Gherkin scenarios, design D18) and cross-check every `#### Scenario:` header against a passing test in the design.md Test Strategy table; verify no scenario is unmapped
 - [ ] 56.4 Run `scripts/release-dry-run.sh v0.99.0` against a local file proxy; verify a clean consumer gets and builds the root and every submodule without `go.work`
 
 

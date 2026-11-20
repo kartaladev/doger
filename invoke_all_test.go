@@ -792,18 +792,37 @@ func TestInvokeAllMap_CallerMutation(t *testing.T) {
 
 func TestInvokeAll_AfterShutdown(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, time.Second)
 
-	root := New()
-	provideHandler(root, "console", newConsole)
-	_, err := InvokeAll[EventHandler](root)
-	require.NoError(t, err)
-	root.Shutdown()
+	tests := []struct {
+		name string
+		call func(Injector) (any, error)
+	}{
+		{"InvokeAll", func(i Injector) (any, error) {
+			handlers, err := InvokeAll[EventHandler](i)
+			return handlers, err
+		}},
+		{"InvokeAllMap", func(i Injector) (any, error) {
+			handlers, err := InvokeAllMap[EventHandler](i)
+			return handlers, err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
 
-	handlers, err := InvokeAll[EventHandler](root)
+			root := New()
+			provideHandler(root, "console", newConsole)
+			_, err := InvokeAll[EventHandler](root)
+			require.NoError(t, err)
+			root.Shutdown()
 
-	require.ErrorIs(t, err, ErrShutdown)
-	assert.Nil(t, handlers)
+			handlers, err := tt.call(root)
+
+			require.ErrorIs(t, err, ErrShutdown)
+			assert.Nil(t, handlers)
+		})
+	}
 }
 
 func TestInvokeAll_ConcurrentSingleBuild(t *testing.T) {

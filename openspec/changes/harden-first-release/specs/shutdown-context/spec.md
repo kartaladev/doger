@@ -123,7 +123,7 @@ And "s" had its Shutdown called 1 time, with a context whose Err() is nil
 ## ADDED Requirements
 
 ### Requirement: Shutdown returns when its context ends
-`ShutdownWithContext` on a root or child scope SHALL return once its context ends, even while a service's `Shutdown` still runs. Each such service SHALL be reported with a `*ServiceError` whose `Err` matches `ctx.Err()`. Its `Shutdown` SHALL keep running in the background, and its `HookAfterShutdown` hooks SHALL run when it returns; a panic it raises after the call returned SHALL be logged at Error level (container-shutdown). Each service SHALL appear once in the report, and an abandoned service SHALL never be shut down again by a later layer. Removing each service from its scope SHALL run no user code on the caller's goroutine: the health bookkeeping of a service (its health hooks) runs on that service's shutdown goroutine, recovered like any shutdown step, so a blocking or panicking health hook neither holds the call past its context nor ends the process. With a context that never ends, the call SHALL wait for every service.
+`ShutdownWithContext` on a root or child scope SHALL return once its context ends, even while a service's `Shutdown` still runs, reporting each such service with a `*ServiceError` whose `Err` matches `ctx.Err()`. That `Shutdown` SHALL keep running in the background, its `HookAfterShutdown` hooks running when it returns; a later panic SHALL be logged at Error level (container-shutdown). Each service SHALL appear once in the report and never be shut down again by a later layer. With a context that never ends, the call SHALL wait for every service.
 
 #### Scenario: A hung Shutdown does not hold the call past its deadline
 ```gherkin
@@ -163,6 +163,20 @@ Examples:
   | 0s    | a context with a 1ns timeout, not yet expired at the call |
 ```
 
+<!-- cases: 1 default: context.Background() waits as long as it takes (row 1 of the second scenario) -->
+<!-- cases: 2 overrides: the consumer's deadline is the override; a deadline longer than the shutdown changes nothing -->
+<!-- cases: N/A 3 zero values: a nil context is context.Background() (container-start "Root Shutdown runs once") -->
+<!-- cases: 4 boundaries: a deadline shorter and longer than the slow service; a shutdown that ends exactly with nothing left to wait for -->
+<!-- cases: 5 errors: abandoned services are *ServiceError values matching ctx.Err(), so errors.Is(report.Err(), context.DeadlineExceeded) holds -->
+<!-- cases: N/A 6 duplicates: an abandoned service is not shut down again -->
+<!-- cases: 7 lifecycle: root and child scope, and a child reached through the root; the root phase still reaches PhaseClosed when the call returns -->
+<!-- cases: 8 concurrency: synctest bubble under -race; goleak after release -->
+<!-- cases: N/A 9 panics: a panic in the abandoned Shutdown after the call returned is recovered and logged (container-shutdown) -->
+<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - the call used to block until every Shutdown returned, past its deadline -->
+
+### Requirement: Health hooks of a bounded shutdown run off the caller's goroutine
+Removing a service from its scope during a shutdown SHALL run no user code on the caller's goroutine: a service's health bookkeeping (its health hooks) SHALL run on that service's shutdown goroutine, recovered like any shutdown step, so a blocking or panicking health hook neither holds the call past its context nor ends the process.
+
 #### Scenario: Health hooks run per service during a bounded shutdown
 ```gherkin
 Given a started root scope with a manual HealthScheduler and child scope "tenant" holding an unhealthy Healthchecker "h"
@@ -176,19 +190,19 @@ Examples:
   | panics, with a HookContainerPanic that re-panics the value     | context.Background()  | the process does not crash; the panic reaches the caller   |
 ```
 
-<!-- cases: 1 default: context.Background() waits as long as it takes (row 1 of the second scenario) -->
-<!-- cases: 2 overrides: the consumer's deadline is the override; a deadline longer than the shutdown changes nothing -->
-<!-- cases: N/A 3 zero values: a nil context is context.Background() (container-start "Root Shutdown runs once") -->
-<!-- cases: 4 boundaries: a deadline shorter and longer than the slow service; a shutdown that ends exactly with nothing left to wait for -->
-<!-- cases: 5 errors: abandoned services are *ServiceError values matching ctx.Err(), so errors.Is(report.Err(), context.DeadlineExceeded) holds -->
-<!-- cases: N/A 6 duplicates: an abandoned service is not shut down again -->
-<!-- cases: 7 lifecycle: root and child scope, and a child reached through the root; the root phase still reaches PhaseClosed when the call returns -->
-<!-- cases: 8 concurrency: synctest bubble under -race; goleak after release -->
-<!-- cases: N/A 9 panics: a panic in the abandoned Shutdown after the call returned is recovered and logged (container-shutdown) -->
-<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - the call used to block until every Shutdown returned, past its deadline -->
+<!-- cases: 1 default: context.Background() with a panicking hook (row 2) -->
+<!-- cases: 2 overrides: a consumer deadline (row 1) and a re-panicking HookContainerPanic (row 2) -->
+<!-- cases: N/A 3 zero values: no input -->
+<!-- cases: N/A 4 boundaries: one health-checked service is enough to place the hook -->
+<!-- cases: N/A 5 errors: the hook returns nothing -->
+<!-- cases: N/A 6 duplicates: unrelated -->
+<!-- cases: 7 lifecycle: a child scope shut down while the root stays started -->
+<!-- cases: 8 concurrency: a blocking hook does not hold the call past its deadline -->
+<!-- cases: 9 panics: a panicking hook is recovered like any shutdown step and reaches the caller only through HookContainerPanic -->
+<!-- cases: 10 compatibility: part of the BEHAVIOR CHANGE of "Shutdown returns when its context ends" -->
 
 ### Requirement: Shutdown does not wait past its context for a build in progress
-When a scope or a single service (`ShutdownNamedWithContext`) shuts down while a provider of one of its services is still running, the call SHALL stop waiting for that build once its context ends and report the service with an error matching `ctx.Err()`. When the provider returns later, its instance is late: it SHALL NOT be handed out, the invoker SHALL get an error matching `ErrShutdown` at once, never waiting for the instance's `Shutdown`, and a Shutdowner instance SHALL be shut down exactly once, on a goroutine of its own, with the original context of the shutdown that made the service Terminal, even when that context has ended. Exactly one party SHALL own a late instance: the shutdown that is still waiting for the build, which then reports the instance's error or panic (matching `ErrShutdownPanic`) under the service before the services it depends on shut down; otherwise the build, whose goroutine logs that error or panic once. A provider that calls `ShutdownNamed*` for its own service on its own goroutine SHALL NOT wait for its own build: the call returns nil at once, and the build owns the late instance. Non-goals, documented: a provider that shuts down a scope or root containing its own service (`Shutdown()`, `ShutdownWithContext` with a context that never ends), or that waits on another goroutine shutting its service down, waits for its own build and blocks, as it did before this change.
+When a scope or a single service (`ShutdownNamedWithContext`) shuts down while a provider of one of its services is still running, the call SHALL stop waiting for that build once its context ends and report the service with an error matching `ctx.Err()`. When the provider returns later, its instance is late: it SHALL NOT be handed out, and the invoker SHALL get an error matching `ErrShutdown` at once, never waiting for the instance's `Shutdown`.
 
 #### Scenario: A stuck provider does not hold a bounded shutdown
 ```gherkin
@@ -218,22 +232,6 @@ Then the call returns after 1s
 And the report succeeds
 And G receives an error matching ErrShutdown
 And the instance had its Shutdown called 1 time, before the call returned
-```
-
-#### Scenario: The late instance is shut down by the shutdown, in dependency order
-```gherkin
-Given a root scope inside synctest.Test with lazy "db" implementing Shutdown() error that logs "db"
-And a lazy "conn" whose provider invokes "db", then blocks until the test closes channel release, and whose instance's Shutdown() sleeps 100ms, logs "conn" and <outcome>
-And goroutine G invokes "conn" and is blocked in the provider
-When the consumer calls root.ShutdownWithContext(context.Background()) and the test then closes release
-Then when the call returns, the log is "conn", "db"
-And the report has an error for "conn" <matching>
-And G receives an error matching ErrShutdown
-
-Examples:
-  | outcome                                  | matching                                              |
-  | returns errors.New("conn close failed")  | containing "conn close failed"                        |
-  | panics with "conn boom"                  | matching ErrShutdownPanic and containing "conn boom"  |
 ```
 
 #### Scenario: ShutdownNamedWithContext honors its bound with a build in flight
@@ -266,15 +264,6 @@ Examples:
   | root.ShutdownWithContext(ctx)              | 60ms after it was created    |
 ```
 
-#### Scenario: A provider shutting its own service down does not wait
-```gherkin
-Given a root scope with a lazy "conn" whose provider calls ShutdownNamed(injector, "conn") before it returns an instance counting its Shutdown calls
-When the consumer invokes "conn"
-Then ShutdownNamed returned nil
-And the invocation returns an error matching ErrShutdown
-And the instance had its Shutdown called 1 time
-```
-
 <!-- cases: 1 default: context.Background() waits for the build (second scenario) -->
 <!-- cases: 2 overrides: the consumer's deadline -->
 <!-- cases: N/A 3 zero values: no input -->
@@ -285,3 +274,56 @@ And the instance had its Shutdown called 1 time
 <!-- cases: 8 concurrency: the invoker and the shutdown run on different goroutines in a synctest bubble under -race; goleak after release -->
 <!-- cases: N/A 9 panics: a panicking late provider gives the invoker ErrProviderPanic (provider-panic-handling) and nothing to shut down -->
 <!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - a bounded shutdown used to wait for the provider past its deadline, and the late instance was handed out and cached -->
+
+### Requirement: A late instance is shut down exactly once by one owner
+A late Shutdowner instance SHALL be shut down exactly once, on a goroutine of its own, with the original context of the shutdown that made the service Terminal, even when that context has ended. Exactly one party SHALL own it: the shutdown still waiting for the build, which reports the instance's error or panic (matching `ErrShutdownPanic`) under the service before the services it depends on shut down; otherwise the build, whose goroutine logs that error or panic once.
+
+#### Scenario: The late instance is shut down by the shutdown, in dependency order
+```gherkin
+Given a root scope inside synctest.Test with lazy "db" implementing Shutdown() error that logs "db"
+And a lazy "conn" whose provider invokes "db", then blocks until the test closes channel release, and whose instance's Shutdown() sleeps 100ms, logs "conn" and <outcome>
+And goroutine G invokes "conn" and is blocked in the provider
+When the consumer calls root.ShutdownWithContext(context.Background()) and the test then closes release
+Then when the call returns, the log is "conn", "db"
+And the report has an error for "conn" <matching>
+And G receives an error matching ErrShutdown
+
+Examples:
+  | outcome                                  | matching                                              |
+  | returns errors.New("conn close failed")  | containing "conn close failed"                        |
+  | panics with "conn boom"                  | matching ErrShutdownPanic and containing "conn boom"  |
+```
+
+<!-- cases: 1 default: an unbounded shutdown owns the late instance (this scenario); a bounded one that gave up leaves it to the build ("A stuck provider does not hold a bounded shutdown", row 1) -->
+<!-- cases: N/A 2 overrides: the owner is not configurable -->
+<!-- cases: N/A 3 zero values: no input -->
+<!-- cases: 4 boundaries: a late Shutdown that returns an error and one that panics -->
+<!-- cases: 5 errors: the error or panic is reported under "conn"; a panic matches ErrShutdownPanic -->
+<!-- cases: 6 duplicates: a late instance is shut down exactly once, and never cached -->
+<!-- cases: 7 lifecycle: "conn" shuts down before "db", which it depends on; the original context is used even once ended ("The invoker is never held by a late Shutdown") -->
+<!-- cases: 8 concurrency: the invoker and the shutdown run on different goroutines in a synctest bubble under -race -->
+<!-- cases: 9 panics: a panicking late Shutdown is reported, matching ErrShutdownPanic -->
+<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - the late instance used to be handed out and cached -->
+
+### Requirement: A provider that shuts its own service down does not wait for itself
+A provider that calls `ShutdownNamed*` for its own service on its own goroutine SHALL NOT wait for its own build: the call returns nil at once, and the build owns the late instance. Non-goals, documented: a provider that shuts down a scope or root containing its own service (`Shutdown()`, `ShutdownWithContext` with a context that never ends), or that waits on another goroutine shutting its service down, waits for its own build and blocks, as it did before this change.
+
+#### Scenario: A provider shutting its own service down does not wait
+```gherkin
+Given a root scope with a lazy "conn" whose provider calls ShutdownNamed(injector, "conn") before it returns an instance counting its Shutdown calls
+When the consumer invokes "conn"
+Then ShutdownNamed returned nil
+And the invocation returns an error matching ErrShutdown
+And the instance had its Shutdown called 1 time
+```
+
+<!-- cases: 1 default: ShutdownNamed without a context (this scenario) -->
+<!-- cases: 2 overrides: ShutdownNamedWithContext from inside the provider ("ShutdownNamedWithContext honors its bound with a build in flight", row 2) -->
+<!-- cases: N/A 3 zero values: no input -->
+<!-- cases: N/A 4 boundaries: one re-entrant call -->
+<!-- cases: 5 errors: the call returns nil; the invoker gets ErrShutdown -->
+<!-- cases: 6 duplicates: the late instance is shut down exactly once -->
+<!-- cases: 7 lifecycle: a re-entrant shutdown from inside the provider; the non-goals above keep blocking -->
+<!-- cases: 8 concurrency: the call runs on the provider's goroutine, so waiting would deadlock -->
+<!-- cases: N/A 9 panics: none -->
+<!-- cases: 10 compatibility: the non-goals keep their previous blocking behavior -->

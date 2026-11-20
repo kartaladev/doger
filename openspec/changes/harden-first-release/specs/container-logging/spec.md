@@ -33,7 +33,7 @@ Examples:
 <!-- cases: N/A 6 duplicate: not applicable -->
 <!-- cases: 7 lifecycle: register, invoke, start, health check, shutdown -->
 <!-- cases: N/A 8 concurrency: no logger, no shared state -->
-<!-- cases: N/A 9 panics: covered by "Panic values and health error text stay at Debug level" -->
+<!-- cases: N/A 9 panics: covered by "Panic values stay at Debug level" -->
 <!-- cases: 10 compatibility: BREAKING: Logf is replaced by Logger; migration in design D10 -->
 
 ### Requirement: Events are logged at a fixed level
@@ -107,11 +107,11 @@ And the handler recorded exactly 8000 "service invoked" records
 <!-- cases: 6 override: the "service overridden" row -->
 <!-- cases: 7 lifecycle: started, ready, closing, closed rows; child scopes -->
 <!-- cases: 8 concurrency: "Concurrent logging" -->
-<!-- cases: N/A 9 panics: covered by "Panic values and health error text stay at Debug level" -->
+<!-- cases: N/A 9 panics: covered by "Panic values stay at Debug level" -->
 <!-- cases: 10 compatibility: BREAKING: messages change from "DI: ..." printf strings to fixed slog messages -->
 
-### Requirement: Panic values and health error text stay at Debug level
-A recovered panic that is not passed to `HookContainerPanic` SHALL be logged at Error level with message `panic recovered`; the first panic of an operation goes to `HookContainerPanic` when that option is set and is logged only when it is not, and later panics of the operation are logged. The record SHALL carry the attributes `scope`, `service` (when it concerns one), `point` and `panic_type` (the `%T` of the value, or `runtime.Goexit` for a health check that exits its goroutine, which has no panic value), and the value itself SHALL appear only in a separate Debug record `panic value` (whose `value` is `runtime.Goexit` for such a check). Health-check error text SHALL appear only in Debug records.
+### Requirement: Panic values stay at Debug level
+A recovered panic not passed to `HookContainerPanic` (only an operation's first panic goes there, when set) SHALL be logged at Error level with message `panic recovered` and attributes `scope`, `service` (when it concerns one), `point` and `panic_type` (the `%T` of the value, or `runtime.Goexit` for a health check that exits its goroutine). The value itself SHALL appear only in a separate Debug record `panic value` (`value` is `runtime.Goexit` for such a check).
 
 #### Scenario: A panic value is not logged above Debug
 ```gherkin
@@ -128,6 +128,20 @@ Examples:
   | INFO  | 1      | 0      |
 ```
 
+<!-- cases: 1 happy path: INFO row (production default level) -->
+<!-- cases: 2 overrides: DEBUG row shows the value when the consumer opts in -->
+<!-- cases: N/A 3 zero values: a nil panic value is recovered as *runtime.PanicNilError and logged by type like any value -->
+<!-- cases: N/A 4 boundaries: no numeric input -->
+<!-- cases: N/A 5 errors: health-check error text is "Health-check error text stays at Debug level" -->
+<!-- cases: N/A 6 duplicate: panics after the first of one operation follow the same rule (ERROR for later panics too, per design D8, value at Debug only) -->
+<!-- cases: 7 lifecycle: shutdown panic; start and hook panics follow the same rule -->
+<!-- cases: N/A 8 concurrency: covered by "Concurrent logging" -->
+<!-- cases: 9 panics: the subject -->
+<!-- cases: 10 compatibility: Logf previously received the panic value at the only level it had -->
+
+### Requirement: Health-check error text stays at Debug level
+Health-check error text SHALL appear only in Debug records.
+
 #### Scenario: Health-check error text is not logged above Debug
 ```gherkin
 Given a root scope with a recording Logger at level <level>
@@ -142,16 +156,16 @@ Examples:
   | INFO  | 0      |
 ```
 
-<!-- cases: 1 happy path: INFO rows (production default level) -->
-<!-- cases: 2 overrides: DEBUG rows show the value when the consumer opts in -->
-<!-- cases: N/A 3 zero values: a nil panic value is recovered as *runtime.PanicNilError and logged by type like any value -->
+<!-- cases: 1 happy path: INFO row (production default level) -->
+<!-- cases: 2 overrides: DEBUG row shows the text when the consumer opts in -->
+<!-- cases: N/A 3 zero values: a passing check has no error text -->
 <!-- cases: N/A 4 boundaries: no numeric input -->
-<!-- cases: 5 errors: health check error text -->
-<!-- cases: N/A 6 duplicate: panics after the first of one operation follow the same rule (ERROR for later panics too, per design D8, value at Debug only) -->
-<!-- cases: 7 lifecycle: shutdown panic; start and hook panics follow the same rule -->
+<!-- cases: 5 errors: health-check error text is the subject -->
+<!-- cases: N/A 6 duplicate: unrelated -->
+<!-- cases: N/A 7 lifecycle: scheduled checks log through the same path -->
 <!-- cases: N/A 8 concurrency: covered by "Concurrent logging" -->
-<!-- cases: 9 panics: the subject -->
-<!-- cases: 10 compatibility: Logf previously received the panic value at the only level it had -->
+<!-- cases: N/A 9 panics: covered by "Panic values stay at Debug level" -->
+<!-- cases: 10 compatibility: Logf previously received the error text at the only level it had -->
 
 ### Requirement: A health check that starts is recorded at Debug level
 Each health check the container starts, on any path (report read, scheduled round, `HealthCheck()` or a single-service function), SHALL emit one Debug record `health check started` with attributes `scope` and `service` before the check runs. A caller that joins a check in flight, or that starts no check, SHALL emit none.
