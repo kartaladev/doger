@@ -1,1 +1,0 @@
-# Transient Services Example
