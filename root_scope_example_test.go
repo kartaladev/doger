@@ -1,7 +1,10 @@
 package doger
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"time"
 )
 
 func ExampleNew() {
@@ -17,21 +20,10 @@ func ExampleNew() {
 	// <nil>
 }
 
-func ExampleDefaultRootScope() {
-	ProvideNamedValue(nil, "PG_URI", "postgres://user:pass@host:5432/db")
-	uri, err := InvokeNamed[string](nil, "PG_URI")
-
-	fmt.Println(uri)
-	fmt.Println(err)
-	// Output:
-	// postgres://user:pass@host:5432/db
-	// <nil>
-}
-
 func ExampleNewWithOpts() {
 	injector := NewWithOpts(&InjectorOpts{
-		HookAfterShutdown: []func(scope *Scope, serviceName string, err error){
-			func(scope *Scope, serviceName string, err error) {
+		HookAfterShutdown: []func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error){
+			func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error) {
 				fmt.Printf("service shutdown: %s\n", serviceName)
 			},
 		},
@@ -88,7 +80,7 @@ func ExampleRootScope_AddBeforeInvocationHook() {
 func ExampleRootScope_AddAfterInvocationHook() {
 	injector := New()
 
-	injector.AddAfterInvocationHook(func(scope *Scope, serviceName string, err error) {
+	injector.AddAfterInvocationHook(func(scope *Scope, serviceName string, elapsed time.Duration, err error) {
 		fmt.Printf("invoked service: %s, error: %v\n", serviceName, err)
 	})
 
@@ -100,7 +92,7 @@ func ExampleRootScope_AddAfterInvocationHook() {
 func ExampleRootScope_AddBeforeShutdownHook() {
 	injector := New()
 
-	injector.AddBeforeShutdownHook(func(scope *Scope, serviceName string) {
+	injector.AddBeforeShutdownHook(func(ctx context.Context, scope *Scope, serviceName string) {
 		fmt.Printf("shutting down service: %s\n", serviceName)
 	})
 
@@ -112,7 +104,7 @@ func ExampleRootScope_AddBeforeShutdownHook() {
 func ExampleRootScope_AddAfterShutdownHook() {
 	injector := New()
 
-	injector.AddAfterShutdownHook(func(scope *Scope, serviceName string, err error) {
+	injector.AddAfterShutdownHook(func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error) {
 		fmt.Printf("shut down service: %s, error: %v\n", serviceName, err)
 	})
 
@@ -140,8 +132,8 @@ func ExampleRootScope_CloneWithOpts() {
 	ProvideNamedValue(injector, "test", "value")
 
 	clone := injector.CloneWithOpts(&InjectorOpts{
-		HookAfterShutdown: []func(scope *Scope, serviceName string, err error){
-			func(scope *Scope, serviceName string, err error) {
+		HookAfterShutdown: []func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error){
+			func(ctx context.Context, scope *Scope, serviceName string, elapsed time.Duration, err error) {
 				fmt.Printf("shutdown: %s\n", serviceName)
 			},
 		},
@@ -151,20 +143,90 @@ func ExampleRootScope_CloneWithOpts() {
 	// Output: shutdown: test
 }
 
-func ExampleRootScope_ShutdownOnSignals() {
-	// This example is commented out because it would block waiting for signals
-	// injector := New()
-	// signal, errors := injector.ShutdownOnSignals(syscall.SIGINT, syscall.SIGTERM)
-	// fmt.Println(signal)
-	// fmt.Println(errors.Len())
+type exampleSignalDB struct{}
+
+func (*exampleSignalDB) Shutdown(ctx context.Context) error {
+	fmt.Println("db shut down, ctx.Err():", ctx.Err())
+	return nil
 }
 
 func ExampleRootScope_ShutdownOnSignalsWithContext() {
-	// This example is commented out because it would block waiting for signals
-	// injector := New()
-	// ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	// defer cancel()
-	// signal, errors := injector.ShutdownOnSignalsWithContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	// fmt.Println(signal)
-	// fmt.Println(errors.Len())
+	injector := New()
+	ProvideNamed(injector, "db", func(Injector) (*exampleSignalDB, error) { return &exampleSignalDB{}, nil })
+	MustInvokeNamed[*exampleSignalDB](injector, "db")
+
+	// The context only ends the wait for a signal: when it ends first, the
+	// call still shuts every service down, with a context that is not
+	// cancelled.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	sig, report := injector.ShutdownOnSignalsWithContext(ctx)
+	fmt.Println("signal:", sig)
+	fmt.Println("succeeded:", report.Succeed)
+	// Output:
+	// db shut down, ctx.Err(): <nil>
+	// signal: <nil>
+	// succeeded: true
+}
+
+type exampleBuiltCache struct{}
+
+func ExampleRootScope_AddAfterBuildHook() {
+	root := New()
+	ProvideNamed(root, "cache", func(Injector) (*exampleBuiltCache, error) { return &exampleBuiltCache{}, nil })
+
+	// Observe each instance right after the container builds it, for example
+	// to register metrics, without wrapping every provider.
+	root.AddAfterBuildHook(func(scope *Scope, serviceName string, instance any) {
+		fmt.Printf("built %s (%T) in %s\n", serviceName, instance, scope.Name())
+	})
+
+	_ = MustInvokeNamed[*exampleBuiltCache](root, "cache")
+	_ = MustInvokeNamed[*exampleBuiltCache](root, "cache") // cached: no build
+	// Output:
+	// built cache (*doger.exampleBuiltCache) in [root]
+}
+
+func ExampleRootScope_Shutdown_closed() {
+	injector := New()
+	ProvideNamedValue(injector, "greeting", "hello")
+	injector.Shutdown()
+
+	// A container cannot be reused after Shutdown: build a new one.
+	_, err := InvokeNamed[string](injector, "greeting")
+	fmt.Println(errors.Is(err, ErrShutdown))
+
+	defer func() {
+		err, _ := recover().(error)
+		fmt.Println(errors.Is(err, ErrShutdown))
+	}()
+	ProvideNamedValue(injector, "late", "too late")
+	// Output:
+	// true
+	// true
+}
+
+func ExampleInjectorOpts_afterInvocationHook() {
+	// HookAfterInvocation receives the time each invocation took on the
+	// container clock, a build included: ready for a latency metric.
+	clock := newExampleClock()
+	injector := NewWithOpts(&InjectorOpts{
+		Clock: clock,
+		HookAfterInvocation: []func(*Scope, string, time.Duration, error){
+			func(_ *Scope, name string, elapsed time.Duration, err error) {
+				fmt.Printf("%s took %s, error: %v\n", name, elapsed, err)
+			},
+		},
+	})
+	ProvideNamed(injector, "db", func(Injector) (string, error) {
+		clock.Advance(3 * time.Second) // a slow connection
+		return "connected", nil
+	})
+
+	_, _ = InvokeNamed[string](injector, "db") // builds
+	_, _ = InvokeNamed[string](injector, "db") // cached
+	// Output:
+	// db took 3s, error: <nil>
+	// db took 0s, error: <nil>
 }

@@ -1,5 +1,5 @@
 disable-version-check: false
-log-level: debug
+log-level: info
 report:
     fail-on-severity: critical,high,medium,low
     format: ""

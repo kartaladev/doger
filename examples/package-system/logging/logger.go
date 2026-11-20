@@ -9,6 +9,7 @@ type Logger struct {
 	Level string
 }
 
+// Log logs message.
 func (l *Logger) Log(message string) {
 	fmt.Printf("[%s] %s\n", l.Level, message)
 }

@@ -7,6 +7,7 @@ Go library `github.com/kartaladev/doger` (package `doger`): a fork of `github.co
 - Test: `make test` (`go test -race ./...`; `TestMain` runs goleak, so leaked goroutines fail the suite)
 - Single test: `go test -race -run TestName ./<pkg>`
 - Lint: `make lint` (golangci-lint, config in `.golangci.yml`)
+- Specs: `openspec validate <change>`. Never gate on `--strict`: it rejects the fenced Gherkin scenarios the schema requires
 - Workspace: `go.work` includes `./http/*` and `./examples/*` modules
 
 ## Project rules (mandatory)

@@ -1,6 +1,7 @@
 package doger
 
 import (
+	"maps"
 	"sync"
 )
 
@@ -29,9 +30,81 @@ func newServiceDescription(scopeID string, scopeName string, serviceName string)
 //   - ScopeName: The human-readable name of the scope containing the service
 //   - Service: The name of the service within the scope
 type ServiceDescription struct {
-	ScopeID   string
-	ScopeName string
-	Service   string
+	ScopeID   string `json:"scopeId"`
+	ScopeName string `json:"scopeName"`
+	Service   string `json:"service"`
+}
+
+// DependencySource says how a dependency edge was recorded. When an edge
+// was recorded several ways, the first of invoked, depends-on and declared
+// is kept.
+//
+// The constants start at 1: the zero value is invalid. Its String is
+// "unknown" and MarshalText fails for it, so a struct literal that means
+// an invoked edge sets DependencySourceInvoked explicitly.
+type DependencySource int
+
+const (
+	// DependencySourceInvoked is an edge recorded when a provider invoked
+	// the service.
+	DependencySourceInvoked DependencySource = iota + 1
+	// DependencySourceDependsOn is an edge from a DependsOn or
+	// DependsOnNamed registration option.
+	DependencySourceDependsOn
+	// DependencySourceDeclared is an edge recorded by DeclareDependency.
+	DependencySourceDeclared
+)
+
+// unknownText is the String of an invalid enumerated value, such as the
+// zero DependencySource or Stage.
+const unknownText = "unknown"
+
+// dependencySourceTexts maps each DependencySource constant to its text.
+var dependencySourceTexts = map[DependencySource]string{
+	DependencySourceInvoked:   "invoked",
+	DependencySourceDependsOn: "depends-on",
+	DependencySourceDeclared:  "declared",
+}
+
+// dependencySourcesByText maps each text of dependencySourceTexts back to
+// its DependencySource.
+var dependencySourcesByText = map[string]DependencySource{
+	"invoked":    DependencySourceInvoked,
+	"depends-on": DependencySourceDependsOn,
+	"declared":   DependencySourceDeclared,
+}
+
+// String returns "invoked", "depends-on" or "declared", and "unknown" for
+// any other value, the zero value included.
+func (s DependencySource) String() string {
+	if text, ok := dependencySourceTexts[s]; ok {
+		return text
+	}
+
+	return unknownText
+}
+
+// MarshalText encodes the source as its String form, so JSON shows it by
+// name. It fails for any value other than the three constants.
+func (s DependencySource) MarshalText() ([]byte, error) {
+	text, ok := dependencySourceTexts[s]
+	if !ok {
+		return nil, libErrorf("invalid dependency source %d", int(s))
+	}
+
+	return []byte(text), nil
+}
+
+// UnmarshalText decodes "invoked", "depends-on" or "declared", so explained
+// output read back from JSON keeps its sources. Any other text is an error.
+func (s *DependencySource) UnmarshalText(text []byte) error {
+	source, ok := dependencySourcesByText[string(text)]
+	if !ok {
+		return libErrorf("unknown dependency source %q", text)
+	}
+	*s = source
+
+	return nil
 }
 
 // newDAG creates a new DAG (Directed Acyclic Graph) with initialized dependencies and dependents maps.
@@ -39,11 +112,17 @@ type ServiceDescription struct {
 //
 // Returns a new DAG instance ready for dependency tracking.
 func newDAG() *DAG {
-	return &DAG{
-		mu:           sync.RWMutex{},
-		dependencies: map[ServiceDescription]map[ServiceDescription]struct{}{},
-		dependents:   map[ServiceDescription]map[ServiceDescription]struct{}{},
-	}
+	d := &DAG{}
+	initDAG(d)
+
+	return d
+}
+
+// initDAG initializes the zero DAG d in place, so that a RootScope can hold
+// its graph in the same allocation.
+func initDAG(d *DAG) {
+	d.dependencies = map[ServiceDescription]map[ServiceDescription]DependencySource{}
+	d.dependents = map[ServiceDescription]map[ServiceDescription]DependencySource{}
 }
 
 // DAG represents a Directed Acyclic Graph of services, tracking dependencies and dependents.
@@ -60,8 +139,8 @@ func newDAG() *DAG {
 //   - dependents: Map of services to their dependents
 type DAG struct {
 	mu           sync.RWMutex
-	dependencies map[ServiceDescription]map[ServiceDescription]struct{}
-	dependents   map[ServiceDescription]map[ServiceDescription]struct{}
+	dependencies map[ServiceDescription]map[ServiceDescription]DependencySource
+	dependents   map[ServiceDescription]map[ServiceDescription]DependencySource
 }
 
 // addDependency adds a dependency relationship from one service to another in the DAG.
@@ -77,7 +156,9 @@ type DAG struct {
 //   - toServiceName: The name of the dependency service
 //
 // This function is thread-safe and updates both the dependencies and dependents maps.
-func (d *DAG) addDependency(fromScopeID, fromScopeName, fromServiceName, toScopeID, toScopeName, toServiceName string) {
+// An edge recorded again keeps its strongest source: invoked, then
+// depends-on, then declared.
+func (d *DAG) addDependency(fromScopeID, fromScopeName, fromServiceName, toScopeID, toScopeName, toServiceName string, source DependencySource) {
 	from := newServiceDescription(fromScopeID, fromScopeName, fromServiceName)
 	to := newServiceDescription(toScopeID, toScopeName, toServiceName)
 
@@ -85,16 +166,39 @@ func (d *DAG) addDependency(fromScopeID, fromScopeName, fromServiceName, toScope
 	defer d.mu.Unlock()
 
 	// from -> to
-	if _, ok := d.dependencies[from]; !ok {
-		d.dependencies[from] = map[ServiceDescription]struct{}{}
+	dependencies, ok := d.dependencies[from]
+	if !ok {
+		dependencies = map[ServiceDescription]DependencySource{}
+		d.dependencies[from] = dependencies
 	}
-	d.dependencies[from][to] = struct{}{}
+	if current, ok := dependencies[to]; ok {
+		source = min(source, current)
+	}
+	dependencies[to] = source
 
 	// from <- to
-	if _, ok := d.dependents[to]; !ok {
-		d.dependents[to] = map[ServiceDescription]struct{}{}
+	dependents, ok := d.dependents[to]
+	if !ok {
+		dependents = map[ServiceDescription]DependencySource{}
+		d.dependents[to] = dependents
 	}
-	d.dependents[to][from] = struct{}{}
+	dependents[from] = source
+}
+
+// edgesOf returns a copy of the edges of desc, each with its source: its
+// dependencies, or its dependents when dependents is set. The services and
+// their sources are read under one lock, so an edge removed meanwhile is
+// either listed with its source or not listed.
+func (d *DAG) edgesOf(desc ServiceDescription, dependents bool) map[ServiceDescription]DependencySource {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	edges := d.dependencies[desc]
+	if dependents {
+		edges = d.dependents[desc]
+	}
+
+	return maps.Clone(edges)
 }
 
 // removeService removes a dependency relationship between services in the DAG.
@@ -147,6 +251,24 @@ func (d *DAG) listServicesHavingNoDependent(scopeID, scopeName string, serviceNa
 	}
 
 	return out
+}
+
+// snapshotDependents returns, for each service of set, its dependents that
+// are in set too, as the graph holds them now. It takes a single read lock.
+func (d *DAG) snapshotDependents(set map[ServiceDescription]struct{}) map[ServiceDescription][]ServiceDescription {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	dependents := map[ServiceDescription][]ServiceDescription{}
+	for desc := range set {
+		for dependent := range d.dependents[desc] {
+			if _, ok := set[dependent]; ok {
+				dependents[desc] = append(dependents[desc], dependent)
+			}
+		}
+	}
+
+	return dependents
 }
 
 // explainService provides information about a service's dependencies and dependents in the DAG.

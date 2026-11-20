@@ -35,7 +35,7 @@ func TestRaceConditionServiceInitialization(t *testing.T) {
 	results := make([]*raceTestService, numGoroutines)
 	errors := make([]error, numGoroutines)
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -48,7 +48,7 @@ func TestRaceConditionServiceInitialization(t *testing.T) {
 	wg.Wait()
 
 	// All invocations should succeed
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		is.NoError(errors[i])
 		is.NotNil(results[i])
 	}
@@ -108,7 +108,7 @@ func TestRaceConditionScopeCreation(t *testing.T) {
 	var wg sync.WaitGroup
 	scopeErrors := make([]error, numScopes)
 
-	for i := 0; i < numScopes; i++ {
+	for i := range numScopes {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -145,7 +145,7 @@ func TestRaceConditionScopeCreation(t *testing.T) {
 	wg.Wait()
 
 	// All operations should succeed
-	for i := 0; i < numScopes; i++ {
+	for i := range numScopes {
 		is.NoError(scopeErrors[i])
 	}
 }
@@ -168,7 +168,7 @@ func TestRaceConditionHealthCheckInvocation(t *testing.T) {
 	invokeErrors := make([]error, numOperations)
 	healthResults := make([]map[string]error, numOperations)
 
-	for i := 0; i < numOperations; i++ {
+	for i := range numOperations {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -219,7 +219,7 @@ func TestRaceConditionShutdownInvocation(t *testing.T) {
 	invokeErrors := make([]error, numOperations)
 	report := make([]*doger.ShutdownReport, numOperations)
 
-	for i := 0; i < numOperations; i++ {
+	for i := range numOperations {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -237,9 +237,29 @@ func TestRaceConditionShutdownInvocation(t *testing.T) {
 
 	wg.Wait()
 
-	// After concurrent shutdown/invocation, the service should no longer be invokable
+	// An invoke racing Shutdown returns the instance, or ErrShutdown once
+	// the root scope is closed.
+	for i := 0; i < numOperations; i += 2 {
+		if invokeErrors[i] != nil {
+			is.ErrorIs(invokeErrors[i], doger.ErrShutdown)
+		}
+	}
+
+	// Root Shutdown runs once: every call gets the same successful report.
+	for i := 1; i < numOperations; i += 2 {
+		if is.NotNil(report[i]) {
+			is.True(report[i].Succeed)
+			is.Empty(report[i].Errors)
+			is.Len(report[i].Services, 1)
+			if len(report[i].Services) == 1 {
+				is.Equal("shutdown-race-service", report[i].Services[0].Service)
+			}
+		}
+	}
+
+	// After concurrent shutdown/invocation, the closed root refuses it
 	_, finalErr := doger.InvokeNamed[*raceShutdowner](root, "shutdown-race-service")
-	is.Error(finalErr)
+	is.ErrorIs(finalErr, doger.ErrShutdown)
 }
 
 // TestRaceConditionSlowServiceInvocation tests race conditions with slow service resolution
@@ -261,7 +281,7 @@ func TestRaceConditionSlowServiceInvocation(t *testing.T) {
 	results := make([]string, numGoroutines)
 	errors := make([]error, numGoroutines)
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -277,7 +297,7 @@ func TestRaceConditionSlowServiceInvocation(t *testing.T) {
 
 	// All invocations should succeed with the same result
 	successCount := 0
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		if errors[i] == nil {
 			successCount++
 			is.Equal("slow-value", results[i])
@@ -307,7 +327,7 @@ func TestRaceConditionServiceAliasCreation(t *testing.T) {
 	invokeResults := make([]string, numOperations)
 	invokeErrors := make([]error, numOperations)
 
-	for i := 0; i < numOperations; i++ {
+	for i := range numOperations {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -316,7 +336,7 @@ func TestRaceConditionServiceAliasCreation(t *testing.T) {
 
 			if index%2 == 0 {
 				// Create alias
-				aliasErrors[index] = doger.AsNamed[string, string](root, "alias-base-service", aliasName)
+				aliasErrors[index] = doger.AliasNamed[string, string](root, "alias-base-service", aliasName)
 			} else {
 				// Try to invoke alias (may not exist yet)
 				result, err := doger.InvokeNamed[string](root, aliasName)

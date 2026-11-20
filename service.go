@@ -3,15 +3,77 @@ package doger
 import (
 	"context"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/kartaladev/doger/internal/frames"
 	"github.com/kartaladev/doger/stacktrace"
 	typetostring "github.com/samber/go-type-to-string"
 )
 
-// MaxInvocationFrames defines the maximum number of stack frames to capture
-// when tracking service invocations for debugging and observability purposes.
-var MaxInvocationFrames uint32 = 100
+// defaultMaxInvocationFrames is the frame cap of InjectorOpts.MaxInvocationFrames 0.
+const defaultMaxInvocationFrames = 100
+
+// invocationFrames records the call sites a service was invoked from, each
+// once, for debugging and observability. A wrapper embeds it.
+type invocationFrames struct {
+	invokationFramesMu      sync.RWMutex
+	invokationFrames        map[stacktrace.Frame]struct{} // map garanties uniqueness
+	invokationFramesCounter uint32                        // invocations counted against the cap
+}
+
+// newInvocationFrames returns an empty record.
+func newInvocationFrames() invocationFrames {
+	return invocationFrames{invokationFrames: map[stacktrace.Frame]struct{}{}}
+}
+
+// recordInvocationFrame records the frame returned by frame for each of the
+// first limit invocations counted; a limit of 0 or less records nothing. frame is called only when the frame is recorded: capturing one
+// is costly.
+func (f *invocationFrames) recordInvocationFrame(limit int, frame func() (stacktrace.Frame, bool)) {
+	if limit <= 0 {
+		return
+	}
+	if uint64(atomic.AddUint32(&f.invokationFramesCounter, 1)) <= uint64(limit) {
+		if fr, ok := frame(); ok {
+			f.invokationFramesMu.Lock()
+			f.invokationFrames[fr] = struct{}{}
+			f.invokationFramesMu.Unlock()
+		}
+	}
+}
+
+// invocationFrameList returns the recorded frames, in no particular order.
+func (f *invocationFrames) invocationFrameList() []stacktrace.Frame {
+	f.invokationFramesMu.RLock()
+	defer f.invokationFramesMu.RUnlock()
+
+	frames := make([]stacktrace.Frame, 0, len(f.invokationFrames))
+	for frame := range f.invokationFrames {
+		frames = append(frames, frame)
+	}
+
+	return frames
+}
+
+// invocationFrameCap returns the frame cap of the container of i (see
+// InjectorOpts.MaxInvocationFrames), or the default one when i is nil, as
+// for a wrapper invoked directly.
+func invocationFrameCap(i Injector) int {
+	if i == nil {
+		return defaultMaxInvocationFrames
+	}
+
+	switch n := i.RootScope().opts.MaxInvocationFrames; {
+	case n == 0:
+		return defaultMaxInvocationFrames
+	case n < 0:
+		return 0
+	default:
+		return n
+	}
+}
 
 // ServiceType represents the different types of services that can be registered
 // in the dependency injection container. Each type has different lifecycle
@@ -61,6 +123,10 @@ type serviceWrapper[T any] interface {
 	shutdown(context.Context) error
 	clone(Injector) any
 	source() (stacktrace.Frame, []stacktrace.Frame)
+	getRegistrationIndex() uint64
+	setRegistrationIndex(uint64)
+	getOptions() *serviceOptions
+	setOptions(*serviceOptions)
 }
 
 // serviceWrapperAny is a non-generic version of serviceWrapper[T] that provides access to
@@ -79,6 +145,10 @@ type serviceWrapperAny interface {
 	shutdown(context.Context) error
 	clone(Injector) any
 	source() (stacktrace.Frame, []stacktrace.Frame)
+	getRegistrationIndex() uint64
+	setRegistrationIndex(uint64)
+	getOptions() *serviceOptions
+	setOptions(*serviceOptions)
 }
 
 // Interface definitions for specific service capabilities.
@@ -86,24 +156,59 @@ type serviceWrapperAny interface {
 // without requiring the full serviceWrapper[T] interface.
 
 type (
-	serviceWrapperGetName            interface{ getName() string }
-	serviceWrapperGetTypeName        interface{ getTypeName() string }
-	serviceWrapperGetServiceType     interface{ getServiceType() ServiceType }
-	serviceWrapperGetReflectType     interface{ getReflectType() reflect.Type }
-	serviceWrapperGetInstanceAny     interface{ getInstanceAny(Injector) (any, error) }
-	serviceWrapperGetInstance[T any] interface{ getInstance(Injector) (T, error) } //nolint:unused
-	serviceWrapperIsHealthchecker    interface{ isHealthchecker() bool }
-	serviceWrapperHealthcheck        interface{ healthcheck(context.Context) error }
-	serviceWrapperIsShutdowner       interface{ isShutdowner() bool }
-	serviceWrapperShutdown           interface{ shutdown(context.Context) error }
-	serviceWrapperClone              interface{ clone(Injector) any }
-	serviceWrapperSource             interface {
+	serviceWrapperGetName         interface{ getName() string }
+	serviceWrapperGetTypeName     interface{ getTypeName() string }
+	serviceWrapperGetServiceType  interface{ getServiceType() ServiceType }
+	serviceWrapperGetReflectType  interface{ getReflectType() reflect.Type }
+	serviceWrapperGetInstanceAny  interface{ getInstanceAny(Injector) (any, error) }
+	serviceWrapperIsHealthchecker interface{ isHealthchecker() bool }
+	serviceWrapperHealthcheck     interface{ healthcheck(context.Context) error }
+	serviceWrapperIsShutdowner    interface{ isShutdowner() bool }
+	serviceWrapperShutdown        interface{ shutdown(context.Context) error }
+	serviceWrapperClone           interface{ clone(Injector) any }
+	serviceWrapperSource          interface {
 		source() (stacktrace.Frame, []stacktrace.Frame)
 	}
 )
 
+// serviceWrapperAliasTarget is implemented by aliases.
+type serviceWrapperAliasTarget interface {
+	aliasTarget() (Injector, string)
+}
+
+// rootPkgPath is the import path of this package: the provider frame of a
+// value or alias registration skips its non-test frames, so it names the
+// consumer's call site.
+var rootPkgPath = reflect.TypeFor[Scope]().PkgPath()
+
+// registrationFrame returns the consumer's call site of a value, alias or
+// export registration, for the wrapper constructor calling it: the first
+// frame outside this package, whose _test.go files count as outside. When
+// that frame is deeper than frames.MaxDepth, it returns the wrapper
+// constructor's own frame instead, never a zero frame.
+func registrationFrame() stacktrace.Frame {
+	// skip registrationFrame itself
+	frame, ok := frames.Caller(1, frames.MaxDepth, rootPkgPath)
+	if !ok {
+		frame, _ = frames.Caller(1, frames.MaxDepth)
+	}
+
+	return stacktrace.Frame(frame)
+}
+
 type serviceWrapperBuildTime interface {
 	getBuildTime() (time.Duration, bool)
+}
+
+// buildStateOf returns the build time of a service and whether it is built,
+// read without waiting for a build in flight; a service with no build time
+// reports 0 and false.
+func buildStateOf(service any) (buildTime time.Duration, built bool) {
+	if timed, ok := service.(serviceWrapperBuildTime); ok {
+		return timed.getBuildTime()
+	}
+
+	return 0, false
 }
 
 // Interface compliance checks to ensure serviceWrapper[T] implements all required interfaces.
@@ -125,9 +230,24 @@ var (
 // inferServiceName uses type inference to determine the service name
 // based on the generic type parameter T. This is used internally
 // to automatically generate service names from types.
+//
+// The name of a type is computed once and cached by its reflect.Type, so
+// resolving a service by type allocates nothing for its name.
 func inferServiceName[T any]() string {
-	return typetostring.GetType[T]()
+	t := reflect.TypeFor[T]()
+	if name, ok := serviceNames.Load(t); ok {
+		return name.(string) //nolint:errcheck,forcetypeassert // serviceNames holds strings only
+	}
+
+	name := typetostring.GetType[T]()
+	serviceNames.Store(t, name)
+
+	return name
 }
+
+// serviceNames caches inferServiceName by reflect.Type: a type's name never
+// changes, and the set of types a program resolves is bounded.
+var serviceNames sync.Map
 
 // inferServiceProviderStacktrace extracts stacktrace information from a service
 // for debugging and observability purposes. Transient services don't have
@@ -150,17 +270,14 @@ type serviceInfo struct {
 
 func inferServiceInfo(injector Injector, name string) (serviceInfo, bool) {
 	if serviceAny, ok := injector.serviceGet(name); ok {
-		var buildTime time.Duration
-		if lazy, ok := serviceAny.(serviceWrapperBuildTime); ok {
-			buildTime, _ = lazy.getBuildTime()
-		}
+		buildTime, _ := buildStateOf(serviceAny)
 
 		return serviceInfo{
 			name:             name,
-			serviceType:      serviceAny.(serviceWrapperGetServiceType).getServiceType(), //nolint:errcheck,forcetypeassert
+			serviceType:      serviceAny.(serviceWrapperGetServiceType).getServiceType(), //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
 			serviceBuildTime: buildTime,
-			healthchecker:    serviceAny.(serviceWrapperIsHealthchecker).isHealthchecker(), //nolint:errcheck,forcetypeassert
-			shutdowner:       serviceAny.(serviceWrapperIsShutdowner).isShutdowner(),       //nolint:errcheck,forcetypeassert
+			healthchecker:    serviceAny.(serviceWrapperIsHealthchecker).isHealthchecker(), //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
+			shutdowner:       serviceAny.(serviceWrapperIsShutdowner).isShutdowner(),       //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
 		}, true
 	}
 

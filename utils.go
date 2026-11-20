@@ -1,13 +1,17 @@
 package doger
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
 	"reflect"
-	"sync"
+	"slices"
+	"time"
+
+	typetostring "github.com/samber/go-type-to-string"
 )
 
 //
@@ -18,26 +22,41 @@ func empty[T any]() (t T) {
 	return t
 }
 
-func deepEmpty[T any]() T {
-	var o T
-	t := reflect.TypeOf(o)
+// deepEmpty returns the zero value of T with every pointer of a pointer
+// chain allocated, or an error matching ErrStructInjection when T is a
+// recursive pointer type.
+func deepEmpty[T any]() (T, error) {
+	v, err := deepEmptyMakeValue(reflect.TypeFor[T](), nil) // reflect.Value with the desired shape
+	if err != nil {
+		return empty[T](), err
+	}
+	typed, _ := reflect.TypeAssert[T](v) // a nil interface gives the zero value
 
-	v := deepEmptyMakeValue(t) // reflect.Value with the desired shape
-	return v.Interface().(T)   //nolint:errcheck,forcetypeassert
+	return typed, nil
 }
 
-func deepEmptyMakeValue(t reflect.Type) reflect.Value {
+// deepEmptyMakeValue returns the zero value of t, with every pointer of a
+// pointer chain allocated. visited holds the pointer types already walked:
+// a recursive pointer type returns an error matching ErrStructInjection
+// instead of recursing without bound.
+func deepEmptyMakeValue(t reflect.Type, visited []reflect.Type) (reflect.Value, error) {
 	// Base case: not a pointer -> just zero of this type.
 	if t.Kind() != reflect.Pointer {
-		return reflect.Zero(t)
+		return reflect.Zero(t), nil
+	}
+	if slices.Contains(visited, t) {
+		return reflect.Value{}, structInjectionError("recursive pointer type `%s` cannot be injected", typetostring.GetReflectType(t))
 	}
 
 	// Recursive case: pointer -> allocate pointer, set its Elem to the
 	// recursively-constructed zero value of the element type.
-	elem := deepEmptyMakeValue(t.Elem())
+	elem, err := deepEmptyMakeValue(t.Elem(), append(visited, t))
+	if err != nil {
+		return reflect.Value{}, err
+	}
 	p := reflect.New(t.Elem())
 	p.Elem().Set(elem)
-	return p
+	return p.Convert(t), nil // a named pointer type, such as type P *S, is not *S
 }
 
 func must0(err error) {
@@ -106,9 +125,7 @@ func filter[V any](collection []V, predicate func(item V, index int) bool) []V {
 }
 
 func reverseSlice[S ~[]E, E any](s S) {
-	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
-		s[i], s[j] = s[j], s[i]
-	}
+	slices.Reverse(s)
 }
 
 func orderedUniq[V comparable](in []V) []V {
@@ -126,30 +143,17 @@ func orderedUniq[V comparable](in []V) []V {
 }
 
 func contains[T comparable](list []T, elem T) bool {
-	for _, v := range list {
-		if v == elem {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(list, elem)
 }
 
-func coalesce[T comparable](v ...T) (result T) {
-	for _, e := range v {
-		if e != result {
-			result = e
-			break
-		}
-	}
-
-	return result
+func coalesce[T comparable](v ...T) T {
+	return cmp.Or(v...)
 }
 
 // https://gist.github.com/rkravchik/d9733e1d2d626188eb91df751471d739
 func newUUID() (string, error) {
-	uuid := make([]byte, 16)
-	n, err := io.ReadFull(rand.Reader, uuid)
+	var uuid [16]byte
+	n, err := rand.Read(uuid[:])
 	if n != len(uuid) || err != nil {
 		return "", err
 	}
@@ -168,70 +172,65 @@ func newUUID() (string, error) {
 	return string(buf[:]), nil
 }
 
-func newJobPool[R any](parallelism uint) *jobPool[R] {
-	return &jobPool[R]{
-		parallelism: parallelism,
-		jobs:        make(chan func(), 1000), // 🤮 @TODO: change that
-
-		startOnce: sync.Once{},
-		stopOnce:  sync.Once{},
-	}
-}
-
-type jobPool[R any] struct {
-	parallelism uint
-	jobs        chan func()
-
-	startOnce sync.Once
-	stopOnce  sync.Once
-}
-
-func (p *jobPool[R]) rpc(f func() R) <-chan R {
-	c := make(chan R, 1) // a single message will be sent before closing
-
-	p.jobs <- func() {
-		defer close(c)
-		c <- f()
+// healthCheckResult decides an observed health-check result: once ctx is
+// done, or once clock has reached the deadline the container set for the
+// check, the check counts as timed out, whatever it returned; before that,
+// the check keeps its own result.
+func healthCheckResult(ctx context.Context, clock Clock, err error) error {
+	if cause := contextDone(ctx); cause != nil {
+		return timeoutError(cause)
 	}
 
-	return c
-}
-
-func (p *jobPool[R]) start() {
-	p.startOnce.Do(func() {
-		//nolint:gosec
-		for i := 0; i < int(p.parallelism); i++ {
-			go func() {
-				for job := range p.jobs {
-					job()
-				}
-			}()
-		}
-	})
-}
-
-func (p *jobPool[R]) stop() {
-	p.stopOnce.Do(func() {
-		close(p.jobs)
-	})
-}
-
-func raceWithTimeout(ctx context.Context, fn func(context.Context) error) error {
-	_, ok := ctx.Deadline()
-	if !ok {
-		return fn(ctx)
+	// The context may not be marked done yet when the check returned at its
+	// deadline: its cancellation runs in another goroutine.
+	if deadline, ok := healthCheckDeadline(ctx); ok && !clock.Now().Before(deadline) {
+		return timeoutError(context.DeadlineExceeded)
 	}
 
-	err := make(chan error, 1)
-	go func() {
-		err <- fn(ctx)
-	}()
+	return err
+}
 
+// healthCheckDeadlineKey is the context key of the earliest health-check
+// deadline the container set, on its clock.
+type healthCheckDeadlineKey struct{}
+
+// withHealthCheckDeadline records a health-check deadline set by the
+// container, keeping an earlier one already recorded in ctx.
+func withHealthCheckDeadline(ctx context.Context, deadline time.Time) context.Context {
+	if current, ok := healthCheckDeadline(ctx); ok && !deadline.Before(current) {
+		return ctx
+	}
+
+	return context.WithValue(ctx, healthCheckDeadlineKey{}, deadline)
+}
+
+// healthCheckDeadline returns the health-check deadline the container
+// recorded in ctx. A deadline set by the consumer's context is not one.
+func healthCheckDeadline(ctx context.Context) (time.Time, bool) {
+	deadline, ok := ctx.Value(healthCheckDeadlineKey{}).(time.Time)
+	return deadline, ok
+}
+
+// timeoutError returns an error matching both ErrHealthCheckTimeout and
+// cause. A deadline cause is normalized to context.DeadlineExceeded, so the
+// message reads the same whichever clock set the deadline.
+func timeoutError(cause error) error {
+	if errors.Is(cause, context.DeadlineExceeded) {
+		cause = context.DeadlineExceeded
+	}
+
+	return fmt.Errorf("%w: %w", ErrHealthCheckTimeout, cause)
+}
+
+// contextDone returns ctx.Err() once ctx is done, and nil while it is live.
+// It never calls Err() on a live context, which a consumer's context may
+// block on.
+func contextDone(ctx context.Context) error {
 	select {
-	case e := <-err:
-		return e
 	case <-ctx.Done():
-		return fmt.Errorf("%w: %s", ErrHealthCheckTimeout, ctx.Err()) //nolint:errorlint
+		return ctx.Err()
+	default:
+		return nil
 	}
 }
 
@@ -245,7 +244,7 @@ func genericCanCastToGeneric[From any, To any]() bool {
 
 	if anyFrom == nil { // check for interface by reflect
 		typeFrom := reflect.TypeOf(&from).Elem()
-		typeTo := reflect.TypeOf((*To)(nil)).Elem()
+		typeTo := reflect.TypeFor[To]()
 
 		toInterface := typeTo.Kind() == reflect.Interface
 
@@ -257,7 +256,7 @@ func genericCanCastToGeneric[From any, To any]() bool {
 }
 
 func typeCanCastToGeneric[To any](fromType reflect.Type) bool {
-	toType := reflect.TypeOf((*To)(nil)).Elem()
+	toType := reflect.TypeFor[To]()
 	return typeCanCastToType(fromType, toType)
 }
 

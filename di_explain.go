@@ -2,9 +2,12 @@ package doger
 
 import (
 	"bytes"
-	"html/template"
+	"cmp"
+	"fmt"
+	"slices"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/kartaladev/doger/stacktrace"
@@ -14,8 +17,10 @@ import (
 // 								Templating helpers
 /////////////////////////////////////////////////////////////////////////////
 
-func fromTemplate(tpl string, data any) string {
-	t := template.Must(template.New("").Parse(tpl))
+// fromTemplate renders tpl with text/template, so names are never
+// HTML-escaped; a missing key renders as the empty string.
+func fromTemplate(tpl string, data map[string]string) string {
+	t := template.Must(template.New("").Option("missingkey=zero").Parse(tpl))
 	var buf bytes.Buffer
 	must0(t.Execute(&buf, data)) // 🤮
 	return buf.String()
@@ -42,7 +47,7 @@ Dependents:
 `
 
 // @TODO: add service type icon (lazy, eager, transient).
-const explainServiceDependencyTemplate = `* {{.Service}} from scope {{.ScopeName}}{{.Recursive}}`
+const explainServiceDependencyTemplate = `* {{.Service}}{{.Source}} from scope {{.ScopeName}}{{.Ref}}{{.Recursive}}`
 
 // ExplainServiceOutput contains detailed information about a service for debugging and analysis.
 // This struct provides comprehensive information about a service's location, type, dependencies,
@@ -56,6 +61,64 @@ type ExplainServiceOutput struct {
 	Invoked          *stacktrace.Frame                `json:"invoked"`
 	Dependencies     []ExplainServiceDependencyOutput `json:"dependencies"`
 	Dependents       []ExplainServiceDependencyOutput `json:"dependents"`
+
+	// DefaultState is the decision of a registration given [AsDefault], or
+	// DefaultStateNone for any other registration. JSON omits it then.
+	DefaultState DefaultState `json:"default_state,omitempty"`
+	// DefaultYieldedToScopeName is the name of the scope holding the service
+	// a default yielded to; empty unless DefaultState is DefaultStateYielded.
+	DefaultYieldedToScopeName string `json:"default_yielded_to_scope_name,omitempty"`
+	// DefaultYieldedToService is the name of the service a default yielded
+	// to; empty unless DefaultState is DefaultStateYielded.
+	DefaultYieldedToService string `json:"default_yielded_to_service,omitempty"`
+}
+
+// DefaultState is the decision of a registration given [AsDefault], as
+// explained by [ExplainService] and [ExplainNamedService]. JSON encodes it by
+// name: "not-default", "unresolved", "chosen" or "yielded".
+type DefaultState int
+
+// The decisions of a default registration. The zero value is not a default.
+const (
+	DefaultStateNone       DefaultState = iota // not a default registration
+	DefaultStateUnresolved                     // a default not resolved yet
+	DefaultStateChosen                         // a default that uses its own provider or value
+	DefaultStateYielded                        // a default that resolves to a non-default service of an ancestor
+)
+
+// String returns "not-default", "unresolved", "chosen" or "yielded", or
+// "DefaultState(n)" for an unknown value.
+func (s DefaultState) String() string {
+	switch s {
+	case DefaultStateNone:
+		return "not-default"
+	case DefaultStateUnresolved:
+		return "unresolved"
+	case DefaultStateChosen:
+		return "chosen"
+	case DefaultStateYielded:
+		return "yielded"
+	default:
+		return fmt.Sprintf("DefaultState(%d)", int(s))
+	}
+}
+
+// MarshalText encodes the state as its String form, so JSON shows it by name.
+func (s DefaultState) MarshalText() ([]byte, error) {
+	return []byte(s.String()), nil
+}
+
+// UnmarshalText decodes the String form of a state, so explained output read
+// back from JSON keeps it. Any other text is an error.
+func (s *DefaultState) UnmarshalText(text []byte) error {
+	for _, state := range []DefaultState{DefaultStateNone, DefaultStateUnresolved, DefaultStateChosen, DefaultStateYielded} {
+		if state.String() == string(text) {
+			*s = state
+			return nil
+		}
+	}
+
+	return libErrorf("unknown default state %q", text)
 }
 
 // String returns a formatted string representation of the service explanation.
@@ -64,7 +127,7 @@ type ExplainServiceOutput struct {
 //
 // Returns a formatted string describing the service.
 //
-//nolint:goconst
+//nolint:goconst // the template keys repeat the field names they render; constants would hide that mapping
 func (sd *ExplainServiceOutput) String() string {
 	invoked := ""
 	if sd.Invoked != nil {
@@ -110,16 +173,25 @@ func (sd *ExplainServiceOutput) String() string {
 //   - ScopeName: The human-readable name of the scope containing the related service
 //   - Service: The name of the related service
 //   - Recursive: Nested dependency relationships (for transitive dependencies)
+//   - Source: How the edge was recorded: invoked by a provider, a DependsOn
+//     option, or DeclareDependency
+//   - Ref: true when the service was already expanded earlier in the same
+//     tree; the node then has no Recursive children. JSON omits it when
+//     false. Follow a reference with [ExplainNamedService] on Service.
 type ExplainServiceDependencyOutput struct {
 	ScopeID   string                           `json:"scope_id"`
 	ScopeName string                           `json:"scope_name"`
 	Service   string                           `json:"service"`
 	Recursive []ExplainServiceDependencyOutput `json:"recursive"`
+	Source    DependencySource                 `json:"source"`
+	Ref       bool                             `json:"ref,omitempty"`
 }
 
 // String returns a formatted string representation of the dependency relationship.
 // This method provides a human-readable description of the dependency, including
-// nested recursive dependencies with proper indentation.
+// nested recursive dependencies with proper indentation. A Ref node renders as
+// a single line ending with " (ref)". The text is plain: names are verbatim,
+// not HTML-escaped.
 //
 // Returns a formatted string describing the dependency relationship.
 func (sdd *ExplainServiceDependencyOutput) String() string {
@@ -139,12 +211,24 @@ func (sdd *ExplainServiceDependencyOutput) String() string {
 		recursive = "\n" + recursive
 	}
 
+	source := ""
+	if sdd.Source != DependencySourceInvoked {
+		source = " (" + sdd.Source.String() + ")"
+	}
+
+	ref := ""
+	if sdd.Ref {
+		ref = " (ref)"
+	}
+
 	return fromTemplate(
 		explainServiceDependencyTemplate,
 		map[string]string{
 			"ScopeID":   sdd.ScopeID,
 			"ScopeName": sdd.ScopeName,
 			"Service":   sdd.Service,
+			"Source":    source,
+			"Ref":       ref,
 			"Recursive": recursive,
 		},
 	)
@@ -162,8 +246,6 @@ func (sdd *ExplainServiceDependencyOutput) String() string {
 // The boolean is false if the service is not found.
 //
 // Note: Please call Invoke[T] before ExplainService[T] to ensure that the service is registered.
-//
-// Play: https://go.dev/play/p/Eii-vX9Rc-a
 //
 // Example:
 //
@@ -192,9 +274,22 @@ func ExplainService[T any](i Injector) (description ExplainServiceOutput, ok boo
 // Returns a service explanation and a boolean indicating if the service was found.
 // The boolean is false if the service is not found.
 //
-// Note: Please call Invoke[T] before ExplainNamedService[T] to ensure that the service is registered.
+// The service is looked up from scope and its ancestors, and its dependencies
+// are those recorded for it in the scope that registers it, whichever scope
+// explains it. Only dependencies that built successfully are recorded.
 //
-// Play: https://go.dev/play/p/GTcGyPFC8IB
+// Each of the Dependencies and Dependents trees expands a service once, at
+// its first occurrence (depth first, siblings ordered by scope name, then
+// service name). Every later occurrence, including one closing a cycle
+// through a [DeclareDependency] edge, is a node with Ref set to true and no
+// Recursive children: the output grows with the number of edges, not of
+// paths, and the same graph always renders the same way. To see what a
+// referenced service depends on, explain it by name.
+//
+// String renders plain text: names are written verbatim, never HTML-escaped.
+// Escaping for HTML is the caller's responsibility.
+//
+// Note: Please call Invoke[T] before ExplainNamedService[T] to ensure that the service is registered.
 //
 // Example:
 //
@@ -207,7 +302,7 @@ func ExplainService[T any](i Injector) (description ExplainServiceOutput, ok boo
 //		    fmt.Println(explanation.String())
 //		}
 func ExplainNamedService(scope Injector, name string) (description ExplainServiceOutput, ok bool) {
-	_i := getInjectorOrDefault(scope)
+	_i := mustInjector(scope)
 
 	serviceAny, serviceScope, ok := _i.serviceGetRec(name)
 	if !ok {
@@ -225,41 +320,74 @@ func ExplainNamedService(scope Injector, name string) (description ExplainServic
 		invoked = &frame
 	}
 
-	var buildTime time.Duration
-	if lazy, ok := serviceAny.(serviceWrapperBuildTime); ok {
-		buildTime, _ = lazy.getBuildTime()
-	}
+	buildTime, _ := buildStateOf(serviceAny)
 
-	return ExplainServiceOutput{
+	output := ExplainServiceOutput{
 		ScopeID:          serviceScope.ID(),
 		ScopeName:        serviceScope.Name(),
 		ServiceName:      name,
 		ServiceType:      service.getServiceType(),
 		ServiceBuildTime: buildTime,
 		Invoked:          invoked,
-		Dependencies:     newExplainServiceDependencies(_i, newServiceDescription(_i.ID(), _i.Name(), name), "dependencies"),
-		Dependents:       newExplainServiceDependencies(_i, newServiceDescription(_i.ID(), _i.Name(), name), "dependents"),
-	}, true
-}
-
-func newExplainServiceDependencies(i Injector, desc ServiceDescription, mode string) []ExplainServiceDependencyOutput {
-	dependencies, dependents := i.RootScope().dag.explainService(desc.ScopeID, desc.ScopeName, desc.Service)
-
-	deps := dependencies
-	if mode == "dependents" {
-		deps = dependents
+		Dependencies:     newExplainServiceDependencies(newExplainWalk(_i, "dependencies"), newServiceDescription(serviceScope.ID(), serviceScope.Name(), name)),
+		Dependents:       newExplainServiceDependencies(newExplainWalk(_i, "dependents"), newServiceDescription(serviceScope.ID(), serviceScope.Name(), name)),
+	}
+	if defaultService, ok := serviceAny.(serviceWrapperDefault); ok {
+		switch defaultService.currentState() {
+		case defaultUnresolved, defaultSuperseded:
+			output.DefaultState = DefaultStateUnresolved
+		case defaultChosen:
+			output.DefaultState = DefaultStateChosen
+		case defaultYielded:
+			output.DefaultState = DefaultStateYielded
+			targetScope, targetName := defaultService.yieldedTo()
+			output.DefaultYieldedToScopeName, output.DefaultYieldedToService = targetScope.Name(), targetName
+		}
 	}
 
-	// order by scope id then service name to have a deterministic output in unit tests
-	sort.Slice(deps, func(i, j int) bool {
-		if deps[i].ScopeID == deps[j].ScopeID {
-			return deps[i].Service < deps[j].Service
-		}
-		return deps[i].ScopeID < deps[j].ScopeID
+	return output, true
+}
+
+// explainWalk is the state of one tree of an explanation: its dependencies
+// or its dependents, and the services it already expanded.
+type explainWalk struct {
+	injector Injector
+	mode     string // "dependencies" or "dependents"
+	visited  map[ServiceDescription]struct{}
+}
+
+func newExplainWalk(i Injector, mode string) *explainWalk {
+	return &explainWalk{injector: i, mode: mode, visited: map[ServiceDescription]struct{}{}}
+}
+
+// newExplainServiceDependencies returns the dependencies (or dependents) of
+// desc, each with its own recursively. walk.visited holds the services
+// already expanded in this tree, desc included once called: a later
+// occurrence of one, including one closing a cycle, is a Ref node without its
+// own, so the tree grows with the number of edges, not of paths.
+func newExplainServiceDependencies(walk *explainWalk, desc ServiceDescription) []ExplainServiceDependencyOutput {
+	walk.visited[desc] = struct{}{}
+
+	edges := walk.injector.RootScope().dag.edgesOf(desc, walk.mode == "dependents")
+	deps := keys(edges)
+
+	// order by scope name, then service name (then scope ID, between scopes
+	// of the same name), so the output and the node that expands a repeated
+	// service are the same on every run
+	slices.SortFunc(deps, func(a, b ServiceDescription) int {
+		return cmp.Or(cmp.Compare(a.ScopeName, b.ScopeName), cmp.Compare(a.Service, b.Service), cmp.Compare(a.ScopeID, b.ScopeID))
 	})
 
 	return mAp(deps, func(item ServiceDescription, _ int) ExplainServiceDependencyOutput {
-		recursive := newExplainServiceDependencies(i, item, mode)
+		_, ref := walk.visited[item]
+		var recursive []ExplainServiceDependencyOutput
+		if ref {
+			recursive = []ExplainServiceDependencyOutput{}
+		} else {
+			recursive = newExplainServiceDependencies(walk, item)
+		}
+
+		source := edges[item]
 
 		// @TODO: differentiate status of lazy services (built, not built). Such as: "😴 (✅)"
 		return ExplainServiceDependencyOutput{
@@ -267,6 +395,8 @@ func newExplainServiceDependencies(i Injector, desc ServiceDescription, mode str
 			ScopeName: item.ScopeName,
 			Service:   item.Service,
 			Recursive: recursive,
+			Source:    source,
+			Ref:       ref,
 		}
 	})
 }
@@ -459,8 +589,6 @@ func (idss *ExplainInjectorServiceOutput) String() string {
 //	explanation := doger.ExplainInjector(injector)
 //	fmt.Println(explanation.String())
 //
-// Play: https://go.dev/play/p/mRs4Q7TJ5jj
-//
 // Output example:
 //
 //	Scope ID: root
@@ -474,7 +602,7 @@ func (idss *ExplainInjectorServiceOutput) String() string {
 //	 |   |   * 🏭 Logger
 //	 |   |   * 🔗 DatabaseInterface
 func ExplainInjector(scope Injector) ExplainInjectorOutput {
-	_i := getInjectorOrDefault(scope)
+	_i := mustInjector(scope)
 
 	ancestors := append([]Injector{_i}, castScopesToInjectors(_i.Ancestors())...)
 	reverseSlice(ancestors) // root scope first
@@ -488,7 +616,7 @@ func ExplainInjector(scope Injector) ExplainInjectorOutput {
 
 // 2 modes are available: looping on ancestors, focused-scope or children.
 func newExplainInjectorScopes(ancestors []Injector, children []Injector) []ExplainInjectorScopeOutput {
-	//nolint:goconst
+	//nolint:goconst // the three looping modes are local labels, compared right below
 	loopingOn := "children" // @TODO: create a real enum
 	injectors := children
 	if len(ancestors) > 0 {

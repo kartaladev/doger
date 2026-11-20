@@ -9,7 +9,9 @@ updates:
   # covers the whole workspace and touches every module. Keep the framework
   # dependencies out of that run: they live only in the http/* adapters and
   # examples/*, which get their own per-directory runs below. Otherwise each
-  # framework bump arrives twice (repo-wide and per module).
+  # framework bump arrives twice (repo-wide and per module). The scheduler
+  # and clock adapters get per-directory runs too, so every go.work module
+  # is covered (checked by scripts/check-workflows.sh).
   #
   # Dependabot never edits go.work. If an update raises a module's go
   # directive above the one in go.work, every go command in the workspace
@@ -28,6 +30,8 @@ updates:
   - package-ecosystem: gomod
     directories:
       - /http/**
+      - /scheduler/**
+      - /clock/**
       - /examples/**
     schedule:
       interval: weekly

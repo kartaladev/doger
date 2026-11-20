@@ -1,0 +1,2588 @@
+package doger
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"reflect"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// startCounter counts Start and Shutdown calls on one instance.
+type startCounter struct {
+	starts    atomic.Int32
+	shutdowns atomic.Int32
+}
+
+func (c *startCounter) Shutdown() error {
+	c.shutdowns.Add(1)
+	return nil
+}
+
+// One fixture per Starter variant, plus one without Start.
+type (
+	startPlain      struct{ startCounter }
+	startWithErr    struct{ startCounter }
+	startWithCtx    struct{ startCounter }
+	startWithCtxErr struct{ startCounter }
+	startNone       struct{ startCounter }
+
+	// startLifecycle is an interface without Start.
+	startLifecycle interface{ Shutdown() error }
+	// startStartable is an interface with Start.
+	startStartable interface{ Start() error }
+)
+
+func (s *startPlain) Start()                           { s.starts.Add(1) }
+func (s *startWithErr) Start() error                   { s.starts.Add(1); return nil }
+func (s *startWithCtx) Start(context.Context)          { s.starts.Add(1) }
+func (s *startWithCtxErr) Start(context.Context) error { s.starts.Add(1); return nil }
+func (s *startPlain) counter() *startCounter           { return &s.startCounter }
+func (s *startWithErr) counter() *startCounter         { return &s.startCounter }
+func (s *startWithCtx) counter() *startCounter         { return &s.startCounter }
+func (s *startWithCtxErr) counter() *startCounter      { return &s.startCounter }
+func (s *startNone) counter() *startCounter            { return &s.startCounter }
+
+// provideCounted registers lazy name of type T and returns the instance it builds.
+func provideCounted[T any](scope Injector, name string, instance T, opts ...ProvideOption) T {
+	ProvideNamed(scope, name, func(Injector) (T, error) { return instance, nil }, opts...)
+	return instance
+}
+
+// recordingStarter records its name in rec when started.
+type recordingStarter struct {
+	name string
+	rec  *callRecorder
+}
+
+func (s *recordingStarter) Start() error {
+	s.rec.record(s.name)
+	return nil
+}
+
+// provideRecordingStarter registers lazy Starter name in scope, opted in
+// with AsStarter.
+func provideRecordingStarter(scope Injector, rec *callRecorder, name string, opts ...ProvideOption) {
+	ProvideNamed(scope, name, func(Injector) (*recordingStarter, error) {
+		return &recordingStarter{name: name, rec: rec}, nil
+	}, append([]ProvideOption{AsStarter()}, opts...)...)
+}
+
+func TestStart_Variants(t *testing.T) {
+	t.Parallel()
+
+	// register registers the fixture under name with opts and returns its
+	// counter.
+	type register func(root *RootScope, opts ...ProvideOption) *startCounter
+	variants := []struct {
+		name     string
+		register register
+	}{
+		{name: "start", register: func(root *RootScope, opts ...ProvideOption) *startCounter {
+			return provideCounted(root, "s1", &startPlain{}, opts...).counter()
+		}},
+		{name: "start_error", register: func(root *RootScope, opts ...ProvideOption) *startCounter {
+			return provideCounted(root, "s2", &startWithErr{}, opts...).counter()
+		}},
+		{name: "start_context", register: func(root *RootScope, opts ...ProvideOption) *startCounter {
+			return provideCounted(root, "s3", &startWithCtx{}, opts...).counter()
+		}},
+		{name: "start_context_error", register: func(root *RootScope, opts ...ProvideOption) *startCounter {
+			return provideCounted(root, "s4", &startWithCtxErr{}, opts...).counter()
+		}},
+	}
+
+	for _, auto := range []bool{false, true} {
+		for _, variant := range variants {
+			t.Run(fmt.Sprintf("auto=%t/%s", auto, variant.name), func(t *testing.T) {
+				t.Parallel()
+				testWithTimeout(t, time.Second)
+
+				root := NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: auto})
+				var opts []ProvideOption
+				if !auto {
+					opts = append(opts, AsStarter())
+				}
+				counter := variant.register(root, opts...)
+
+				assert.NoError(t, root.StartWithContext(t.Context()))
+				assert.Equal(t, int32(1), counter.starts.Load())
+			})
+		}
+	}
+}
+
+func TestStart_Detection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		auto      bool
+		register  func(t *testing.T, root *RootScope) *startCounter
+		starts    int32
+		shutdowns int32
+	}{
+		{
+			name: "auto_off/lazy_type_has_start_ctx_error",
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				return provideCounted(root, "srv", &startWithCtxErr{}).counter()
+			},
+			starts: 0, shutdowns: 0,
+		},
+		{
+			name: "auto_off/lazy_type_has_start_ctx_error_as_starter",
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				return provideCounted(root, "srv", &startWithCtxErr{}, AsStarter()).counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_off/interface_without_start_as_starter",
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				instance := &startPlain{}
+				provideCounted[startLifecycle](root, "life", instance, AsStarter())
+				return instance.counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_off/lazy_as_starter_with_alias",
+			register: func(t *testing.T, root *RootScope) *startCounter {
+				instance := &startWithErr{}
+				Provide(root, func(Injector) (*startWithErr, error) { return instance, nil }, AsStarter())
+				require.NoError(t, Alias[*startWithErr, startStartable](root))
+				return instance.counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_on/lazy_type_has_start_ctx_error",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				return provideCounted(root, "srv", &startWithCtxErr{}).counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_on/eager_value_type_has_start_error",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				instance := &startWithErr{}
+				ProvideNamedValue(root, "srv", instance)
+				return instance.counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_on/interface_without_start",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				instance := &startPlain{}
+				provideCounted[startLifecycle](root, "life", instance)
+				return instance.counter()
+			},
+			starts: 0, shutdowns: 0,
+		},
+		{
+			name: "auto_on/interface_without_start_as_starter",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				instance := &startPlain{}
+				provideCounted[startLifecycle](root, "life", instance, AsStarter())
+				return instance.counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_on/interface_without_start_invoked_before_start",
+			auto: true,
+			register: func(t *testing.T, root *RootScope) *startCounter {
+				instance := &startPlain{}
+				provideCounted[startLifecycle](root, "life", instance)
+				_, err := InvokeNamed[startLifecycle](root, "life")
+				require.NoError(t, err)
+				return instance.counter()
+			},
+			starts: 0, shutdowns: 1,
+		},
+		{
+			name: "auto_on/lazy_with_alias",
+			auto: true,
+			register: func(t *testing.T, root *RootScope) *startCounter {
+				instance := &startWithErr{}
+				Provide(root, func(Injector) (*startWithErr, error) { return instance, nil })
+				require.NoError(t, Alias[*startWithErr, startStartable](root))
+				return instance.counter()
+			},
+			starts: 1, shutdowns: 1,
+		},
+		{
+			name: "auto_on/lazy_without_start",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				return provideCounted(root, "cfg", &startNone{}).counter()
+			},
+			starts: 0, shutdowns: 0,
+		},
+		{
+			name: "auto_on/transient_with_start",
+			auto: true,
+			register: func(_ *testing.T, root *RootScope) *startCounter {
+				instance := &startWithErr{}
+				ProvideNamedTransient(root, "srv", func(Injector) (*startWithErr, error) { return instance, nil })
+				return instance.counter()
+			},
+			starts: 0, shutdowns: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			root := NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: tt.auto})
+			counter := tt.register(t, root)
+
+			is.NoError(root.Start())
+			is.True(root.Shutdown().Succeed)
+
+			is.Equal(tt.starts, counter.starts.Load(), "starts")
+			is.Equal(tt.shutdowns, counter.shutdowns.Load(), "shutdowns")
+		})
+	}
+}
+
+func TestStart_AutoDetectionOptIn(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		root      func() *RootScope
+		container func(root *RootScope) *RootScope
+		started   []string
+	}{
+		{name: "New", root: func() *RootScope { return New() }, started: []string{"b"}},
+		{name: "zero InjectorOpts", root: func() *RootScope { return NewWithOpts(&InjectorOpts{}) }, started: []string{"b"}},
+		{name: "nil InjectorOpts", root: func() *RootScope { return NewWithOpts(nil) }, started: []string{"b"}},
+		{
+			name:    "enabled",
+			root:    func() *RootScope { return NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: true}) },
+			started: []string{"a", "b", "c"},
+		},
+		{
+			name:      "enabled, clone",
+			root:      func() *RootScope { return NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: true}) },
+			container: (*RootScope).Clone,
+			started:   []string{"a", "b", "c"},
+		},
+		{name: "New, clone", root: func() *RootScope { return New() }, container: (*RootScope).Clone, started: []string{"b"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+
+			root := tt.root()
+			rec := &callRecorder{}
+			ProvideNamed(root, "a", func(Injector) (*recordingStarter, error) { return &recordingStarter{name: "a", rec: rec}, nil })
+			provideRecordingStarter(root, rec, "b")
+			ProvideNamed(root, "c", func(Injector) (*recordingCtxStarter, error) {
+				return &recordingCtxStarter{name: "c", rec: rec}, nil
+			})
+			container := root
+			if tt.container != nil {
+				container = tt.container(root)
+			}
+
+			require.NoError(t, container.Start())
+			assert.ElementsMatch(t, tt.started, rec.list())
+		})
+	}
+}
+
+// recordingCtxStarter records its name in rec when started with a context.
+type recordingCtxStarter struct {
+	name string
+	rec  *callRecorder
+}
+
+func (s *recordingCtxStarter) Start(context.Context) error {
+	s.rec.record(s.name)
+	return nil
+}
+
+// startCron is a type with a familiar Start() that starts a goroutine.
+type startCron struct {
+	starts atomic.Int32
+	stop   chan struct{}
+	done   chan struct{}
+}
+
+func (c *startCron) Start() {
+	c.starts.Add(1)
+	go func() {
+		defer close(c.done)
+		<-c.stop
+	}()
+}
+
+func TestStart_FamiliarStartNotStarted(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		register func(t *testing.T, root *RootScope) (started func() bool)
+	}{
+		{
+			name: "*exec.Cmd",
+			register: func(t *testing.T, root *RootScope) func() bool {
+				t.Helper()
+				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^$") //nolint:gosec // G204: re-runs this test binary with a fixed flag
+				ProvideNamedValue(root, "cmd", cmd)
+				return func() bool { return cmd.Process != nil }
+			},
+		},
+		{
+			name: "*httptest.Server",
+			register: func(t *testing.T, root *RootScope) func() bool {
+				t.Helper()
+				srv := httptest.NewUnstartedServer(http.NotFoundHandler())
+				t.Cleanup(srv.Close)
+				ProvideNamed(root, "srv", func(Injector) (*httptest.Server, error) { return srv, nil })
+				return func() bool { return srv.URL != "" }
+			},
+		},
+		{
+			name: "*app.Cron",
+			register: func(t *testing.T, root *RootScope) func() bool {
+				t.Helper()
+				cron := &startCron{stop: make(chan struct{}), done: make(chan struct{})}
+				t.Cleanup(func() {
+					if cron.starts.Load() > 0 {
+						close(cron.stop)
+						<-cron.done
+					}
+				})
+				ProvideNamed(root, "job", func(Injector) (*startCron, error) { return cron, nil })
+				return func() bool { return cron.starts.Load() > 0 }
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+
+			root := New()
+			started := tt.register(t, root)
+			for _, name := range root.ListProvidedServices() {
+				_, err := InvokeNamed[any](root, name.Service)
+				require.NoError(t, err)
+			}
+
+			require.NoError(t, root.Start())
+			root.Shutdown()
+
+			assert.False(t, started(), "the familiar Start method was not called")
+		})
+	}
+}
+
+func TestStart_Empty(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	assert.NoError(t, New().Start())
+}
+
+func TestStart_OneShot(t *testing.T) {
+	t.Parallel()
+	errBuild := errors.New("build failed")
+
+	tests := []struct {
+		name      string
+		failBuild bool
+		previous  func(root *RootScope)
+		result    error
+		calls     int32
+	}{
+		{name: "called_nothing", previous: func(*RootScope) {}, calls: 1},
+		{name: "called_start", previous: func(root *RootScope) { _ = root.Start() }, result: ErrAlreadyStarted, calls: 1},
+		{name: "called_failed_start", failBuild: true, previous: func(root *RootScope) { _ = root.Start() }, result: ErrAlreadyStarted, calls: 0},
+		{name: "called_shutdown", previous: func(root *RootScope) { root.Shutdown() }, result: ErrShutdown, calls: 0},
+		{
+			name: "called_start_then_shutdown",
+			previous: func(root *RootScope) {
+				_ = root.Start()
+				root.Shutdown()
+			},
+			result: ErrShutdown, calls: 1,
+		},
+		{
+			name:      "called_failed_start_then_shutdown",
+			failBuild: true,
+			previous: func(root *RootScope) {
+				_ = root.Start()
+				root.Shutdown()
+			},
+			result: ErrShutdown, calls: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			root := New()
+			instance := &startWithErr{}
+			ProvideNamed(root, "a", func(Injector) (*startWithErr, error) {
+				if tt.failBuild {
+					return nil, errBuild
+				}
+				return instance, nil
+			}, AsStarter())
+
+			tt.previous(root)
+			err := root.Start()
+
+			if tt.result == nil {
+				is.NoError(err)
+			} else {
+				is.ErrorIs(err, tt.result)
+			}
+			if errors.Is(tt.result, ErrShutdown) {
+				is.NotErrorIs(err, ErrAlreadyStarted, "Shutdown takes precedence")
+			}
+			is.Equal(tt.calls, instance.starts.Load())
+		})
+	}
+}
+
+// instanceCounter counts Start calls per instance.
+type instanceCounter struct {
+	mu     sync.Mutex
+	starts map[*cloneStarter]int
+}
+
+type cloneStarter struct {
+	counter *instanceCounter
+}
+
+func (s *cloneStarter) Start() error {
+	s.counter.mu.Lock()
+	defer s.counter.mu.Unlock()
+	s.counter.starts[s]++
+	return nil
+}
+
+func TestStart_Clone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		register func(root *RootScope, counter *instanceCounter)
+		calls    []int // start calls per distinct instance, sorted
+	}{
+		{
+			name: "lazy",
+			register: func(root *RootScope, counter *instanceCounter) {
+				ProvideNamed(root, "a", func(Injector) (*cloneStarter, error) { return &cloneStarter{counter: counter}, nil }, AsStarter())
+			},
+			calls: []int{1, 1},
+		},
+		{
+			name: "eager_value",
+			register: func(root *RootScope, counter *instanceCounter) {
+				ProvideNamedValue(root, "a", &cloneStarter{counter: counter}, AsStarter())
+			},
+			calls: []int{2},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			root := New()
+			counter := &instanceCounter{starts: map[*cloneStarter]int{}}
+			tt.register(root, counter)
+
+			require.NoError(t, root.Start())
+			is.NoError(root.Clone().Start())
+
+			counter.mu.Lock()
+			defer counter.mu.Unlock()
+			calls := make([]int, 0, len(counter.starts))
+			for _, n := range counter.starts {
+				calls = append(calls, n)
+			}
+			slices.Sort(calls)
+			is.Equal(tt.calls, calls)
+		})
+	}
+}
+
+func TestStart_LateRegistrationNotStarted(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+
+	root := New()
+	require.NoError(t, root.Start())
+
+	instance := provideCounted(root, "late", &startWithErr{}, AsStarter())
+	_, err := InvokeNamed[*startWithErr](root, "late")
+
+	is.NoError(err)
+	is.Equal(int32(0), instance.starts.Load())
+}
+
+func TestStart_LateScopeNotStarted(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+
+	root := New()
+	require.NoError(t, root.Start())
+	tenant := root.Scope("tenant")
+	instance := provideCounted(tenant, "worker", &startWithErr{}, AsStarter())
+	_, err := InvokeNamed[*startWithErr](tenant, "worker")
+	require.NoError(t, err)
+
+	is.Equal(int32(0), instance.starts.Load(), "a scope created after Start is not started by it")
+
+	is.NoError(root.Refresh())
+	is.Equal(int32(1), instance.starts.Load())
+}
+
+func TestStart_DependencyOrder(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+
+	root := New()
+	events := &callRecorder{}
+	starter := func(name string, deps ...string) {
+		ProvideNamed(root, name, func(i Injector) (*recordingStarter, error) {
+			for _, dep := range deps {
+				if _, err := invokeAnyByName(i, dep); err != nil {
+					return nil, err
+				}
+			}
+			events.record("build " + name)
+			return &recordingStarter{name: "start " + name, rec: events}, nil
+		}, AsStarter())
+	}
+	starter("http", "db")
+	starter("db")
+	ProvideNamed(root, "repo", func(i Injector) (*depValue, error) {
+		_, err := InvokeNamed[*recordingStarter](i, "db")
+		events.record("build repo")
+		return &depValue{name: "repo"}, err
+	})
+	starter("consumer", "repo")
+
+	require.NoError(t, root.Start())
+
+	recorded := events.list()
+	firstStart := slices.IndexFunc(recorded, func(e string) bool { return len(e) > 6 && e[:6] == "start " })
+	require.GreaterOrEqual(t, firstStart, 0)
+	for _, e := range recorded[firstStart:] {
+		is.NotContains(e, "build", "every provider call happens before the first start call")
+	}
+	is.Contains(recorded, "build repo")
+	is.Equal([]string{"start db", "start http", "start consumer"}, recorded[firstStart:])
+	started, _ := tracked(root, wrapperOf(t, root.self, "repo"))
+	is.False(started, "repo is built but, not being a Starter, not started")
+}
+
+func TestStartError_StarterPanic(t *testing.T) {
+	t.Parallel()
+
+	errBoom := errors.New("boom")
+
+	tests := []struct {
+		name        string
+		parallelism uint
+	}{
+		{name: "sequential", parallelism: 0},
+		{name: "StartParallelism 2", parallelism: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			root := NewWithOpts(&InjectorOpts{StartParallelism: tt.parallelism})
+			provideLazy(root, "a", &ctxStarter{fn: func(context.Context) error { panic(errBoom) }})
+			provideLazy(root, "b", &errorStarter{})
+
+			err := root.Start()
+
+			var startErr *StartError
+			require.ErrorAs(t, err, &startErr)
+			is.Equal(StartOpStart, startErr.Op)
+			is.Equal("a", startErr.Service)
+			is.ErrorIs(err, errBoom)
+		})
+	}
+}
+
+func TestStart_ScopeTraversal(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	root := New()
+	rec := &callRecorder{}
+	tenant := root.Scope("tenant-a")
+	jobs := tenant.Scope("jobs")
+
+	provideRecordingStarter(jobs, rec, "cron")
+	ProvideNamed(tenant, "worker", func(i Injector) (*recordingStarter, error) {
+		_, err := InvokeNamed[*recordingStarter](i, "db")
+		return &recordingStarter{name: "worker", rec: rec}, err
+	}, AsStarter())
+	provideRecordingStarter(root, rec, "db")
+
+	require.NoError(t, root.Start())
+	assert.Equal(t, []string{"db", "worker", "cron"}, rec.list())
+}
+
+// tieBreakOrder registers "z" in "request", then "b" and "a" in root, starts
+// the container and returns the start order.
+func tieBreakOrder(t *testing.T) []string {
+	t.Helper()
+
+	root := New()
+	rec := &callRecorder{}
+	request := root.Scope("request")
+	provideRecordingStarter(request, rec, "z")
+	provideRecordingStarter(root, rec, "b")
+	provideRecordingStarter(root, rec, "a")
+
+	require.NoError(t, root.Start())
+
+	return rec.list()
+}
+
+func TestStart_TieBreak(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	assert.Equal(t, []string{"b", "a", "z"}, tieBreakOrder(t))
+}
+
+func TestStart_TieBreak_Stable(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	for n := range 100 {
+		assert.Equalf(t, []string{"b", "a", "z"}, tieBreakOrder(t), "run %d", n)
+	}
+}
+
+func TestStart_RegistrationOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		operation func(root *RootScope, request *Scope, rec *callRecorder) *RootScope
+		order     []string
+	}{
+		{
+			name:      "nothing_else",
+			operation: func(root *RootScope, _ *Scope, _ *callRecorder) *RootScope { return root },
+			order:     []string{"a", "c", "b"},
+		},
+		{
+			name: "override_in_root",
+			operation: func(root *RootScope, _ *Scope, rec *callRecorder) *RootScope {
+				OverrideNamed(root, "a", func(Injector) (*recordingStarter, error) {
+					return &recordingStarter{name: "a", rec: rec}, nil
+				}, AsStarter())
+				return root
+			},
+			order: []string{"a", "c", "b"},
+		},
+		{
+			name: "override_in_request",
+			operation: func(root *RootScope, request *Scope, rec *callRecorder) *RootScope {
+				OverrideNamed(request, "a", func(Injector) (*recordingStarter, error) {
+					return &recordingStarter{name: "request/a", rec: rec}, nil
+				}, AsStarter())
+				return root
+			},
+			order: []string{"a", "c", "b", "request/a"},
+		},
+		{
+			name: "clone_then_register",
+			operation: func(root *RootScope, _ *Scope, rec *callRecorder) *RootScope {
+				clone := root.Clone()
+				provideRecordingStarter(clone, rec, "d")
+				return clone
+			},
+			order: []string{"a", "c", "d", "b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+
+			root := New()
+			rec := &callRecorder{}
+			request := root.Scope("request")
+			provideRecordingStarter(root, rec, "a")
+			provideRecordingStarter(request, rec, "b")
+			provideRecordingStarter(root, rec, "c")
+
+			container := tt.operation(root, request, rec)
+
+			require.NoError(t, container.Start())
+			assert.Equal(t, tt.order, rec.list())
+		})
+	}
+}
+
+func TestStart_RejectsDeclaredCycle(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+
+	root := New()
+	rec := &callRecorder{}
+	provideRecordingStarter(root, rec, "scheduler")
+	ProvideNamed(root, "job", func(i Injector) (*recordingStarter, error) {
+		_, err := InvokeNamed[*recordingStarter](i, "scheduler")
+		return &recordingStarter{name: "job", rec: rec}, err
+	}, AsStarter())
+	require.NoError(t, DeclareDependency(root, "scheduler", "job"))
+
+	err := root.Start()
+
+	is.ErrorIs(err, ErrCircularDependency)
+	is.ErrorContains(err, "`scheduler`")
+	is.ErrorContains(err, "`job`")
+	is.Empty(rec.list())
+}
+
+// scriptedStarter records its start in rec, then panics with panicValue (if
+// set) or returns err.
+type scriptedStarter struct {
+	name       string
+	rec        *callRecorder
+	err        error
+	panicValue any
+}
+
+func (s *scriptedStarter) Start(context.Context) error {
+	if s.panicValue != nil {
+		panic(s.panicValue)
+	}
+	if s.err != nil {
+		return s.err
+	}
+	s.rec.record(s.name)
+	return nil
+}
+
+func (s *scriptedStarter) Shutdown() error {
+	s.rec.record("shutdown " + s.name)
+	return nil
+}
+
+// errorStarter has Start() error.
+type errorStarter struct{ err error }
+
+func (s *errorStarter) Start() error { return s.err }
+
+func TestStart_StarterFailure(t *testing.T) {
+	t.Parallel()
+	errBoom := errors.New("boom")
+
+	tests := []struct {
+		name    string
+		provide func(root *RootScope)
+		check   func(t *testing.T, err error)
+	}{
+		{
+			name: "start_returns_error",
+			provide: func(root *RootScope) {
+				ProvideNamed(root, "b", func(Injector) (*errorStarter, error) { return &errorStarter{err: errBoom}, nil }, AsStarter())
+			},
+			check: func(t *testing.T, err error) { assert.ErrorIs(t, err, errBoom) },
+		},
+		{
+			name: "start_panics_with_string",
+			provide: func(root *RootScope) {
+				ProvideNamed(root, "b", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{panicValue: "kaboom"}, nil }, AsStarter())
+			},
+			check: func(t *testing.T, err error) { assert.ErrorContains(t, err, "kaboom") },
+		},
+		{
+			name: "start_panics_with_error",
+			provide: func(root *RootScope) {
+				ProvideNamed(root, "b", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{panicValue: errBoom}, nil }, AsStarter())
+			},
+			check: func(t *testing.T, err error) { assert.ErrorIs(t, err, errBoom) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			root := New()
+			rec := &callRecorder{}
+			builds := &callRecorder{}
+			ProvideNamed(root, "a", func(Injector) (*scriptedStarter, error) {
+				builds.record("a")
+				return &scriptedStarter{name: "a", rec: rec}, nil
+			}, AsStarter())
+			tt.provide(root)
+			ProvideNamed(root, "c", func(Injector) (*scriptedStarter, error) {
+				builds.record("c")
+				return &scriptedStarter{name: "c", rec: rec}, nil
+			}, AsStarter())
+
+			err := root.Start()
+
+			is.ErrorContains(err, "service `b`")
+			tt.check(t, err)
+			is.Equal([]string{"a"}, rec.list())
+			is.Equal([]string{"a", "c"}, builds.list())
+		})
+	}
+}
+
+func TestStart_BuildFailure(t *testing.T) {
+	t.Parallel()
+	errBuild := errors.New("build failed")
+
+	tests := []struct {
+		name  string
+		opts  []ProvideOption
+		fail  bool
+		cause error
+	}{
+		{name: "provider_error", fail: true, cause: errBuild},
+		{name: "missing_declared_dependency", opts: []ProvideOption{DependsOnNamed("missing")}, cause: ErrServiceNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			root := New()
+			rec := &callRecorder{}
+			builds := &callRecorder{}
+			for _, name := range []string{"a", "b", "c"} {
+				opts := []ProvideOption{AsStarter()}
+				if name == "b" {
+					opts = append(opts, tt.opts...)
+				}
+				ProvideNamed(root, name, func(Injector) (*scriptedStarter, error) {
+					if name == "b" && tt.fail {
+						return nil, errBuild
+					}
+					builds.record(name)
+					return &scriptedStarter{name: name, rec: rec}, nil
+				}, opts...)
+			}
+
+			err := root.Start()
+
+			is.ErrorContains(err, "service `b`")
+			is.ErrorIs(err, tt.cause)
+			is.Equal([]string{"a"}, builds.list())
+			is.Empty(rec.list())
+		})
+	}
+}
+
+func TestStart_AsStarterInstanceWithoutStart(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	root := New()
+	ProvideNamed(root, "app.Lifecycle", func(Injector) (startLifecycle, error) { return &startNone{}, nil }, AsStarter())
+
+	err := root.Start()
+
+	assert.EqualError(t, err, "doger: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
+}
+
+func TestStart_ShutdownAfterFailure(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+	errBoom := errors.New("boom")
+
+	root := New()
+	rec := &callRecorder{}
+	ProvideNamed(root, "a", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{name: "a", rec: rec}, nil }, AsStarter())
+	ProvideNamed(root, "b", func(Injector) (*scriptedStarter, error) {
+		return &scriptedStarter{name: "b", rec: rec, err: errBoom}, nil
+	}, AsStarter())
+	ProvideNamed(root, "c", func(Injector) (*scriptedStarter, error) { return &scriptedStarter{name: "c", rec: rec}, nil }, AsStarter())
+
+	require.ErrorIs(t, root.Start(), errBoom)
+	root.Shutdown()
+
+	is.ElementsMatch([]string{"a", "shutdown a", "shutdown b", "shutdown c"}, rec.list())
+}
+
+// ctxStarter runs fn with the context its Start(ctx) error receives.
+type ctxStarter struct {
+	fn func(ctx context.Context) error
+}
+
+func (s *ctxStarter) Start(ctx context.Context) error { return s.fn(ctx) }
+
+func TestStart_Context(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		ctx   func(ctx context.Context) (context.Context, context.CancelFunc)
+		a     func(ctx context.Context, cancel context.CancelFunc) error
+		cause error
+	}{
+		{
+			name: "already_cancelled",
+			ctx: func(ctx context.Context) (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(ctx)
+				cancel()
+				return ctx, cancel
+			},
+			a:     func(context.Context, context.CancelFunc) error { return nil },
+			cause: context.Canceled,
+		},
+		{
+			name: "deadline_while_a_blocks",
+			ctx: func(ctx context.Context) (context.Context, context.CancelFunc) {
+				return context.WithTimeout(ctx, 5*time.Second)
+			},
+			a: func(ctx context.Context, _ context.CancelFunc) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			cause: context.DeadlineExceeded,
+		},
+		{
+			name: "cancelled_while_a_runs",
+			ctx:  context.WithCancel,
+			a: func(_ context.Context, cancel context.CancelFunc) error {
+				cancel()
+				return nil
+			},
+			cause: context.Canceled,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := New()
+				rec := &callRecorder{}
+				ctx, cancel := tt.ctx(t.Context())
+				defer cancel()
+
+				ProvideNamed(root, "a", func(Injector) (*ctxStarter, error) {
+					return &ctxStarter{fn: func(ctx context.Context) error { return tt.a(ctx, cancel) }}, nil
+				}, AsStarter())
+				provideRecordingStarter(root, rec, "b")
+
+				err := root.StartWithContext(ctx)
+
+				assert.ErrorIs(t, err, tt.cause)
+				assert.Empty(t, rec.list(), "b was not started")
+			})
+		})
+	}
+}
+
+func TestStart_NilContext(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	root := New()
+	var received context.Context
+	ProvideNamed(root, "a", func(Injector) (*ctxStarter, error) {
+		return &ctxStarter{fn: func(ctx context.Context) error {
+			received = ctx
+			return nil
+		}}, nil
+	}, AsStarter())
+
+	var err error
+	assert.NotPanics(t, func() {
+		err = root.StartWithContext(nil) //nolint:staticcheck // nil context is the case under test
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, received)
+}
+
+func TestStart_ContextEndsWithStart(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	root := New()
+	var kept context.Context
+	ProvideNamed(root, "a", func(Injector) (*ctxStarter, error) {
+		return &ctxStarter{fn: func(ctx context.Context) error {
+			kept = ctx
+			return nil
+		}}, nil
+	}, AsStarter())
+
+	require.NoError(t, root.Start())
+	require.NotNil(t, kept)
+	assert.ErrorIs(t, kept.Err(), context.Canceled)
+}
+
+// blockingStarter signals entered when Start begins, then runs behavior.
+type blockingStarter struct {
+	entered   chan struct{}
+	behavior  func(ctx context.Context) error
+	shutdowns atomic.Int32
+}
+
+func (s *blockingStarter) Start(ctx context.Context) error {
+	close(s.entered)
+	return s.behavior(ctx)
+}
+
+func (s *blockingStarter) Shutdown() error {
+	s.shutdowns.Add(1)
+	return nil
+}
+
+// blockingRunner signals entered when Run begins, then runs behavior.
+type blockingRunner struct {
+	entered   chan struct{}
+	behavior  func(ctx context.Context) error
+	shutdowns atomic.Int32
+}
+
+func (r *blockingRunner) Run(ctx context.Context) error {
+	close(r.entered)
+	return r.behavior(ctx)
+}
+
+func (r *blockingRunner) Shutdown() error {
+	r.shutdowns.Add(1)
+	return nil
+}
+
+// countingRunner counts its Run calls.
+type countingRunner struct {
+	runs atomic.Int32
+}
+
+func (r *countingRunner) Run(context.Context) error {
+	r.runs.Add(1)
+	return nil
+}
+
+func TestStart_ShutdownCancels(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// behavior of a's Start; release is closed by the test as the row says
+		behavior func(release <-chan struct{}) func(ctx context.Context) error
+		// releaseWhileShutdownBlocked releases "a" once Shutdown is blocked
+		releaseWhileShutdownBlocked bool
+		shutdownTimeout             time.Duration // 0: context.Background()
+		wantSucceed                 bool
+		wantAShutdowns              int32
+		runner                      bool // "a" and "z" are lazy Runners instead of Starters
+	}{
+		{
+			name: "runner_honours_ctx",
+			behavior: func(<-chan struct{}) func(ctx context.Context) error {
+				return func(ctx context.Context) error {
+					<-ctx.Done()
+					return ctx.Err()
+				}
+			},
+			runner:      true,
+			wantSucceed: true, wantAShutdowns: 1,
+		},
+		{
+			name: "starter_honours_ctx",
+			behavior: func(<-chan struct{}) func(ctx context.Context) error {
+				return func(ctx context.Context) error {
+					<-ctx.Done()
+					return ctx.Err()
+				}
+			},
+			wantSucceed: true, wantAShutdowns: 1,
+		},
+		{
+			name: "starter_ignores_ctx_released_while_shutdown_waits",
+			behavior: func(release <-chan struct{}) func(ctx context.Context) error {
+				return func(context.Context) error {
+					<-release
+					return nil
+				}
+			},
+			releaseWhileShutdownBlocked: true,
+			wantSucceed:                 true, wantAShutdowns: 1,
+		},
+		{
+			name: "starter_ignores_ctx_shutdown_deadline",
+			behavior: func(release <-chan struct{}) func(ctx context.Context) error {
+				return func(context.Context) error {
+					<-release
+					return nil
+				}
+			},
+			shutdownTimeout: time.Second,
+			wantSucceed:     false, wantAShutdowns: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				root := New()
+				release := make(chan struct{})
+				entered := make(chan struct{})
+				var aShutdowns, zCalls func() int32
+				if tt.runner {
+					a := &blockingRunner{entered: entered, behavior: tt.behavior(release)}
+					ProvideNamed(root, "a", func(Injector) (*blockingRunner, error) { return a, nil }, AsRunnable())
+					z := &countingRunner{}
+					ProvideNamed(root, "z", func(Injector) (*countingRunner, error) { return z, nil }, AsRunnable())
+					aShutdowns, zCalls = a.shutdowns.Load, z.runs.Load
+				} else {
+					a := &blockingStarter{entered: entered, behavior: tt.behavior(release)}
+					ProvideNamed(root, "a", func(Injector) (*blockingStarter, error) { return a, nil }, AsStarter())
+					z := provideCounted(root, "z", &startWithCtxErr{}, AsStarter())
+					aShutdowns, zCalls = a.shutdowns.Load, z.starts.Load
+				}
+
+				started := make(chan error, 1)
+				go func() { started <- root.Start() }()
+				<-entered
+
+				helperDone := make(chan struct{})
+				if tt.releaseWhileShutdownBlocked {
+					go func() {
+						defer close(helperDone)
+						synctest.Wait() // Shutdown is blocked waiting for Start
+						close(release)
+					}()
+				} else {
+					close(helperDone)
+				}
+
+				ctx := context.Background()
+				if tt.shutdownTimeout > 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, tt.shutdownTimeout)
+					defer cancel()
+				}
+
+				begin := time.Now()
+				report := root.ShutdownWithContext(ctx)
+				elapsed := time.Since(begin)
+
+				if tt.shutdownTimeout > 0 {
+					is.Equal(tt.shutdownTimeout, elapsed, "returns at the deadline")
+					select {
+					case <-started:
+						is.Fail("Start returned before Shutdown stopped waiting")
+					default:
+					}
+					is.False(report.Succeed)
+					is.Contains(report.Errors, rootServiceDescription(root))
+					for desc, err := range report.Errors {
+						is.ErrorIsf(err, context.DeadlineExceeded, "error of %v", desc)
+					}
+					close(release)
+				} else {
+					<-helperDone // only one goroutine may call synctest.Wait at a time
+					synctest.Wait()
+					is.Len(started, 1, "Start returned before Shutdown")
+					is.True(report.Succeed)
+				}
+
+				is.ErrorIs(<-started, ErrShutdown)
+				is.Equal(tt.wantAShutdowns, aShutdowns())
+				is.Equal(int32(0), zCalls())
+			})
+		})
+	}
+}
+
+func TestStart_PanicReleasesShutdown(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+
+	root := NewWithOpts(&InjectorOpts{
+		HookBeforeInvocation: []func(*Scope, string){
+			func(*Scope, string) { panic("hook-boom") },
+		},
+	})
+	provideCounted(root, "a", &startWithErr{}, AsStarter())
+
+	is.PanicsWithValue("hook-boom", func() { _ = root.Start() })
+
+	is.True(root.Shutdown().Succeed)
+	is.ErrorIs(root.Start(), ErrShutdown)
+}
+
+func TestStart_Concurrent(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	root := New()
+	instance := provideCounted(root, "a", &startWithErr{}, AsStarter())
+
+	const callers = 10
+	errs := make([]error, callers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for n := range callers {
+		wg.Go(func() {
+			<-start
+			errs[n] = root.Start()
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	succeeded, already := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrAlreadyStarted):
+			already++
+		}
+	}
+	is.Equal(1, succeeded)
+	is.Equal(callers-1, already)
+	is.Equal(int32(1), instance.starts.Load())
+}
+
+func TestStart_ConcurrentInvoke(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	root := New()
+	var builds atomic.Int32
+	ProvideNamed(root, "a", func(Injector) (*startWithErr, error) {
+		builds.Add(1)
+		return &startWithErr{}, nil
+	}, AsStarter())
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		<-start
+		is.NoError(root.Start())
+	})
+	for range 50 {
+		wg.Go(func() {
+			<-start
+			_, err := InvokeNamed[*startWithErr](root, "a")
+			is.NoError(err)
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	is.Equal(int32(1), builds.Load())
+}
+
+func TestStart_Hooks(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+	errBoom := errors.New("boom")
+
+	rec := &callRecorder{}
+	var errB error
+	root := NewWithOpts(&InjectorOpts{
+		HookBeforeStart: []func(context.Context, *Scope, string){
+			func(_ context.Context, _ *Scope, name string) { rec.record("before " + name) },
+		},
+		HookAfterStart: []func(context.Context, *Scope, string, time.Duration, error){
+			func(_ context.Context, _ *Scope, name string, _ time.Duration, err error) {
+				if name == "b" {
+					errB = err
+				}
+				if err == nil {
+					rec.record("after " + name + " nil")
+					return
+				}
+				rec.record("after " + name + " " + err.Error())
+			},
+		},
+	})
+	root.AddAfterStartHook(func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) {
+		rec.record("late-after " + name)
+	})
+	ProvideNamed(root, "a", func(Injector) (*errorStarter, error) { return &errorStarter{}, nil }, AsStarter())
+	ProvideNamed(root, "b", func(Injector) (*errorStarter, error) { return &errorStarter{err: errBoom}, nil }, AsStarter())
+
+	is.ErrorIs(root.Start(), errBoom)
+	is.Equal([]string{
+		"before a", "after a nil", "late-after a",
+		"before b", "after b boom", "late-after b",
+	}, rec.list())
+	is.Same(errBoom, errB, "the hook receives the method's own error, not a wrapping one")
+}
+
+func TestStart_HooksSkipNonStarter(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+
+	rec := &callRecorder{}
+	root := New()
+	root.AddBeforeStartHook(func(_ context.Context, _ *Scope, name string) { rec.record("before " + name) })
+	root.AddAfterStartHook(func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) { rec.record("after " + name) })
+	ProvideNamed(root, "app.Lifecycle", func(Injector) (startLifecycle, error) { return &startNone{}, nil }, AsStarter())
+
+	err := root.Start()
+
+	is.ErrorContains(err, "doger: service `app.Lifecycle` was opted in with AsStarter but does not implement any Starter interface")
+	is.Empty(rec.list())
+}
+
+func TestStartError_Fields(t *testing.T) {
+	t.Parallel()
+
+	errBuild := errors.New("build failed")
+	errBoom := errors.New("boom")
+
+	tests := []struct {
+		name    string
+		setup   func(root *RootScope)
+		service string
+		kind    string
+		op      StartOp
+		cause   error
+		message string // the message before StartError existed
+	}{
+		{
+			name: "provider returns errBuild",
+			setup: func(root *RootScope) {
+				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return nil, errBuild }, AsStarter())
+			},
+			service: "b", op: StartOpBuild, cause: errBuild,
+			message: "doger: failed to build service `b` in scope `[root]`: build failed",
+		},
+		{
+			name: "Start returns errBoom",
+			setup: func(root *RootScope) {
+				provideLazy(root, "b", &errorStarter{err: errBoom})
+			},
+			service: "b", op: StartOpStart, cause: errBoom,
+			message: "doger: failed to start service `b` in scope `[root]`: boom",
+		},
+		{
+			name: "kind handler returns errBoom",
+			setup: func(root *RootScope) {
+				k := NewKind[Job, Spec]("k")
+				ProvideNamed(root, "j", func(Injector) (*CleanupJob, error) { return &CleanupJob{}, nil }, k.With(Spec{}))
+				k.Handle(root, StageBeforeStart, func(context.Context, Component[Job, Spec]) error { return errBoom })
+			},
+			service: "j", kind: "k", op: StartOpHandle, cause: errBoom,
+			message: "doger: kind `k` failed for service `j` in scope `[root]`: boom",
+		},
+		{
+			name: "dependency's provider returns errBuild",
+			setup: func(root *RootScope) {
+				ProvideNamed(root, "b", func(i Injector) (*startWithErr, error) {
+					_, err := InvokeNamed[int](i, "c")
+					return &startWithErr{}, err
+				}, AsStarter())
+				ProvideNamed(root, "c", func(Injector) (int, error) { return 0, errBuild })
+			},
+			service: "b", op: StartOpBuild, cause: errBuild,
+			// b's own ServiceError layer is dropped from the text; c's stays
+			message: "doger: failed to build service `b` in scope `[root]`: service \"c\" in scope \"[root]\": build failed",
+		},
+		{
+			name: "missing declared dependency",
+			setup: func(root *RootScope) {
+				ProvideNamed(root, "b", func(Injector) (*startWithErr, error) { return &startWithErr{}, nil }, DependsOnNamed("missing"), AsStarter())
+			},
+			service: "b", op: StartOpBuild, cause: ErrServiceNotFound,
+			message: "doger: failed to build service `b` in scope `[root]`: could not find service `missing`, available services: `b`, path: `b` -> `missing`",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			root := New()
+			tt.setup(root)
+
+			err := root.Start()
+
+			var startErr *StartError
+			require.ErrorAs(t, err, &startErr)
+			is.Equal(tt.service, startErr.Service)
+			is.Equal("[root]", startErr.Scope.Name())
+			is.Equal(tt.kind, startErr.Kind)
+			is.Equal(tt.op, startErr.Op)
+			is.ErrorIs(err, tt.cause)
+			is.EqualError(err, tt.message)
+			is.Equal(1, strings.Count(err.Error(), "doger: "), "the doger prefix appears once")
+			if tt.op == StartOpBuild {
+				// the ServiceError of the same service stays in the chain,
+				// though its text is not repeated
+				var serviceErr *ServiceError
+				if is.ErrorAs(err, &serviceErr) {
+					is.Equal(tt.service, serviceErr.Service)
+					is.Equal("[root]", serviceErr.Scope)
+				}
+			}
+		})
+	}
+}
+
+func TestStartError_NotForGuards(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		start    func(root *RootScope) error
+		sentinel error
+	}{
+		{
+			name: "already started",
+			start: func(root *RootScope) error {
+				_ = root.Start()
+				return root.Start()
+			},
+			sentinel: ErrAlreadyStarted,
+		},
+		{
+			name: "already shut down",
+			start: func(root *RootScope) error {
+				root.Shutdown()
+				return root.Start()
+			},
+			sentinel: ErrShutdown,
+		},
+		{
+			name: "context already cancelled",
+			start: func(root *RootScope) error {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return root.StartWithContext(ctx)
+			},
+			sentinel: context.Canceled,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+
+			root := New()
+			ProvideNamedValue(root, "b", &startWithErr{}, AsStarter())
+
+			err := tt.start(root)
+
+			var startErr *StartError
+			assert.NotErrorAs(t, err, &startErr)
+			assert.ErrorIs(t, err, tt.sentinel)
+		})
+	}
+}
+
+// countingStarters counts Start calls per service name and records their order.
+type countingStarters struct {
+	mu     sync.Mutex
+	counts map[string]int
+	order  []string
+}
+
+func (c *countingStarters) record(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.counts == nil {
+		c.counts = map[string]int{}
+	}
+	c.counts[name]++
+	c.order = append(c.order, name)
+}
+
+func (c *countingStarters) count(name string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.counts[name]
+}
+
+func (c *countingStarters) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.order = nil
+}
+
+func (c *countingStarters) list() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.order)
+}
+
+// countedStarter is a Starter reporting its starts to starts.
+type countedStarter struct {
+	name   string
+	starts *countingStarters
+}
+
+func (s *countedStarter) Start() error {
+	s.starts.record(s.name)
+	return nil
+}
+
+// provideCountedStarter registers lazy Starter name in scope, opted in with
+// AsStarter.
+func provideCountedStarter(scope Injector, starts *countingStarters, name string, opts ...ProvideOption) {
+	ProvideNamed(scope, name, func(Injector) (*countedStarter, error) {
+		return &countedStarter{name: name, starts: starts}, nil
+	}, append([]ProvideOption{AsStarter()}, opts...)...)
+}
+
+func TestRefresh_StartsNew(t *testing.T) {
+	t.Parallel()
+
+	for _, times := range []int{1, 2} {
+		t.Run(fmt.Sprintf("%d", times), func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			root := New()
+			starts := &countingStarters{}
+			provideCountedStarter(root, starts, "a")
+			require.NoError(t, root.Start())
+			starts.reset()
+
+			provideCountedStarter(root, starts, "late")
+			tenant := root.Scope("tenant")
+			provideCountedStarter(tenant, starts, "worker")
+
+			for call := range times {
+				is.NoError(root.Refresh())
+				if call == 0 {
+					is.Equal([]string{"late", "worker"}, starts.list())
+				}
+			}
+
+			is.Equal(1, starts.count("a"))
+			is.Equal(1, starts.count("late"))
+			is.Equal(1, starts.count("worker"))
+		})
+	}
+}
+
+func TestRefresh_NothingNew(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	root := New()
+	starts := &countingStarters{}
+	provideCountedStarter(root, starts, "a")
+	require.NoError(t, root.Start())
+
+	assert.NoError(t, root.Refresh())
+	assert.Equal(t, 1, starts.count("a"))
+}
+
+func TestIncrementalStart_Phase(t *testing.T) {
+	t.Parallel()
+
+	errBuild := errors.New("build failed")
+
+	tests := []struct {
+		name      string
+		failA     bool
+		previous  func(root *RootScope)
+		operation func(root *RootScope, tenant *Scope) error
+		want      error
+	}{
+		{
+			name:      "nothing done, root.Refresh",
+			previous:  func(*RootScope) {},
+			operation: func(root *RootScope, _ *Scope) error { return root.Refresh() },
+			want:      ErrNotStarted,
+		},
+		{
+			name:      "Start failed, root.Refresh",
+			failA:     true,
+			previous:  func(root *RootScope) { _ = root.Start() },
+			operation: func(root *RootScope, _ *Scope) error { return root.Refresh() },
+			want:      ErrNotStarted,
+		},
+		{
+			name:      "nothing done, tenant.Start",
+			previous:  func(*RootScope) {},
+			operation: func(_ *RootScope, tenant *Scope) error { return tenant.Start() },
+			want:      ErrNotStarted,
+		},
+		{
+			name:      "Shutdown without Start, tenant.Start",
+			previous:  func(root *RootScope) { root.Shutdown() },
+			operation: func(_ *RootScope, tenant *Scope) error { return tenant.Start() },
+			want:      ErrShutdown,
+		},
+		{
+			name: "Start then Shutdown, root.Refresh",
+			previous: func(root *RootScope) {
+				_ = root.Start()
+				root.Shutdown()
+			},
+			operation: func(root *RootScope, _ *Scope) error { return root.Refresh() },
+			want:      ErrShutdown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+
+			root := New()
+			starts := &countingStarters{}
+			if tt.failA {
+				ProvideNamed(root, "a", func(Injector) (*countedStarter, error) { return nil, errBuild }, AsStarter())
+			} else {
+				provideCountedStarter(root, starts, "a")
+			}
+			tenant := root.Scope("tenant")
+			provideCountedStarter(tenant, starts, "w")
+			tt.previous(root)
+			before := starts.count("w") // the first Start may have started "w"
+
+			err := tt.operation(root, tenant)
+
+			assert.ErrorIs(t, err, tt.want)
+			assert.Equal(t, before, starts.count("w"), "the operation started nothing")
+		})
+	}
+}
+
+func TestScopeStart_Subtree(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+	is := assert.New(t)
+
+	root := New()
+	require.NoError(t, root.Start())
+	starts := &countingStarters{}
+	tenantA := root.Scope("tenant-a")
+	provideCountedStarter(tenantA, starts, "wa")
+	tenantB := root.Scope("tenant-b")
+	provideCountedStarter(tenantB, starts, "wb")
+	jobs := tenantA.Scope("jobs")
+	provideCountedStarter(jobs, starts, "cron")
+	provideCountedStarter(root, starts, "late")
+
+	is.NoError(tenantA.Start())
+
+	is.Equal([]string{"wa", "cron"}, starts.list())
+	is.Equal(0, starts.count("wb"))
+	is.Equal(0, starts.count("late"))
+}
+
+func TestScopeStart_RootScope(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	root := New()
+	k := NewKind[Job, Spec]("k")
+	var scope *Scope
+	k.Handle(root, StageBeforeStart, func(_ context.Context, c Component[Job, Spec]) error {
+		scope = c.Scope // the *Scope a root service works with
+		return nil
+	})
+	ProvideNamed(root, "j", func(Injector) (*CleanupJob, error) { return &CleanupJob{name: "j"}, nil }, k.With(Spec{}))
+	require.NoError(t, root.Start())
+	require.NotNil(t, scope)
+	starts := &countingStarters{}
+	provideCountedStarter(root, starts, "late")
+
+	assert.NoError(t, scope.Start())
+	assert.Equal(t, 1, starts.count("late"))
+}
+
+func TestRefresh_Concurrent(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	root := New()
+	require.NoError(t, root.Start())
+	starts := &countingStarters{}
+	for i := range 10 {
+		provideCountedStarter(root, starts, fmt.Sprintf("s%d", i))
+	}
+
+	errs := make(chan error, 10)
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Go(func() { errs <- root.Refresh() })
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		is.NoError(err)
+	}
+	for i := range 10 {
+		is.Equal(1, starts.count(fmt.Sprintf("s%d", i)))
+	}
+}
+
+func TestRefresh_ShutdownCancels(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		root := New()
+		require.NoError(t, root.Start())
+		entered := make(chan struct{})
+		ProvideNamed(root, "late", func(Injector) (*ctxStarter, error) {
+			return &ctxStarter{fn: func(ctx context.Context) error {
+				close(entered)
+				<-ctx.Done()
+				time.Sleep(time.Second) // returns 1s after the cancellation
+				return ctx.Err()
+			}}, nil
+		}, AsStarter())
+
+		refreshErr := make(chan error, 1)
+		go func() { refreshErr <- root.Refresh() }()
+		<-entered
+
+		begin := time.Now()
+		report := root.Shutdown()
+		is.Equal(time.Second, time.Since(begin), "Shutdown waits for the cancelled Refresh")
+		// Shutdown is released when Refresh's run ends; let the goroutine
+		// deliver its result before the non-blocking check
+		synctest.Wait()
+
+		select {
+		case err := <-refreshErr:
+			is.ErrorIs(err, ErrShutdown)
+		default:
+			is.Fail("Shutdown returned before Refresh returned")
+		}
+		is.True(report.Succeed, report.Error())
+	})
+}
+
+// sleepingStarter records "<name> start", sleeps for d (bubble time), then
+// records "<name> returned" and returns err.
+type sleepingStarter struct {
+	name string
+	d    time.Duration
+	err  error
+	rec  *callRecorder
+}
+
+func (s *sleepingStarter) Start() error {
+	s.rec.record(s.name + " start")
+	time.Sleep(s.d)
+	s.rec.record(s.name + " returned")
+	return s.err
+}
+
+func TestStart_Parallel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		n       uint
+		elapsed time.Duration
+	}{
+		{n: 0, elapsed: 5 * time.Second},
+		{n: 1, elapsed: 5 * time.Second},
+		{n: 2, elapsed: 3 * time.Second},
+		{n: 3, elapsed: 2 * time.Second},
+		{n: 8, elapsed: 2 * time.Second},
+		{n: math.MaxUint, elapsed: 2 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%d", tt.n), func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				root := NewWithOpts(&InjectorOpts{StartParallelism: tt.n})
+				rec := &callRecorder{}
+				for _, name := range []string{"a", "b", "c", "d", "e"} {
+					ProvideNamed(root, name, func(i Injector) (*sleepingStarter, error) {
+						if name == "d" {
+							if _, err := InvokeNamed[*sleepingStarter](i, "a"); err != nil {
+								return nil, err
+							}
+						}
+						return &sleepingStarter{name: name, d: time.Second, rec: rec}, nil
+					}, AsStarter())
+				}
+
+				begin := time.Now()
+				is.NoError(root.Start())
+
+				is.Equal(tt.elapsed, time.Since(begin))
+				events := rec.list()
+				is.Less(indexOf(events, "a returned"), indexOf(events, "d start"))
+			})
+		})
+	}
+}
+
+func TestStart_ParallelIncremental(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		scope func(root *RootScope) Injector
+		call  func(root *RootScope) error
+	}{
+		{
+			name:  "root.Refresh()",
+			scope: func(root *RootScope) Injector { return root },
+			call:  func(root *RootScope) error { return root.Refresh() },
+		},
+		{
+			name:  "tenant.Start()",
+			scope: func(root *RootScope) Injector { return root.Scope("tenant") },
+			call: func(root *RootScope) error {
+				tenant, _ := root.ChildByName("tenant")
+				return tenant.Start()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				root := NewWithOpts(&InjectorOpts{StartParallelism: 3})
+				require.NoError(t, root.Start())
+				scope := tt.scope(root)
+				rec := &callRecorder{}
+				for _, name := range []string{"a", "b", "c"} {
+					ProvideNamed(scope, name, func(Injector) (*sleepingStarter, error) {
+						return &sleepingStarter{name: name, d: time.Second, rec: rec}, nil
+					}, AsStarter())
+				}
+
+				begin := time.Now()
+				is.NoError(tt.call(root))
+
+				is.Equal(time.Second, time.Since(begin))
+				is.ElementsMatch([]string{"a start", "a returned", "b start", "b returned", "c start", "c returned"}, rec.list())
+			})
+		})
+	}
+}
+
+func TestStart_ParallelIncrementalDependencyOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		scope bool // the run is tenant.Start(), not root.Refresh()
+	}{
+		{name: "root.Refresh()"},
+		{name: "tenant.Start()", scope: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				root := NewWithOpts(&InjectorOpts{StartParallelism: 3})
+				require.NoError(t, root.Start())
+				var scope Injector = root
+				run := root.Refresh
+				if tt.scope {
+					tenant := root.Scope("tenant")
+					scope, run = tenant, tenant.Start
+				}
+				rec := &callRecorder{}
+				for _, name := range []string{"a", "b", "c", "d"} {
+					ProvideNamed(scope, name, func(i Injector) (*sleepingStarter, error) {
+						if name == "d" {
+							if _, err := InvokeNamed[*sleepingStarter](i, "a"); err != nil {
+								return nil, err
+							}
+						}
+						d := time.Second
+						if name == "a" {
+							d = 2 * time.Second // b's or c's slot frees before a returns
+						}
+						return &sleepingStarter{name: name, d: d, rec: rec}, nil
+					}, AsStarter())
+				}
+
+				begin := time.Now()
+				is.NoError(run())
+
+				// a, b and c start together; d waits for a
+				is.Equal(3*time.Second, time.Since(begin))
+				events := rec.list()
+				is.Less(indexOf(events, "a returned"), indexOf(events, "d start"))
+			})
+		})
+	}
+}
+
+// provideLazy registers value lazily under name, through a provider that
+// returns it, where a scenario says "lazy". A Starter type is opted in with
+// AsStarter, as every Starter of a scenario is (design D19).
+func provideLazy[T any](scope Injector, name string, value T) {
+	var opts []ProvideOption
+	if typeIsStarter(reflect.TypeFor[T]()) {
+		opts = append(opts, AsStarter())
+	}
+	ProvideNamed(scope, name, func(Injector) (T, error) { return value, nil }, opts...)
+}
+
+func TestStart_ParallelFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		incremental bool // "a", "b" and "c" are registered after Start and started by Refresh
+	}{
+		{name: "Start"},
+		{name: "Refresh", incremental: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				errBoom := errors.New("boom")
+				root := NewWithOpts(&InjectorOpts{StartParallelism: 2})
+				run := root.Start
+				if tt.incremental {
+					require.NoError(t, root.Start())
+					run = root.Refresh
+				}
+				rec := &callRecorder{}
+				provideLazy(root, "a", &sleepingStarter{name: "a", d: time.Second, err: errBoom, rec: rec})
+				provideLazy(root, "b", &sleepingStarter{name: "b", d: 2 * time.Second, rec: rec})
+				provideLazy(root, "c", &sleepingStarter{name: "c", d: time.Second, rec: rec})
+
+				begin := time.Now()
+				err := run()
+
+				// the first failure stops scheduling; the run waits for "b"
+				is.Equal(2*time.Second, time.Since(begin))
+				is.ErrorIs(err, errBoom)
+				is.ErrorContains(err, "`a`")
+				events := rec.list()
+				is.Equal(0, countOf(events, "c start"))
+				is.Equal(1, countOf(events, "b start"))
+			})
+		})
+	}
+}
+
+func TestStart_ParallelCancelStopsScheduling(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		incremental bool // the Starters are registered after Start and started by Refresh
+	}{
+		{name: "Start"},
+		{name: "Refresh", incremental: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			root := NewWithOpts(&InjectorOpts{StartParallelism: 2})
+			run := root.StartWithContext
+			if tt.incremental {
+				require.NoError(t, root.Start())
+				run = root.RefreshWithContext
+			}
+			aDone := make(chan struct{})
+			var cStarts atomic.Int32
+			// "a" cancels and succeeds; "b" succeeds once "a" returned, so no
+			// Starter fails and only the scheduler's own check can stop "c"
+			provideLazy(root, "a", &ctxStarter{fn: func(context.Context) error {
+				cancel()
+				close(aDone)
+				return nil
+			}})
+			provideLazy(root, "b", &ctxStarter{fn: func(context.Context) error {
+				<-aDone
+				return nil
+			}})
+			provideLazy(root, "c", &ctxStarter{fn: func(context.Context) error {
+				cStarts.Add(1)
+				return nil
+			}})
+
+			err := run(ctx)
+
+			is.ErrorIs(err, context.Canceled)
+			is.Equal(int32(0), cStarts.Load(), "c was scheduled after the cancel")
+		})
+	}
+}
+
+func TestStart_FailureThenShutdown(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		incremental bool
+	}{
+		{name: "Start", incremental: false},
+		{name: "Refresh", incremental: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				errBoom := errors.New("boom")
+				root := NewWithOpts(&InjectorOpts{StartParallelism: 2})
+				if tt.incremental {
+					require.NoError(t, root.Start())
+				}
+				bCancelled := make(chan struct{})
+				provideLazy(root, "a", &ctxStarter{fn: func(context.Context) error {
+					time.Sleep(time.Second)
+					return errBoom
+				}})
+				provideLazy(root, "b", &ctxStarter{fn: func(ctx context.Context) error {
+					select {
+					case <-ctx.Done():
+						close(bCancelled)
+						return ctx.Err()
+					case <-time.After(10 * time.Second):
+						return nil
+					}
+				}})
+				shutdownDone := make(chan struct{})
+				go func() {
+					defer close(shutdownDone)
+					time.Sleep(1500 * time.Millisecond)
+					root.Shutdown()
+				}()
+
+				var err error
+				if tt.incremental {
+					err = root.Refresh()
+				} else {
+					err = root.Start()
+				}
+				<-shutdownDone
+
+				is.ErrorIs(err, errBoom)
+				is.ErrorIs(err, ErrShutdown)
+				select {
+				case <-bCancelled:
+				default:
+					is.Fail("Shutdown did not cancel b")
+				}
+			})
+		})
+	}
+}
+
+func TestStart_ParallelHooks(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+	is := assert.New(t)
+
+	rec := &callRecorder{}
+	root := NewWithOpts(&InjectorOpts{
+		StartParallelism: 4,
+		HookBeforeStart:  []func(context.Context, *Scope, string){func(_ context.Context, _ *Scope, name string) { rec.record("before " + name) }},
+		HookAfterStart:   []func(context.Context, *Scope, string, time.Duration, error){func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) { rec.record("after " + name) }},
+	})
+	starts := &countingStarters{}
+	for i := range 8 {
+		provideCountedStarter(root, starts, fmt.Sprintf("s%d", i))
+	}
+
+	require.NoError(t, root.Start())
+
+	events := rec.list()
+	for i := range 8 {
+		name := fmt.Sprintf("s%d", i)
+		is.Equal(1, countOf(events, "before "+name))
+		is.Equal(1, countOf(events, "after "+name))
+		is.Less(indexOf(events, "before "+name), indexOf(events, "after "+name))
+	}
+}
+
+// sleepyStarter sleeps 1s in Start, counting how many are inside Start.
+type sleepyStarter struct {
+	running *atomic.Int32
+	instant bool // return at once instead of sleeping 1s
+}
+
+func (s *sleepyStarter) Start() error {
+	s.running.Add(1)
+	defer s.running.Add(-1)
+	if !s.instant {
+		time.Sleep(time.Second)
+	}
+	return nil
+}
+
+func TestStart_ParallelHookPanic(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		n           uint
+		before      bool
+		incremental bool // the Starters are registered after Start and started by Refresh
+		phase       ContainerPhase
+	}{
+		{name: "n=1, HookBeforeStart", n: 1, before: true, phase: PhaseFailed},
+		{name: "n=4, HookBeforeStart", n: 4, before: true, phase: PhaseFailed},
+		{name: "n=4, HookAfterStart", n: 4, before: false, phase: PhaseFailed},
+		{name: "n=4, HookBeforeStart, Refresh", n: 4, before: true, incremental: true, phase: PhaseReady},
+		{name: "n=4, HookAfterStart, Refresh", n: 4, before: false, incremental: true, phase: PhaseReady},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				panicFor := func(name string) {
+					if name == "b" {
+						panic("hook-boom")
+					}
+				}
+				opts := &InjectorOpts{StartParallelism: tt.n}
+				if tt.before {
+					opts.HookBeforeStart = []func(context.Context, *Scope, string){func(_ context.Context, _ *Scope, name string) { panicFor(name) }}
+				} else {
+					opts.HookAfterStart = []func(context.Context, *Scope, string, time.Duration, error){func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) { panicFor(name) }}
+				}
+				root := NewWithOpts(opts)
+				run := root.Start
+				if tt.incremental {
+					require.NoError(t, root.Start())
+					run = root.Refresh
+				}
+				var running atomic.Int32
+				// "b" returns at once, so its hooks fire while "a" and "c" still run
+				for _, name := range []string{"a", "b", "c"} {
+					ProvideNamed(root, name, func(Injector) (*sleepyStarter, error) {
+						return &sleepyStarter{running: &running, instant: name == "b"}, nil
+					}, AsStarter())
+				}
+
+				var recovered any
+				var runningAtPanic int32
+				func() {
+					defer func() {
+						recovered = recover()
+						runningAtPanic = running.Load()
+					}()
+					_ = run()
+				}()
+
+				is.Equal("hook-boom", recovered)
+				is.Zero(runningAtPanic, "Starters still inside Start when the panic was raised")
+				is.Equal(tt.phase, root.Phase())
+			})
+		})
+	}
+}
+
+// pausingWrapper pauses the first getServiceType call made once it is armed,
+// which start collection makes for every registered service, so a test can
+// act between a run's collection and its claim.
+type pausingWrapper struct {
+	serviceWrapperAny
+	armed   atomic.Bool
+	reached chan struct{}
+	release chan struct{}
+}
+
+func (w *pausingWrapper) getServiceType() ServiceType {
+	if w.armed.CompareAndSwap(true, false) {
+		close(w.reached)
+		<-w.release
+	}
+
+	return w.serviceWrapperAny.getServiceType()
+}
+
+// pauseCollection registers an armed pausingWrapper as "pause" in scope.
+// Collection walks scopes breadth-first, so it pauses after every scope
+// nearer to the run's root than scope.
+func pauseCollection(scope *Scope) *pausingWrapper {
+	ProvideNamedValue(scope, "pause", 0)
+	inner, _ := scope.serviceGet("pause")
+	w := &pausingWrapper{
+		serviceWrapperAny: inner.(serviceWrapperAny),
+		reached:           make(chan struct{}),
+		release:           make(chan struct{}),
+	}
+	w.armed.Store(true)
+	scope.serviceSet("pause", w)
+
+	return w
+}
+
+func TestStart_ShutdownBetweenCollectAndClaim(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		ancestor   bool // the root registers its own lazy Starter "w"
+		scopeStart bool // the run is tenant.Start(), not root.Refresh()
+		rootStarts int
+	}{
+		{name: "Refresh", rootStarts: 0},
+		{name: "Refresh, root w", ancestor: true, rootStarts: 1},
+		{name: "Scope.Start", scopeStart: true, rootStarts: 0},
+		{name: "Scope.Start, root w", ancestor: true, scopeStart: true, rootStarts: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+			is := assert.New(t)
+
+			root := New()
+			rootStarts, tenantStarts := &countingStarters{}, &countingStarters{}
+			if tt.ancestor {
+				provideCountedStarter(root, rootStarts, "w")
+			}
+			require.NoError(t, root.Start())
+			tenant := root.Scope("tenant")
+			provideCountedStarter(tenant, tenantStarts, "w")
+
+			// collection visits "pause" after tenant's own services
+			pauseIn := root.Scope("other").Scope("deep")
+			run := root.Refresh
+			if tt.scopeStart {
+				pauseIn = tenant.Scope("jobs")
+				run = tenant.Start
+			}
+			pause := pauseCollection(pauseIn)
+
+			runErr := make(chan error, 1)
+			go func() { runErr <- run() }()
+			<-pause.reached
+			report := tenant.Shutdown()
+			close(pause.release)
+			err := <-runErr
+
+			is.True(report.Succeed)
+			is.NoError(err)
+			is.Zero(tenantStarts.count("w"))
+			is.Equal(tt.rootStarts, rootStarts.count("w"))
+		})
+	}
+}
+
+func TestStart_CallerCancelThenShutdown(t *testing.T) {
+	t.Parallel()
+
+	errBoom := errors.New("boom")
+	tests := []struct {
+		name        string
+		parallelism uint
+		outcome     error // what "a" returns once released
+		incremental bool
+	}{
+		{name: "Start, failure", parallelism: 1, outcome: errBoom},
+		{name: "Refresh, failure", parallelism: 1, outcome: errBoom, incremental: true},
+		{name: "parallel Start, failure", parallelism: 4, outcome: errBoom},
+		{name: "parallel Refresh, failure", parallelism: 4, outcome: errBoom, incremental: true},
+		{name: "Start, nil", parallelism: 1},
+		{name: "Refresh, nil", parallelism: 1, incremental: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				root := NewWithOpts(&InjectorOpts{StartParallelism: tt.parallelism})
+				if tt.incremental {
+					require.NoError(t, root.Start())
+				}
+				entered, release := make(chan struct{}), make(chan struct{})
+				provideLazy(root, "a", &ctxStarter{fn: func(context.Context) error {
+					close(entered)
+					<-release
+					return tt.outcome
+				}})
+				bEntered := make(chan struct{})
+				if tt.parallelism > 1 {
+					// a second Starter, so the parallel scheduler runs; it is
+					// running before the cancel, so the scheduler's own abort
+					// check cannot become the first failure
+					provideLazy(root, "b", &ctxStarter{fn: func(context.Context) error {
+						close(bEntered)
+						<-release
+						return nil
+					}})
+				} else {
+					close(bEntered)
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				runErr := make(chan error, 1)
+				go func() {
+					if tt.incremental {
+						runErr <- root.RefreshWithContext(ctx)
+					} else {
+						runErr <- root.StartWithContext(ctx)
+					}
+				}()
+				<-entered
+				<-bEntered
+
+				cancel()
+				shutdownDone := make(chan struct{})
+				go func() {
+					defer close(shutdownDone)
+					root.Shutdown()
+				}()
+				synctest.Wait() // Shutdown waits for the run
+				close(release)
+				err := <-runErr
+				<-shutdownDone
+
+				is.ErrorIs(err, ErrShutdown)
+				is.ErrorIs(err, context.Canceled)
+				if tt.outcome != nil {
+					is.ErrorIs(err, tt.outcome)
+				}
+				is.Equal(1, strings.Count(err.Error(), "context canceled"), "message: %v", err)
+			})
+		})
+	}
+}
+
+func TestAbortOutcome(t *testing.T) {
+	t.Parallel()
+
+	errBoom := errors.New("boom")
+	alreadyAborted := fmt.Errorf("boom (start aborted: %w)", ErrShutdown)
+	tests := []struct {
+		name   string
+		cause  error // nil: cancelled by the caller, context.Canceled
+		result error
+		want   string
+		same   bool // the result is returned unchanged
+	}{
+		{name: "Shutdown cause, nil", cause: ErrShutdown, want: "doger: start aborted: container is shut down"},
+		{name: "caller cause, nil", want: "doger: start aborted: container is shut down: context canceled"},
+		{name: "Shutdown cause, failure", cause: ErrShutdown, result: errBoom, want: "boom (start aborted: container is shut down)"},
+		{name: "caller cause, failure", result: errBoom, want: "boom (start aborted: container is shut down: context canceled)"},
+		{
+			name:   "caller cause, failure carrying it",
+			result: fmt.Errorf("boom (start aborted: %w)", context.Canceled),
+			want:   "boom (start aborted: context canceled) (start aborted: container is shut down)",
+		},
+		{
+			name:   "Shutdown cause, library failure",
+			cause:  ErrShutdown,
+			result: newStartError(StartOpStart, nil, "db", "", errBoom),
+			want:   "doger: failed to start service `db` in scope ``: boom (start aborted: container is shut down)",
+		},
+		{name: "caller cause, failure already aborted", result: alreadyAborted, want: alreadyAborted.Error(), same: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			is := assert.New(t)
+
+			ctx, cancel := context.WithCancelCause(context.Background())
+			cancel(tt.cause) // nil cause: context.Canceled
+
+			err := abortOutcome(ctx, tt.result)
+
+			is.EqualError(err, tt.want)
+			is.ErrorIs(err, ErrShutdown)
+			if tt.result != nil {
+				is.ErrorIs(err, tt.result)
+			}
+			if tt.cause == nil && !tt.same {
+				is.ErrorIs(err, context.Canceled)
+			}
+			if tt.same {
+				is.Same(tt.result, err)
+			}
+		})
+	}
+}
+
+func TestStart_CandidatesWithDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		auto          bool // EnableStarterAutoDetection, and no AsStarter()
+		explicit      bool
+		refresh       bool // the root was started, then Refresh is the operation
+		defaultStarts int32
+		rootStarts    int32
+	}{
+		{name: "yielded", explicit: true, defaultStarts: 0, rootStarts: 1},
+		{name: "alone", defaultStarts: 1, rootStarts: 0},
+		{name: "refresh", explicit: true, refresh: true, defaultStarts: 0, rootStarts: 1},
+		{name: "yielded, auto-detected", auto: true, explicit: true, defaultStarts: 0, rootStarts: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 3*time.Second)
+
+			root := NewWithOpts(&InjectorOpts{EnableStarterAutoDetection: tt.auto})
+			t.Cleanup(func() { _ = root.Shutdown() })
+			ext := root.Scope("ext")
+			defaultServer, rootServer := &dfPool{}, &dfPool{}
+			var starter []ProvideOption
+			if !tt.auto {
+				starter = append(starter, AsStarter())
+			}
+			Provide(ext, poolProvider(defaultServer), append([]ProvideOption{AsDefault()}, starter...)...)
+			if tt.explicit {
+				Provide(root, poolProvider(rootServer), starter...)
+			}
+
+			require.NoError(t, root.Start())
+			if tt.refresh {
+				require.NoError(t, root.Refresh())
+			}
+
+			assert.Equal(t, tt.defaultStarts, defaultServer.starts.Load())
+			assert.Equal(t, tt.rootStarts, rootServer.starts.Load())
+		})
+	}
+}
+
+func TestStart_DefaultDecidedAtDiscovery(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 3*time.Second)
+
+	root := New()
+	t.Cleanup(func() { _ = root.Shutdown() })
+	ext := root.Scope("ext")
+	var defaultCalls atomic.Int32
+	Provide(ext, func(Injector) (*dfPool, error) {
+		defaultCalls.Add(1)
+		return &dfPool{}, nil
+	}, AsDefault(), AsRunnable(), AsStarter())
+	rootServer := &dfPool{}
+	Provide(root, poolProvider(rootServer), AsRunnable(), AsStarter())
+
+	require.NoError(t, root.Start())
+
+	assert.Equal(t, int32(1), rootServer.runs.Load())
+	assert.Equal(t, int32(0), defaultCalls.Load())
+}
+
+func TestScopeStart_SkipsYieldedDefault(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 3*time.Second)
+
+	root := New()
+	t.Cleanup(func() { _ = root.Shutdown() })
+	rootServer := &dfPool{}
+	Provide(root, poolProvider(rootServer), AsStarter())
+	require.NoError(t, root.Start())
+	ext := root.Scope("ext")
+	var defaultCalls atomic.Int32
+	Provide(ext, func(Injector) (*dfPool, error) {
+		defaultCalls.Add(1)
+		return &dfPool{}, nil
+	}, AsDefault(), AsStarter())
+
+	require.NoError(t, ext.Start())
+
+	assert.Equal(t, int32(1), rootServer.starts.Load())
+	assert.Equal(t, int32(0), defaultCalls.Load())
+}

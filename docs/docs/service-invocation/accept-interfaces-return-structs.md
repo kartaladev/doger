@@ -1,23 +1,23 @@
 ---
 title: Interface binding
-description: Bind and invoke Go interfaces with doger using implicit aliasing (doger.InvokeAs) or explicit binding (doger.As), following "accept interfaces, return structs".
+description: Bind and invoke Go interfaces with doger using implicit aliasing (doger.InvokeAs) or explicit binding (doger.Alias), following "accept interfaces, return structs".
 sidebar_position: 2
 ---
 
 # Interface binding
 
-Interface binding in `doger` lets you register a concrete struct and invoke it through an interface it implements, either implicitly (`doger.InvokeAs`) or explicitly (`doger.As`). You have probably already heard the Go proverb "Accept interfaces, return structs". The basic idea is to let the consumer define the interfaces it uses while the producer returns concrete types.
+Interface binding in `doger` lets you register a concrete struct and invoke it through an interface it implements, either implicitly (`doger.InvokeAs`) or explicitly (`doger.Alias`). You have probably already heard the Go proverb "Accept interfaces, return structs". The basic idea is to let the consumer define the interfaces it uses while the producer returns concrete types.
 
 This library offers a great API for assembling a large number of modules with loose coupling and a clear separation of concerns.
 
-Aliases must be Go interfaces. It can be declared explicitly on injection using `doger.As()`, or invoked implicitly using `doger.InvokeAs()`.
+Aliases must be Go interfaces. It can be declared explicitly on injection using `doger.Alias()`, or invoked implicitly using `doger.InvokeAs()`.
 
 1. **Implicit alias invocation**:
    - provide struct, invoke interface
    - `doger.InvokeAs()`
 2. **Explicit alias injection**:
    - provide struct, bind interface, invoke interface
-   - `doger.As()`
+   - `doger.Alias()`
 
 ## Implicit invocation (preferred) {#implicit-invocation-preferred}
 
@@ -55,11 +55,15 @@ metric := doger.MustInvokeAs[Metric](injector)
 metric.Inc()    // <- r.counter will be incremented
 ```
 
-**Play: https://go.dev/play/p/29gb2TJG4m5**
-
 :::info
 
-The first matching service in the scope tree is returned.
+When several services match, the selection is deterministic: the service in the **nearest** scope (the invoking scope before its ancestors), then the **earliest registration** (an `Override` keeps the position of the registration it replaces), then the smallest service name. Aliases are candidates too. A service hidden by a service of the same name in a nearer scope is not a candidate, even when the nearer one does not match: this is the visibility rule of named resolution and of `doger.InvokeAll`. Called from a provider, the service that provider builds is skipped, as for `doger.InvokeAll`, and so is an alias whose target chain resolves to it, so a decorator can resolve the service it wraps. Use `doger.InvokeNamed` to pin a specific service.
+
+:::
+
+:::info Default registrations
+
+A service registered with [`doger.AsDefault()`](../service-registration/default-registrations.md#by-type) is considered only when no other visible service matches, so the application's own implementation wins whatever the scopes and registration order. Selecting such a default fixes its decision. A default that already chose its own provider ranks like any service, and one that yielded is never selected: the service it yields to is.
 
 :::
 
@@ -73,7 +77,7 @@ Eg: `fmt.Stringer` might match dozens of services in a container.
 
 ### InvokeStruct and implicit aliasing {#invokestruct-and-implicit-aliasing}
 
-When using `doger.InvokeStruct`, if a field is tagged with an empty tag (eg: `` `do:""` ``) and the inferred name does not match a registered service, the injector will fall back to the first registered service that is assignable to the field type, equivalent to `doger.InvokeAs[T]` resolution. Prefer explicit names when multiple assignable services exist.
+When using `doger.InvokeStruct`, if a field is tagged with an empty tag (eg: `` `do:""` ``) and the inferred name does not match a registered service, the injector will fall back to resolution by type, selecting among the services assignable to the field type with the same rule as `doger.InvokeAs[T]`. Prefer explicit names when multiple assignable services exist.
 
 ## Explicit injection {#explicit-injection}
 
@@ -83,10 +87,12 @@ If you rely a lot on `doger.Scope`, explicit injection might be used to define c
 
 4 methods are available for explicit aliasing:
 
-- `doger.As`
-- `doger.MustAs`
-- `doger.AsNamed`
-- `doger.MustAsNamed`
+- `doger.Alias`
+- `doger.MustAlias`
+- `doger.AliasNamed`
+- `doger.MustAliasNamed`
+
+`Alias` and `AliasNamed` return an error, and register nothing, when the concrete type does not implement the interface, when the target is not registered (matching `doger.ErrServiceNotFound`), when the alias name is already registered in the scope (matching `doger.ErrServiceAlreadyDeclared`), or when the injector is nil (matching `doger.ErrNilInjector`). The `Must` variants panic with that error.
 
 ```go
 type Metric interface {
@@ -109,7 +115,7 @@ doger.Provide(i, func(i doger.Injector) (*RequestPerSecond, error) {
 })
 
 // explicit aliasing
-err := doger.As[*RequestPerSecond, Metric](injector)
+err := doger.Alias[*RequestPerSecond, Metric](injector)
 if err != nil {
     // ...
 }
@@ -119,7 +125,20 @@ metric := doger.MustInvoke[Metric](injector)
 metric.Inc()    // <- r.counter will be incremented
 ```
 
-**Play: https://go.dev/play/p/_wGjnRJfwV8**
+### Aliases and shutdown {#aliases-and-shutdown}
+
+An alias never shuts its target down. Shutting a scope down, or calling `doger.Shutdown`/`doger.ShutdownNamed` on the alias name, removes the alias only. The target is shut down through its own registration, exactly once, even when the alias was invoked or lives in a child scope:
+
+```go
+child := injector.Scope("request")
+doger.Alias[*RequestPerSecond, Metric](child)
+_ = doger.MustInvoke[Metric](child)
+
+child.Shutdown()    // removes the alias; *RequestPerSecond keeps running
+injector.Shutdown() // shuts *RequestPerSecond down, once
+```
+
+To stop the target early, shut it down by its own name: `doger.ShutdownNamed(injector, doger.NameOf[*RequestPerSecond]())`.
 
 :::danger
 

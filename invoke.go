@@ -1,9 +1,11 @@
 package doger
 
 import (
-	"errors"
+	"cmp"
 	"fmt"
+	"log/slog"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"unsafe"
@@ -11,57 +13,64 @@ import (
 	typetostring "github.com/samber/go-type-to-string"
 )
 
-// invokeAnyByName retrieves and instantiates a service by name, returning it as interface{}.
+// invokeAnyByName retrieves and instantiates a service by name, returning it as any.
 // This function handles circular dependency detection, service resolution, and invocation hooks.
 //
 // Parameters:
 //   - i: The injector to search for the service
 //   - name: The name of the service to invoke
 //
-// Returns the service instance as interface{} and any error that occurred during invocation.
+// Returns the service instance as any and any error that occurred during invocation.
 //
 // This function is used internally by the DI container for service resolution and
 // supports virtual scopes for dependency tracking and circular dependency detection.
 func invokeAnyByName(i Injector, name string) (any, error) {
-	var invokerChain []string
+	return invokeAnyByNameAs(i, name, DependencySourceInvoked)
+}
 
-	injector := getInjectorOrDefault(i)
+// invokeAnyByNameAs is invokeAnyByName recording the dependency edge, when
+// invoked from a provider, with the given source.
+func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, error) {
+	injector, err := getInjector(i)
+	if err != nil {
+		return nil, err
+	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
+		return nil, err
+	}
 
 	vScope, isVirtualScope := injector.(*virtualScope)
-	if isVirtualScope {
-		invokerChain = vScope.invokerChain
 
-		if err := vScope.detectCircularDependency(name); err != nil {
+	serviceAny, serviceScope, found := injector.serviceGetRec(name)
+	if !found {
+		return nil, serviceNotFound(injector, ErrServiceNotFound, chainTo(vScope, name))
+	}
+
+	if isVirtualScope {
+		if err := vScope.detectCircularDependency(name, serviceScope); err != nil {
 			return nil, err
 		}
 	}
 
-	invokerChain = append(invokerChain, name)
-
-	serviceAny, serviceScope, found := injector.serviceGetRec(name)
-	if !found {
-		return nil, serviceNotFound(injector, ErrServiceNotFound, invokerChain)
-	}
-
-	if isVirtualScope {
-		vScope.addDependency(injector, name, serviceScope)
-	}
-
 	service, ok := serviceAny.(serviceWrapperAny)
 	if !ok {
-		return nil, serviceNotFound(injector, ErrServiceNotFound, invokerChain)
+		return nil, serviceNotFound(injector, ErrServiceNotFound, chainTo(vScope, name))
 	}
 
-	injector.RootScope().opts.onBeforeInvocation(serviceScope, name)
-	instance, err := service.getInstanceAny(newVirtualScope(serviceScope, invokerChain))
-	injector.RootScope().opts.onAfterInvocation(serviceScope, name, err)
+	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
+	op := beginInvocation(serviceScope, name)
+	child := invocationInjector(injector, vScope, serviceScope, name, service)
+	instance, err := service.getInstanceAny(child)
+	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, op.elapsed(), err)
 	if err != nil {
 		return nil, err
 	}
 
+	recordDependencyOnSuccess(injector, vScope, name, serviceScope, source)
+
 	serviceScope.onServiceInvoke(name)
 
-	injector.RootScope().opts.Logf("DI: service %s invoked", name)
+	serviceScope.log(slog.LevelDebug, "service invoked", slog.String("service", name))
 
 	return instance, nil
 }
@@ -79,123 +88,763 @@ func invokeAnyByName(i Injector, name string) (any, error) {
 // This function is used internally by the DI container for type-safe service resolution.
 // It ensures that the returned service matches the expected type T.
 func invokeByName[T any](i Injector, name string) (T, error) {
-	var invokerChain []string
-
-	injector := getInjectorOrDefault(i)
+	injector, err := getInjector(i)
+	if err != nil {
+		return empty[T](), err
+	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
+		return empty[T](), err
+	}
 
 	vScope, isVirtualScope := injector.(*virtualScope)
-	if isVirtualScope {
-		invokerChain = vScope.invokerChain
 
-		if err := vScope.detectCircularDependency(name); err != nil {
+	serviceAny, serviceScope, found := injector.serviceGetRec(name)
+	if !found {
+		return empty[T](), serviceNotFound(injector, ErrServiceNotFound, chainTo(vScope, name))
+	}
+
+	if isVirtualScope {
+		if err := vScope.detectCircularDependency(name, serviceScope); err != nil {
 			return empty[T](), err
 		}
 	}
 
-	invokerChain = append(invokerChain, name)
-
-	serviceAny, serviceScope, found := injector.serviceGetRec(name)
-	if !found {
-		return empty[T](), serviceNotFound(injector, ErrServiceNotFound, invokerChain)
-	}
-
-	if isVirtualScope {
-		vScope.addDependency(injector, name, serviceScope)
-	}
-
 	service, ok := serviceAny.(serviceWrapper[T])
 	if !ok {
-		return empty[T](), serviceTypeMismatch(inferServiceName[T](), serviceAny.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert
+		return empty[T](), serviceTypeMismatch(inferServiceName[T](), serviceAny.(serviceWrapperAny).getTypeName()) //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
 	}
 
-	injector.RootScope().opts.onBeforeInvocation(serviceScope, name)
-	instance, err := service.getInstance(newVirtualScope(serviceScope, invokerChain))
-	injector.RootScope().opts.onAfterInvocation(serviceScope, name, err)
+	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
+	op := beginInvocation(serviceScope, name)
+	child := invocationInjector(injector, vScope, serviceScope, name, service)
+	instance, err := service.getInstance(child)
+	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, op.elapsed(), err)
 
 	if err != nil {
 		return empty[T](), err
 	}
 
+	recordDependencyOnSuccess(injector, vScope, name, serviceScope, DependencySourceInvoked)
+
 	serviceScope.onServiceInvoke(name)
 
-	injector.RootScope().opts.Logf("DI: service %s invoked", name)
+	serviceScope.log(slog.LevelDebug, "service invoked", slog.String("service", name))
 
 	return instance, nil
 }
 
-// invokeByGenericType looks for a service by its type and invokes the first matching service.
-// When multiple services match the provided type or interface, the first service found
-// will be invoked. This function is useful for interface-based dependency injection.
+// invocationInjector returns the injector a service's getInstance gets for
+// an invocation of name, registered in scope: a child virtual scope of
+// vScope, which carries the invoker chain a build needs, or injector itself
+// for a built lazy service. A built lazy service never builds again (it stays
+// built until its shutdown makes it terminal), so its getInstance uses its
+// injector only for the container options, which are the same.
+func invocationInjector(injector Injector, vScope *virtualScope, scope *Scope, name string, service any) Injector {
+	if lazy, ok := service.(interface{ isBuilt() bool }); ok && lazy.isBuilt() {
+		return injector
+	}
+
+	return newChildVirtualScope(vScope, scope, name)
+}
+
+// invokeByGenericType looks for a service by its type and invokes it.
+// When multiple services match the provided type or interface, it selects
+// the one in the nearest scope, then the earliest registration, then the
+// smallest name (see selectByType). This function is useful for
+// interface-based dependency injection.
 //
 // Parameters:
 //   - i: The injector to search for the service
 //
 // Returns the service instance with the correct type and any error that occurred during invocation.
-//
-// @TODO: Selection is nondeterministic when multiple services satisfy T; consider deterministic ordering
-// or explicit disambiguation to avoid surprising picks.
 func invokeByGenericType[T any](i Injector) (T, error) {
-	injector := getInjectorOrDefault(i)
+	injector, err := getInjector(i)
+	if err != nil {
+		return empty[T](), err
+	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
+		return empty[T](), err
+	}
 	serviceAliasName := inferServiceName[T]()
 
-	var invokerChain []string
+	vScope, _ := injector.(*virtualScope)
 
-	vScope, isVirtualScope := injector.(*virtualScope)
-	if isVirtualScope {
-		invokerChain = vScope.invokerChain
-	}
-
-	var serviceInstance any
-	var serviceScope *Scope
-	var serviceRealName string
-	var ok bool
-
-	injector.serviceForEachRec(func(name string, scope *Scope, s any) bool {
-		if serviceCanCastToGeneric[T](s) {
-			serviceInstance = s
-			serviceScope = scope
-			serviceRealName = s.(serviceWrapperGetName).getName() //nolint:errcheck,forcetypeassert
-			ok = true
-
-			// Stop or not stop, that's the question -> https://github.com/samber/do/issues/114
-			return false
-		}
-
-		return true
-	})
-
+	selected, ok := selectByType(injector, reflect.TypeFor[T]())
 	if !ok {
-		return empty[T](), serviceNotFound(injector, ErrServiceNotMatch, append(invokerChain, serviceAliasName))
+		return empty[T](), serviceNotFound(injector, ErrServiceNotMatch, chainTo(vScope, serviceAliasName))
 	}
 
-	if isVirtualScope {
-		if err := vScope.detectCircularDependency(serviceRealName); err != nil {
-			return empty[T](), err
-		}
-	}
-
-	injector.RootScope().opts.onBeforeInvocation(serviceScope, serviceAliasName)
-	instance, err := serviceInstance.(serviceWrapperGetInstanceAny).getInstanceAny( //nolint:errcheck,forcetypeassert
-		newVirtualScope(serviceScope, append(invokerChain, serviceRealName)),
-	)
-	injector.RootScope().opts.onAfterInvocation(serviceScope, serviceAliasName, err)
-
+	instance, err := invokeServiceInstance(injector, vScope, serviceAliasName, selected.name, selected.scope, selected.service)
 	if err != nil {
 		return empty[T](), err
 	}
 
-	if isVirtualScope {
-		// We chose to register the real service name in invocation chain, because using the
-		// interface name would break cycle detection.
-
-		vScope.addDependency(injector, serviceRealName, serviceScope)
+	// A nil-interface instance gives the zero value of T. Any other instance
+	// was selected as assignable to T, so a failed assertion is a bug.
+	if instance == nil {
+		return empty[T](), nil
 	}
 
-	serviceScope.onServiceInvoke(serviceRealName)
+	return instance.(T), nil //nolint:errcheck,forcetypeassert // selected as assignable to T: a failed assertion is a bug and must panic
+}
 
-	injector.RootScope().opts.Logf("DI: service %s invoked", serviceAliasName)
+// invokeServiceInstance invokes a service already selected by type. Hooks
+// and the log line report hookName; cycle detection, the invoker chain, the
+// dependency edge and invocation tracking use realName, because using a
+// type name there would break cycle detection. vScope is nil outside a
+// provider. The edge is recorded only after a successful build.
+func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, realName string, scope *Scope, service any) (any, error) {
+	if vScope != nil {
+		if err := vScope.detectCircularDependency(realName, scope); err != nil {
+			return nil, err
+		}
+	}
 
-	return instance.(T), nil //nolint:errcheck,forcetypeassert
+	injector.RootScope().hooks.onBeforeInvocation(scope, hookName)
+	op := beginInvocation(scope, realName)
+	child := invocationInjector(injector, vScope, scope, realName, service)
+	instance, err := service.(serviceWrapperGetInstanceAny).getInstanceAny(child) //nolint:errcheck,forcetypeassert // service was selected among stored service wrappers
+	injector.RootScope().hooks.onAfterInvocation(scope, hookName, op.elapsed(), err)
+	if err != nil {
+		return nil, err
+	}
+
+	recordDependencyOnSuccess(injector, vScope, realName, scope, DependencySourceInvoked)
+
+	scope.onServiceInvoke(realName)
+
+	scope.log(slog.LevelDebug, "service invoked", slog.String("service", hookName))
+
+	return instance, nil
+}
+
+// recordDependencyOnSuccess records the edge from the service whose provider
+// runs in vScope to the service name of scope, with source. Every resolution
+// path calls it only once that dependency built, so a failed resolution
+// records no edge. vScope is nil outside a provider: nothing is recorded.
+func recordDependencyOnSuccess(injector Injector, vScope *virtualScope, name string, scope *Scope, source DependencySource) {
+	if vScope != nil {
+		vScope.addDependency(injector, name, scope, source)
+	}
+}
+
+// collectionSource is where a collection read finds and builds its members.
+type collectionSource struct {
+	from   Injector      // the members are the services visible from it
+	reader *virtualScope // the reading provider's scope, or nil: its build chain, self-exclusion and edges apply
+	holder string        // excluded too, when not empty: the service holding a live collection
+}
+
+// collectionFrom returns the source of a collection invoked from injector:
+// visible from it, and built through it.
+func collectionFrom(injector Injector) collectionSource {
+	reader, _ := injector.(*virtualScope)
+	return collectionSource{from: injector, reader: reader}
+}
+
+// invokeAllByGenericType invokes every collection member for T, in
+// collection order.
+func invokeAllByGenericType[T any](source collectionSource) ([]T, error) {
+	members, err := invokeCollection(source, reflect.TypeFor[T](), true)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]T, 0, len(members))
+	for _, m := range members {
+		typed, _ := m.instance.(T)
+		result = append(result, typed)
+	}
+
+	return result, nil
+}
+
+// collectionMember is a built member of a collection.
+type collectionMember struct {
+	candidate collectionCandidate
+	instance  any
+	order     int // set by the ordering pass of an ordered collection
+}
+
+// invokeCollection builds the members of the collection for target from
+// source, in default order. When ordered is true, a separate stable pass
+// then sorts them by WithOrder or Order(), once every member is built.
+func invokeCollection(source collectionSource, target reflect.Type, ordered bool) ([]collectionMember, error) {
+	if err := injectorScope(source.from).checkOpen(); err != nil {
+		return nil, err
+	}
+
+	candidates := collectionCandidatesFor(source, target)
+	members := make([]collectionMember, 0, len(candidates))
+	err := buildMembers(source, candidates, func(candidate collectionCandidate, instance any) {
+		members = append(members, collectionMember{candidate: candidate, instance: instance})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if !ordered {
+		return members, nil
+	}
+
+	for index := range members {
+		order, err := orderValue(members[index].candidate.name, members[index].instance, members[index].candidate.options())
+		if err != nil {
+			return nil, err
+		}
+		members[index].order = order
+	}
+	slices.SortStableFunc(members, func(a, b collectionMember) int { return cmp.Compare(a.order, b.order) })
+
+	return members, nil
+}
+
+// orderValue returns the collection order of a built member: its WithOrder
+// value when set (Order() is then not called), otherwise its Order() when it
+// implements Ordered, otherwise 0.
+// A panicking Order() is reported as an error naming the member, wrapping
+// the panic value when it is an error.
+func orderValue(name string, instance any, opts *serviceOptions) (order int, err error) {
+	if opts != nil && opts.order != nil {
+		return *opts.order, nil
+	}
+
+	ordered, ok := instance.(Ordered)
+	if !ok {
+		return 0, nil
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			if e, ok := r.(error); ok {
+				err = fmt.Errorf("doger: Order() of collection member `%s` panicked: %w", name, e)
+			} else {
+				err = fmt.Errorf("doger: Order() of collection member `%s` panicked: %v", name, r)
+			}
+		}
+	}()
+
+	return ordered.Order(), nil
+}
+
+// invokeAllMapByGenericType invokes every collection member for T, keyed
+// by name. Order() is never called.
+func invokeAllMapByGenericType[T any](source collectionSource) (map[string]T, error) {
+	members, err := invokeCollection(source, reflect.TypeFor[T](), false)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]T, len(members))
+	for _, m := range members {
+		typed, _ := m.instance.(T)
+		result[m.candidate.name] = typed
+	}
+
+	return result, nil
+}
+
+// buildMembers builds the candidates in order, through the reader when
+// there is one, and passes each member to add. It stops at the first
+// failure, naming the member.
+func buildMembers(source collectionSource, candidates []collectionCandidate, add func(candidate collectionCandidate, instance any)) error {
+	injector := source.from
+	if source.reader != nil {
+		injector = source.reader
+	}
+
+	for _, candidate := range candidates {
+		instance, err := invokeServiceInstance(injector, source.reader, candidate.name, candidate.name, candidate.scope, candidate.service)
+		if err != nil {
+			return wrapMemberError(candidate.name, err)
+		}
+
+		add(candidate, instance)
+	}
+
+	return nil
+}
+
+// options returns the registration options of the candidate, or nil.
+func (c collectionCandidate) options() *serviceOptions {
+	if service, ok := c.service.(serviceWrapperAny); ok {
+		return service.getOptions()
+	}
+
+	return nil
+}
+
+// wrapMemberError names the collection member whose build failed.
+func wrapMemberError(name string, err error) error {
+	return libErrorf("could not invoke collection member `%s`: %w", name, err)
+}
+
+// collectionCandidate is a member of a collection, before it is built.
+type collectionCandidate struct {
+	placement
+	scope   *Scope
+	service any
+}
+
+// placement is where a service sits in the default order of collections
+// and Start: ancestors first, then registration order.
+type placement struct {
+	name     string
+	depth    int    // scope depth from the root scope (root = 0)
+	regIndex uint64 // registration index, unique per root container
+}
+
+// compare orders p before o by scope depth, then registration index; the
+// name keeps the order total even if indexes ever collide.
+func (p placement) compare(o placement) int {
+	return cmp.Or(cmp.Compare(p.depth, o.depth), cmp.Compare(p.regIndex, o.regIndex), cmp.Compare(p.name, o.name))
+}
+
+// collectionCandidatesFor returns the members of a collection for target,
+// visible from source: the nearest service of each name (even when it is
+// not assignable to target, it shadows its ancestors), without aliases,
+// without the service whose provider reads the collection and without the
+// holder, whose registered type is assignable to target. When the visible
+// scopes hold defaults, collectionCandidatesWithDefaults applies their rules.
+func collectionCandidatesFor(source collectionSource, target reflect.Type) []collectionCandidate {
+	if chainHasDefaults(injectorScope(source.from)) {
+		return collectionCandidatesWithDefaults(source, target)
+	}
+
+	from := injectorScope(source.from)
+	excluded := excludedNames(source)
+	// the reading scope, only when it sees exports
+	var reader *Scope
+	if chainHasExports(from) {
+		reader = from
+	}
+
+	// each scope's services matching target come from its type-match cache,
+	// so the cost follows the matching services, not every visible one; a
+	// name registered in a nearer scope, matching or not, hides farther ones
+	candidates := []collectionCandidate{}
+	var nearer []scopeRead
+	for scope, depth := from, scopeDepth(from); scope != nil; scope, depth = scope.parentScope, depth-1 {
+		matches, version := scope.matchesForVersion(target)
+		for _, match := range matches {
+			if _, ok := excluded[match.name]; ok {
+				continue
+			}
+			shadowed, changed := shadowedByNearer(nearer, match.name)
+			if changed {
+				// a nearer scope changed since it was read: its services
+				// now may not be the ones its matches came from
+				return collectionCandidatesBySnapshot(source, target)
+			}
+			if shadowed {
+				continue
+			}
+			service := match.service.(serviceWrapperAny) //nolint:errcheck,forcetypeassert // matchesFor lists service wrappers only
+			if service.getServiceType() == ServiceTypeAlias && excludedAlias(match.service, reader) {
+				continue
+			}
+
+			candidates = append(candidates, collectionCandidate{
+				name:     match.name,
+				depth:    depth,
+				regIndex: match.regIndex,
+				scope:    scope,
+				service:  match.service,
+			})
+		}
+		nearer = append(nearer, scopeRead{scope: scope, version: version})
+	}
+
+	slices.SortFunc(candidates, func(a, b collectionCandidate) int { return a.compare(b.placement) })
+
+	return candidates
+}
+
+// scopeRead is a scope with the version of its services when it was read.
+type scopeRead struct {
+	scope   *Scope
+	version uint64
+}
+
+// shadowedByNearer reports whether one of the nearer scopes registers name,
+// or, as changed, that one of them changed since it was read, which leaves
+// the answer unknown.
+func shadowedByNearer(nearer []scopeRead, name string) (shadowed, changed bool) {
+	for _, read := range nearer {
+		read.scope.mu.RLock()
+		_, ok := read.scope.services[name]
+		version := read.scope.version
+		read.scope.mu.RUnlock()
+		if version != read.version {
+			return false, true
+		}
+		if ok {
+			return true, false
+		}
+	}
+
+	return false, false
+}
+
+// collectionCandidatesBySnapshot is collectionCandidatesFor by a walk of
+// every visible service, each scope read once under its lock. It is used
+// when a nearer scope changes while the type-match path runs.
+func collectionCandidatesBySnapshot(source collectionSource, target reflect.Type) []collectionCandidate {
+	candidates := []collectionCandidate{}
+	seen := excludedNames(source)
+	// the reading scope, only when it sees exports: a single captured
+	// pointer keeps the closure in its allocation size class
+	var reader *Scope
+	if from := injectorScope(source.from); chainHasExports(from) {
+		reader = from
+	}
+
+	source.from.serviceForEachRec(func(name string, scope *Scope, s any) bool {
+		if _, ok := seen[name]; ok {
+			return true
+		}
+		seen[name] = struct{}{}
+
+		service, ok := s.(serviceWrapperAny)
+		if !ok || (service.getServiceType() == ServiceTypeAlias && excludedAlias(s, reader)) || !serviceCanCastToType(s, target) {
+			return true
+		}
+
+		candidates = append(candidates, collectionCandidate{
+			name:     name,
+			depth:    scopeDepth(scope),
+			regIndex: service.getRegistrationIndex(),
+			scope:    scope,
+			service:  s,
+		})
+		return true
+	})
+
+	slices.SortFunc(candidates, func(a, b collectionCandidate) int { return a.compare(b.placement) })
+
+	return candidates
+}
+
+// collectionCandidatesWithDefaults is collectionCandidatesFor with the rules
+// of default registrations: an unresolved or yielded default hides only
+// farther defaults, and is not a member when a farther non-default of its
+// name exists; a yielded default is never a member, its target represents
+// it. See dropReplacedDefaults for defaults replaced by type.
+func collectionCandidatesWithDefaults(source collectionSource, target reflect.Type) []collectionCandidate {
+	candidates := []collectionCandidate{}
+	seen := excludedNames(source)
+	softDefaults, yielding := map[string]struct{}{}, map[string]struct{}{}
+	reader := injectorScope(source.from)
+
+	source.from.serviceForEachRec(func(name string, scope *Scope, s any) bool {
+		if _, ok := seen[name]; ok {
+			return true
+		}
+		isDefault, state := defaultStateOf(s)
+		if hiddenByNearerDefault(name, isDefault, state, softDefaults, yielding) {
+			return true
+		}
+		if !isDefault || state == defaultChosen {
+			seen[name] = struct{}{}
+		}
+
+		if isDefault && state == defaultYielded {
+			return true
+		}
+		if candidate, ok := newCollectionCandidate(name, scope, s, target, reader); ok {
+			candidates = append(candidates, candidate)
+		}
+		return true
+	})
+
+	candidates = dropReplacedDefaults(dropYieldingDefaults(candidates, yielding))
+	slices.SortFunc(candidates, func(a, b collectionCandidate) int { return a.compare(b.placement) })
+
+	return candidates
+}
+
+// newCollectionCandidate returns the candidate for the service s, registered
+// as name in scope, when it can be a member for target read from reader: it
+// is not an alias, or it is an export that reader is not inside the source
+// scope of, and its registered type is assignable to target.
+func newCollectionCandidate(name string, scope *Scope, s any, target reflect.Type, reader *Scope) (collectionCandidate, bool) {
+	service, ok := s.(serviceWrapperAny)
+	if !ok || (service.getServiceType() == ServiceTypeAlias && excludedAlias(s, reader)) || !serviceCanCastToType(s, target) {
+		return collectionCandidate{}, false
+	}
+
+	return collectionCandidate{
+		name:     name,
+		depth:    scopeDepth(scope),
+		regIndex: service.getRegistrationIndex(),
+		scope:    scope,
+		service:  s,
+	}, true
+}
+
+// excludedAlias reports whether the alias service is not a collection member
+// read from reader: an Alias or Bind alias never is, and an export is not one
+// inside its source scope. reader is nil when no scope it sees holds exports.
+func excludedAlias(service any, reader *Scope) bool {
+	if reader == nil {
+		return true
+	}
+	export, ok := asExport(service)
+
+	return !ok || export.withinSource(reader)
+}
+
+// hiddenByNearerDefault records a visited service of name, nearest scope
+// first, and reports whether a nearer unresolved or yielded default of the
+// name hides it: such a default hides only farther defaults, and a farther
+// non-default it yields to is recorded in yielding. An unresolved or yielded
+// default is recorded in softDefaults.
+func hiddenByNearerDefault(name string, isDefault bool, state defaultState, softDefaults, yielding map[string]struct{}) bool {
+	if _, ok := softDefaults[name]; ok {
+		if isDefault {
+			return true
+		}
+		yielding[name] = struct{}{}
+	}
+	if isDefault && state != defaultChosen {
+		softDefaults[name] = struct{}{}
+	}
+
+	return false
+}
+
+// excludedNames returns the names that are never members of a collection
+// read from source: the service whose provider reads it, and the holder.
+func excludedNames(source collectionSource) map[string]struct{} {
+	excluded := map[string]struct{}{}
+	if source.reader != nil {
+		if invoker, ok := source.reader.getLastInvokerName(); ok {
+			excluded[invoker] = struct{}{}
+		}
+	}
+	if source.holder != "" {
+		excluded[source.holder] = struct{}{}
+	}
+
+	return excluded
+}
+
+// dropYieldingDefaults removes from candidates the defaults whose name is in
+// yielding: each yields to a farther non-default of its name, a member too.
+func dropYieldingDefaults(candidates []collectionCandidate, yielding map[string]struct{}) []collectionCandidate {
+	return slices.DeleteFunc(candidates, func(c collectionCandidate) bool {
+		isDefault, _ := defaultStateOf(c.service)
+		_, yields := yielding[c.name]
+		return isDefault && yields
+	})
+}
+
+// dropReplacedDefaults removes from candidates each unresolved default that a
+// non-default candidate is assignable to the registered type of, and decides
+// the unresolved defaults it keeps, removing those that yield.
+func dropReplacedDefaults(candidates []collectionCandidate) []collectionCandidate {
+	replacing := []reflect.Type{}
+	for _, candidate := range candidates {
+		if isDefault, _ := defaultStateOf(candidate.service); !isDefault {
+			replacing = append(replacing, candidate.service.(serviceWrapperAny).getReflectType()) //nolint:errcheck,forcetypeassert // collection candidates are stored service wrappers
+		}
+	}
+
+	return slices.DeleteFunc(candidates, func(c collectionCandidate) bool {
+		isDefault, state := defaultStateOf(c.service)
+		if !isDefault || state != defaultUnresolved {
+			return false
+		}
+		registered := c.service.(serviceWrapperAny).getReflectType() //nolint:errcheck,forcetypeassert // collection candidates are stored service wrappers
+		if slices.ContainsFunc(replacing, func(t reflect.Type) bool { return typeCanCastToType(t, registered) }) {
+			return true
+		}
+		return isYieldedDefault(c.service)
+	})
+}
+
+// invokingServiceName returns the name of the service whose provider
+// received injector, when injector is a provider's virtual scope.
+func invokingServiceName(injector Injector) (string, bool) {
+	if vScope, ok := injector.(*virtualScope); ok {
+		return vScope.getLastInvokerName()
+	}
+
+	return "", false
+}
+
+// selectByType returns the visible service assignable to target, aliases
+// included, in the nearest scope (the invoking scope before its ancestors),
+// then with the earliest registration, then with the smallest name. A
+// service hidden by a same-name service in a nearer scope is skipped, as for
+// collections, and so is the service whose provider invokes it, so that a
+// decorator resolves the service it wraps. This is nearest-first, the
+// opposite of collection order, on purpose: it keeps the "current scope
+// first" behavior of InvokeAs.
+//
+// Defaults rank in two tiers: unresolved defaults are considered only when no
+// other service matches, nearest first, and picking one decides it. A default
+// that chose its own provider ranks as a non-default; one that yielded is
+// never a candidate, since its target represents it.
+func selectByType(injector Injector, target reflect.Type) (collectionCandidate, bool) {
+	from := injectorScope(injector)
+	invoker, fromProvider := invokingServiceName(injector)
+	var unresolved []collectionCandidate // the second tier
+
+	// nearest scope first: once a scope has a match, a farther scope cannot
+	// win, so the walk stops there
+	for scope := from; scope != nil; scope = scope.parentScope {
+		var selected collectionCandidate
+		var found bool
+
+		for _, match := range scope.matchesFor(target) {
+			if fromProvider && match.name == invoker {
+				continue
+			}
+
+			// an alias of the invoking service would resolve to it
+			if fromProvider && aliasResolvesTo(match.service, from, invoker) {
+				continue
+			}
+
+			// a default ranks in the first tier only once it chose its own
+			// provider; an unresolved one waits in the second tier
+			if match.isDefault && !firstTierDefault(from, scope, match, &unresolved) {
+				continue
+			}
+
+			// a nearer service of the same name hides this one, as for collections
+			if shadowedBetween(from, scope, match.name, match.isDefault) {
+				continue
+			}
+
+			// one scope at a time, so the depth never decides
+			candidate := placement{name: match.name, regIndex: match.regIndex}
+			if !found || candidate.compare(selected.placement) < 0 {
+				selected = collectionCandidate{placement: candidate, scope: scope, service: match.service}
+				found = true
+			}
+		}
+
+		if found {
+			return selected, true
+		}
+	}
+
+	return selectUnresolvedDefault(unresolved)
+}
+
+// firstTierDefault reports whether match, a default of scope, ranks among
+// the services that are not defaults: it chose its own provider. An
+// unresolved default visible from from is appended to unresolved, the second
+// tier; a yielded one is never a candidate.
+func firstTierDefault(from, scope *Scope, match typeMatch, unresolved *[]collectionCandidate) bool {
+	switch match.service.(serviceWrapperDefault).currentState() { //nolint:errcheck,forcetypeassert // called only for a match with isDefault set, whose wrapper is a *serviceDefault
+	case defaultChosen:
+		return true
+	case defaultUnresolved:
+		if !shadowedBetween(from, scope, match.name, true) {
+			*unresolved = append(*unresolved, collectionCandidate{
+				name:     match.name,
+				depth:    scopeDepth(scope),
+				regIndex: match.regIndex,
+				scope:    scope,
+				service:  match.service,
+			})
+		}
+	case defaultYielded, defaultSuperseded:
+	}
+
+	return false
+}
+
+// selectUnresolvedDefault returns the first of the unresolved defaults that
+// does not yield once decided: in the nearest scope, then with the earliest
+// registration, then with the smallest name.
+func selectUnresolvedDefault(unresolved []collectionCandidate) (collectionCandidate, bool) {
+	slices.SortFunc(unresolved, func(a, b collectionCandidate) int {
+		return cmp.Or(cmp.Compare(b.depth, a.depth), a.compare(b.placement))
+	})
+	for _, candidate := range unresolved {
+		if !isYieldedDefault(candidate.service) {
+			return candidate, true
+		}
+	}
+
+	return collectionCandidate{}, false
+}
+
+// maxAliasHops bounds the alias chain aliasResolvesTo follows: a longer
+// chain is a loop.
+const maxAliasHops = 64
+
+// aliasResolvesTo reports whether service is an alias whose target chain
+// reaches a service named name, following each target from its alias's
+// injector, as invoking the alias does. An export in the chain is followed to
+// its source, which must be name registered in scope: another scope's service
+// of the same name is a different one.
+func aliasResolvesTo(service any, scope *Scope, name string) bool {
+	for range maxAliasHops {
+		if export, ok := asExport(service); ok {
+			source, sourceName, found := export.exportSource()
+			if !found {
+				return false
+			}
+			if source == scope && sourceName == name {
+				return true
+			}
+			if service, found = source.serviceGet(sourceName); !found {
+				return false
+			}
+			continue
+		}
+
+		alias, ok := service.(serviceWrapperAliasTarget)
+		if !ok {
+			return false
+		}
+
+		injector, target := alias.aliasTarget()
+		if target == name {
+			return true
+		}
+
+		next, _, found := injector.serviceGetRec(target)
+		if !found {
+			return false
+		}
+		service = next
+	}
+
+	return false
+}
+
+// shadowedBetween reports whether a scope from from up to, but not
+// including, its ancestor to registers name, hiding to's service. A default
+// is hidden by any nearer registration of its name; a non-default is not
+// hidden by a default that is unresolved or yielded.
+func shadowedBetween(from, to *Scope, name string, shadowedIsDefault bool) bool {
+	for scope := from; scope != nil && scope != to; scope = scope.parentScope {
+		service, ok := scope.serviceGet(name)
+		if ok && (shadowedIsDefault || hidesNonDefault(service)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// scopeDepth returns the number of ancestors of scope, 0 for nil.
+func scopeDepth(scope *Scope) int {
+	if scope == nil {
+		return 0
+	}
+
+	depth := 0
+	for p := scope.parentScope; p != nil; p = p.parentScope {
+		depth++
+	}
+	return depth
 }
 
 // invokeByTag injects services into struct fields based on struct tags.
@@ -214,14 +863,16 @@ func invokeByGenericType[T any](i Injector) (T, error) {
 //
 // The function does not manipulate virtual scope because it is done by invokeAnyByName or invokeByGenericType.
 //
-// @TODO: When implicitAliasing is enabled and the tag name is empty, fallback by type may select an arbitrary
-// matching service depending on iteration order; consider stable ordering or explicit disambiguation.
-func invokeByTags(i Injector, structName string, structValue reflect.Value, implicitAliasing bool) error { //nolint:gocyclo
-	injector := getInjectorOrDefault(i)
+// The implicit-aliasing fallback selects among matching services like invokeByGenericType.
+func invokeByTags(i Injector, structName string, structValue reflect.Value, implicitAliasing bool) error { //nolint:gocyclo // one pass over the fields, each tag form handled inline; splitting it would scatter the field-by-field rules
+	injector, err := getInjector(i)
+	if err != nil {
+		return err
+	}
 
 	// Ensure that servicePtr is a pointer to a struct
 	if structValue.Kind() != reflect.Pointer || structValue.Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("DI: must be a pointer to a struct")
+		return structInjectionError("must be a pointer to a struct")
 	}
 
 	structValue = structValue.Elem()
@@ -240,53 +891,49 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 		wasTagNameEmpty := serviceName == ""
 
 		if !fieldValue.CanAddr() {
-			return fmt.Errorf("DI: field is not addressable `%s.%s`", structName, field.Name)
+			return structInjectionError("field is not addressable `%s.%s`", structName, field.Name)
 		}
 
 		if !fieldValue.CanSet() {
 			// When a field is not exported, we override it.
 			// See https://stackoverflow.com/questions/42664837/how-to-access-unexported-struct-fields/43918797#43918797
 			// bearer:disable go_gosec_unsafe_unsafe
+			//nolint:gosec // G103: struct injection sets unexported tagged fields: it bypasses reflect's export check via the field's own address (CanAddr was checked above)
 			fieldValue = reflect.NewAt(fieldValue.Type(), unsafe.Pointer(fieldValue.UnsafeAddr())).Elem()
+		}
+
+		if serviceName == "*" {
+			if err := injectCollectionField(injector, structName, field, fieldValue); err != nil {
+				return err
+			}
+			continue
 		}
 
 		if serviceName == "" {
 			serviceName = typetostring.GetReflectValueType(fieldValue)
 		}
 
-		dependency, err := invokeAnyByName(injector, serviceName)
-		// @TODO: This fallback may pick an arbitrary matching service; selection order is not stable.
-		if err != nil && implicitAliasing && wasTagNameEmpty && errors.Is(err, ErrServiceNotFound) {
-			// Fallback: try to resolve by generic type of the field
-			toType := fieldValue.Type()
-
-			var resolvedName string
-			var found bool
-			injector.serviceForEachRec(func(name string, _ *Scope, s any) bool {
-				if serviceCanCastToType(s, toType) {
-					resolvedName = s.(serviceWrapperGetName).getName() //nolint:errcheck,forcetypeassert
-					found = true
-
-					// Stop or not stop, that's the question -> https://github.com/samber/do/issues/114
-					return false
-				}
-
-				return true
-			})
-
-			if found {
-				dependency, err = invokeAnyByName(injector, resolvedName)
+		name := serviceName
+		if implicitAliasing && wasTagNameEmpty && !namedCandidate(injector, serviceName) {
+			// Fallback: resolve by the field's type when no service other than
+			// the invoking one has the type's name; with no match, the named
+			// lookup reports why
+			if selected, found := selectByType(injector, fieldValue.Type()); found {
+				name = selected.name
 			}
 		}
+		dependency, err := invokeAnyByName(injector, name)
 		if err != nil {
 			return err
 		}
 
-		dependencyValue := reflect.ValueOf(dependency)
+		dependencyValue := memberValue(dependency, fieldValue.Type())
 
 		// Should be checked before invocation, because we just built something that is not assignable to the field.
-		if !dependencyValue.Type().AssignableTo(fieldValue.Type()) {
-			return fmt.Errorf("DI: `%s` is not assignable to field `%s.%s`", serviceName, structName, field.Name)
+		// A nil interface has no dynamic type: its service's declared type is checked instead.
+		if !dependencyValue.Type().AssignableTo(fieldValue.Type()) ||
+			dependency == nil && !declaredTypeAssignable(injector, name, fieldValue.Type()) {
+			return structInjectionError("`%s` is not assignable to field `%s.%s`", serviceName, structName, field.Name)
 		}
 
 		// Should not panic, since we checked CanAddr() and CanSet() earlier.
@@ -294,6 +941,73 @@ func invokeByTags(i Injector, structName string, structValue reflect.Value, impl
 	}
 
 	return nil
+}
+
+// declaredTypeAssignable reports whether the declared type of the service
+// named name, as visible from injector, is assignable to fieldType.
+func declaredTypeAssignable(injector Injector, name string, fieldType reflect.Type) bool {
+	service, _, ok := injector.serviceGetRec(name)
+	if !ok {
+		return false
+	}
+	typed, ok := service.(serviceWrapperGetReflectType)
+
+	return ok && typed.getReflectType().AssignableTo(fieldType)
+}
+
+// namedCandidate reports whether a visible service named name, other than
+// the one whose provider invokes from injector, can fill a field by name.
+func namedCandidate(injector Injector, name string) bool {
+	if invoker, ok := invokingServiceName(injector); ok && invoker == name {
+		return false
+	}
+
+	return injector.serviceExistRec(name)
+}
+
+// injectCollectionField sets a field tagged `*`: a []E field to the members
+// of InvokeAll[E], a map[string]E field to those of InvokeAllMap[E].
+func injectCollectionField(injector Injector, structName string, field reflect.StructField, fieldValue reflect.Value) error {
+	fieldType := fieldValue.Type()
+
+	switch {
+	case fieldType.Kind() == reflect.Slice:
+		members, err := invokeCollection(collectionFrom(injector), fieldType.Elem(), true)
+		if err != nil {
+			return err
+		}
+
+		slice := reflect.MakeSlice(fieldType, 0, len(members))
+		for _, m := range members {
+			slice = reflect.Append(slice, memberValue(m.instance, fieldType.Elem()))
+		}
+		fieldValue.Set(slice)
+	case fieldType.Kind() == reflect.Map && fieldType.Key() == reflect.TypeFor[string]():
+		members, err := invokeCollection(collectionFrom(injector), fieldType.Elem(), false)
+		if err != nil {
+			return err
+		}
+
+		collection := reflect.MakeMapWithSize(fieldType, len(members))
+		for _, m := range members {
+			collection.SetMapIndex(reflect.ValueOf(m.candidate.name), memberValue(m.instance, fieldType.Elem()))
+		}
+		fieldValue.Set(collection)
+	default:
+		return structInjectionError("tag `*` requires a slice or map[string] field, got `%s.%s`", structName, field.Name)
+	}
+
+	return nil
+}
+
+// memberValue returns instance as a value of type elem: the zero value when
+// instance is a nil interface.
+func memberValue(instance any, elem reflect.Type) reflect.Value {
+	if instance == nil {
+		return reflect.Zero(elem)
+	}
+
+	return reflect.ValueOf(instance)
 }
 
 // serviceNotFound returns a detailed error indicating that the specified service was not found.
@@ -313,23 +1027,38 @@ func serviceNotFound(injector Injector, err error, chain []string) error {
 	serviceNames := getServiceNames(services)
 	sortedServiceNames := sortServiceNames(serviceNames)
 
+	list := formatServiceList(sortedServiceNames, notFoundListLimit)
+
 	if len(chain) > 1 {
 		return fmt.Errorf(
 			"%w `%s`, available services: %s, path: %s",
 			err,
 			name,
-			strings.Join(sortedServiceNames, ", "),
+			list,
 			humanReadableInvokerChain(chain),
 		)
 	}
-	return fmt.Errorf("%w `%s`, available services: %s", err, name, strings.Join(sortedServiceNames, ", "))
+	return fmt.Errorf("%w `%s`, available services: %s", err, name, list)
+}
+
+// notFoundListLimit is the number of services a not-found error lists.
+const notFoundListLimit = 10
+
+// formatServiceList joins the first limit names with ", ", followed by
+// " and N more" when more names exist.
+func formatServiceList(names []string, limit int) string {
+	if len(names) <= limit {
+		return strings.Join(names, ", ")
+	}
+
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:limit], ", "), len(names)-limit)
 }
 
 // serviceTypeMismatch returns an error indicating that the specified service was found,
 // but its type does not match the expected type. This typically occurs when a service
 // is registered with one type but invoked with a different type.
 func serviceTypeMismatch(invoking string, registered string) error {
-	return fmt.Errorf("DI: service found, but type mismatch: invoking `%s` but registered `%s`", invoking, registered)
+	return libErrorf("%w: invoking `%s` but registered `%s`", ErrServiceTypeMismatch, invoking, registered)
 }
 
 // getServiceNames formats a list of ServiceDescription names for error reporting.
@@ -366,9 +1095,9 @@ func handleProviderPanic[T any](provider Provider[T], i Injector) (svc T, err er
 	defer func() {
 		if r := recover(); r != nil {
 			if e, ok := r.(error); ok {
-				err = e
+				err = libErrorf("%w: %w", ErrProviderPanic, e)
 			} else {
-				err = fmt.Errorf("DI: %v", r)
+				err = libErrorf("%w: %v", ErrProviderPanic, r)
 			}
 		}
 	}()

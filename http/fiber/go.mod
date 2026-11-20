@@ -1,13 +1,18 @@
 module github.com/kartaladev/doger/http/fiber
 
-go 1.25
-
-require github.com/gofiber/fiber/v2 v2.52.16
+go 1.27
 
 require (
-	github.com/andybalholm/brotli v1.1.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
+	github.com/gofiber/fiber/v2 v2.52.16
 	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
+	github.com/stretchr/testify v1.12.1
+	github.com/valyala/fasthttp v1.51.0
+)
+
+require (
+	github.com/andybalholm/brotli v1.2.7 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -15,8 +20,8 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/samber/go-type-to-string v1.8.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/sys v0.28.0 // indirect
 )
 

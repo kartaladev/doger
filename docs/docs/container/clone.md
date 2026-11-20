@@ -20,7 +20,7 @@ Provide[*Engine](i, NewEngine)
 injector = injector.Clone()
 ```
 
-Because the clone starts with no invoked services, the next call to `doger.Invoke` re-runs the provider functions and builds fresh instances — nothing is shared with the original injector.
+Because the clone starts with no invoked services, the next call to `doger.Invoke` re-runs the provider functions and builds fresh instances of lazy and transient services. Eager values (`ProvideValue`, `OverrideValue` and their named forms) are the exception: the clone shares the same value with the original injector.
 
 ## Clone with options {#clone-with-options}
 
@@ -42,6 +42,12 @@ doger.Override[Engine](injector, func (i doger.Injector) (Engine, error) {
     return &MockEngine{}, nil
 })
 ```
+
+## What a clone keeps {#what-a-clone-keeps}
+
+A clone keeps the service registrations and the [component kind](../service-lifecycle/component-kinds.md) handlers, including a replaced `Runnable` handler, with their stages and order. Handling a kind on the clone replaces its handler on the clone only. `Clone()` also keeps the container options and hooks; `CloneWithOpts(opts)` uses only `opts`.
+
+A clone does not keep invoked instances or the lifecycle state: it starts and shuts down on its own. A shared eager value is shut down once across the original and all its clones: the first container to shut down calls its `Shutdown`, which closes it for every other container, and the others only drop their registration.
 
 ## When to use Clone {#when-to-use-clone}
 

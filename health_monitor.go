@@ -1,0 +1,393 @@
+package doger
+
+import (
+	"context"
+	"log/slog"
+)
+
+// schedState is where a container's HealthScheduler is.
+type schedState int
+
+const (
+	schedIdle      schedState = iota // not called
+	schedStarting                    // ScheduleHealthRounds is running
+	schedScheduled                   // rounds are scheduled: reports are monitored
+	schedFailed                      // ScheduleHealthRounds failed: reports stay unmonitored
+	schedStopped                     // root Shutdown began
+)
+
+// HealthScheduler schedules the health rounds of a container, keeping its
+// HealthReport results fresh. Set it in InjectorOpts.HealthScheduler; the
+// github.com/kartaladev/doger/scheduler/gocron module provides one.
+//
+// The container calls ScheduleHealthRounds once, when it reaches PhaseReady
+// and before the Ready hooks run, with the injector clock (InjectorOpts.Clock,
+// RealClock() when it is nil) and the round to run. A scheduler that needs a
+// github.com/jonboulle/clockwork clock gets one from a clock made by
+// dogerclockwork.Wrap with dogerclockwork.Unwrap, in the
+// github.com/kartaladev/doger/clock/clockwork module. Each call of round
+// checks every eligible health checker once and returns once each result is
+// recorded or its bound elapsed; it honors ctx.
+// The returned stop function is called once, when root Shutdown begins and
+// before the Closing hooks run, with a context Shutdown's context cannot
+// cancel: it must stop scheduling and return once no round of this schedule
+// runs. A Shutdown that begins while ScheduleHealthRounds runs waits for it
+// to return, even past the end of Shutdown's context, so
+// ScheduleHealthRounds must return promptly. While the rounds are scheduled,
+// a HealthReport read reuses their recorded results and joins the first
+// check of a service still in flight instead of starting another. Each call is an independent
+// schedule, so one value may serve several containers, such as a container
+// and its clones.
+//
+// An error or a panic leaves the container unmonitored: Start still
+// succeeds, the error or panic is logged, or a panic is passed to
+// HookContainerPanic with the point "healthscheduler" when it is set, and
+// reads check stale services on demand. A stop function returned together
+// with an error is called at once, before Start returns, and not again.
+type HealthScheduler interface {
+	ScheduleHealthRounds(clock Clock, round func(ctx context.Context)) (stop func(ctx context.Context) error, err error)
+}
+
+// startScheduling calls the HealthScheduler, if any, for a container that
+// became ready. It holds no lock while the scheduler runs.
+func (s *RootScope) startScheduling() {
+	scheduler := s.opts.HealthScheduler
+	if scheduler == nil {
+		return
+	}
+
+	m := &s.health
+	m.mu.Lock()
+	if m.sched != schedIdle {
+		m.mu.Unlock()
+		return
+	}
+	m.sched = schedStarting
+	m.roundCtx, m.roundCancel = context.WithCancel(context.Background())
+	m.scheduling = make(chan struct{})
+	m.mu.Unlock()
+
+	// a panic HookContainerPanic raises propagates through the deferred
+	// update, leaving errSchedulerInterrupted
+	var stop func(context.Context) error
+	err := errSchedulerInterrupted
+	defer func() { m.finishScheduling(stop, err) }()
+
+	stop, err = s.callScheduler(scheduler)
+}
+
+// errSchedulerInterrupted is the outcome of a ScheduleHealthRounds call a
+// panic interrupted.
+var errSchedulerInterrupted = libErrorf("health scheduler interrupted")
+
+// finishScheduling records the outcome of ScheduleHealthRounds: its stop
+// function, nil on failure, which stopScheduling calls once shutdown began,
+// and whether rounds are scheduled, unless shutdown began meanwhile. It then
+// signals that the call returned.
+func (m *healthMonitor) finishScheduling(stop func(context.Context) error, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.stop = stop
+	if m.sched == schedStarting {
+		m.sched = schedScheduled
+		if err != nil {
+			m.sched = schedFailed
+		}
+	}
+	close(m.scheduling)
+}
+
+// stopScheduling stops the container's health scheduling as root Shutdown
+// begins: nothing is recorded from now on, the rounds in progress and the
+// contexts of the checks in flight are cancelled, and the scheduler's stop
+// function is called, once, with a context ctx cannot cancel, after an
+// in-progress ScheduleHealthRounds returned. The checks in flight are not
+// waited for: a check ignoring its context may still run while its service
+// shuts down. An error of stop is logged; a panic is passed to
+// HookContainerPanic when it is set, and logged otherwise.
+func (s *RootScope) stopScheduling(ctx context.Context) {
+	m := &s.health
+	m.mu.Lock()
+	m.closing = true
+	m.sched = schedStopped
+	cancel, scheduling := m.roundCancel, m.scheduling
+	for _, call := range m.inflight {
+		call.cancel(ErrShutdown) // cancelled, not waited for
+	}
+	m.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if scheduling != nil {
+		<-scheduling
+	}
+
+	m.mu.Lock()
+	stop := m.stop
+	m.stop = nil
+	m.mu.Unlock()
+	if stop == nil {
+		return
+	}
+
+	s.callStop(ctx, stop)
+}
+
+// callStop calls the scheduler's stop function with a context ctx cannot
+// cancel. Its error is logged; its panic is passed to HookContainerPanic when
+// it is set, and logged otherwise.
+func (s *RootScope) callStop(ctx context.Context, stop func(context.Context) error) {
+	var err error
+	recovered, panicked := callHookSafely(func() { err = stop(context.WithoutCancel(ctx)) })
+	switch {
+	case panicked:
+		s.logSchedulerFailure("healthscheduler", recovered, "health scheduler stop failed", errSchedulerStopPanicked)
+	case err != nil:
+		// logged outside the recovered call: a panic of the Logger is not
+		// one of the scheduler
+		s.self.log(slog.LevelError, "health scheduler stop failed", slog.Any("error", err))
+	}
+}
+
+// logSchedulerFailure handles a panic recovered at point by the health
+// scheduling or a health hook: it is passed to HookContainerPanic when that
+// option is set. Otherwise it is logged, the value at Debug level only, and
+// then message, when not empty, at Error level with err.
+func (s *RootScope) logSchedulerFailure(point string, recovered any, message string, err error) {
+	if s.opts.HookContainerPanic != nil {
+		s.opts.HookContainerPanic(s, point, recovered)
+		return
+	}
+
+	s.logRecoveredPanic(point, "", recovered)
+	if message != "" {
+		s.self.log(slog.LevelError, message, slog.Any("error", err))
+	}
+}
+
+// errSchedulerPanicked and errSchedulerStopPanicked are logged for a
+// recovered panic of the HealthScheduler and of its stop function: the panic
+// value itself is logged at Debug level only.
+var (
+	errSchedulerPanicked     = libErrorf("health scheduler panicked")
+	errSchedulerStopPanicked = libErrorf("health scheduler stop panicked")
+)
+
+// callScheduler calls scheduler, recovering its panic: an error or a panic is
+// logged, or a panic is passed to HookContainerPanic when it is set, and
+// returned as an error.
+func (s *RootScope) callScheduler(scheduler HealthScheduler) (stop func(context.Context) error, err error) {
+	var recovered any
+	panicked := false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				recovered, panicked = r, true
+			}
+		}()
+		stop, err = scheduler.ScheduleHealthRounds(s.opts.Clock, s.healthRound)
+	}()
+
+	if panicked {
+		s.logSchedulerFailure("healthscheduler", recovered, "health scheduler failed", errSchedulerPanicked)
+		return nil, errSchedulerPanicked
+	}
+	if err == nil && stop == nil {
+		stop = func(context.Context) error { return nil }
+	}
+	if err != nil {
+		s.self.log(slog.LevelError, "health scheduler failed", slog.Any("error", err))
+		if stop != nil {
+			// a schedule partly started is stopped at once
+			s.callStop(context.Background(), stop)
+		}
+		return nil, err
+	}
+
+	return stop, nil
+}
+
+// healthRound checks every eligible health checker of the container once,
+// within ctx and the report bound, and returns once each result is recorded
+// or its bound elapsed. It returns at once after scheduling stopped.
+func (s *RootScope) healthRound(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	m := &s.health
+	m.mu.Lock()
+	roundCtx := m.roundCtx
+	stopped := m.sched == schedStopped || roundCtx == nil
+	m.mu.Unlock()
+	if stopped {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(roundCtx, cancel)()
+
+	bound := serviceBound(s.opts, boundScopeWide)
+	covered := s.coveredChecks(containerCheckers(s))
+	m.keepOnly(coveredMembers(covered))
+	s.deliverTransitions()
+	for _, c := range covered {
+		if eligibleForReport(s, c.target.wrapper) {
+			s.startReportCheck(ctx, bound, c)
+		}
+	}
+	for _, c := range covered {
+		_ = m.wait(c.waiter)
+	}
+}
+
+// monitored reports whether a HealthScheduler schedules the container's
+// rounds, in phase.
+func (m *healthMonitor) monitored(phase ContainerPhase) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.sched == schedScheduled && phase != PhaseClosing && phase != PhaseClosed
+}
+
+// neverChecked reports whether service has no recorded result. A monitored
+// read checks such a service, joining its first check when one is in flight.
+func (m *healthMonitor) neverChecked(service any) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, recorded := m.records[service]
+	return !recorded
+}
+
+// healthTransition is a state change waiting for the hooks: a service's
+// (service set), or the container's.
+type healthTransition struct {
+	service           bool
+	target            healthTarget
+	previous, current ServiceHealth
+	containerPrevious HealthState
+	containerCurrent  HealthState
+}
+
+// containerChangedLocked recomputes the overall state of the members,
+// without the phase gate, and queues its change for the container hooks.
+// m.mu must be held.
+func (m *healthMonitor) containerChangedLocked() {
+	if m.closing {
+		return
+	}
+
+	current := m.counts.state()
+	if current == m.containerState {
+		return
+	}
+	m.transitions = append(m.transitions, healthTransition{containerPrevious: m.containerState, containerCurrent: current})
+	m.containerState = current
+}
+
+// deliverTransitions calls the hooks for the queued transitions, in order,
+// one at a time and with no lock held, unless another goroutine is
+// delivering them: that goroutine then delivers these too. Nothing is
+// delivered once root Shutdown began.
+func (s *RootScope) deliverTransitions() {
+	m := &s.health
+	m.mu.Lock()
+	if m.delivering {
+		m.mu.Unlock()
+		return
+	}
+	m.delivering = true
+
+	defer func() {
+		// reached with m.mu held, or by a panic HookContainerPanic raised
+		if r := recover(); r != nil {
+			m.mu.Lock()
+			m.delivering = false
+			m.mu.Unlock()
+			panic(r)
+		}
+	}()
+
+	for len(m.transitions) > 0 && !m.closing {
+		transition := m.transitions[0]
+		m.transitions = m.transitions[1:]
+		serviceHooks, containerHooks := s.hooks.serviceHealthChanged.load(), s.hooks.containerHealthChanged.load()
+		m.mu.Unlock()
+
+		s.deliverTransition(transition, serviceHooks, containerHooks)
+
+		m.mu.Lock()
+	}
+	m.transitions = nil
+	m.delivering = false
+	m.mu.Unlock()
+}
+
+// deliverTransition calls the hooks of transition, in order, skipping nil
+// ones.
+func (s *RootScope) deliverTransition(transition healthTransition, serviceHooks []func(*Scope, string, ServiceHealth, ServiceHealth), containerHooks []func(*RootScope, HealthState, HealthState)) {
+	if !transition.service {
+		level := slog.LevelWarn
+		if transition.containerCurrent == HealthHealthy {
+			level = slog.LevelInfo
+		}
+		s.self.log(level, "container health changed", slog.String("previous", transition.containerPrevious.String()), slog.String("current", transition.containerCurrent.String()))
+	}
+	if transition.service {
+		for _, hook := range serviceHooks {
+			if hook != nil {
+				s.callHealthHook(func() { hook(transition.target.scope, transition.target.name, transition.previous, transition.current) })
+			}
+		}
+		return
+	}
+
+	for _, hook := range containerHooks {
+		if hook != nil {
+			s.callHealthHook(func() { hook(s, transition.containerPrevious, transition.containerCurrent) })
+		}
+	}
+}
+
+// callHealthHook calls a health hook, recovering its panic: the panic goes
+// to HookContainerPanic with the point "healthchanged" when it is set, and
+// is logged otherwise.
+func (s *RootScope) callHealthHook(call func()) {
+	if recovered, panicked := callHookSafely(call); panicked {
+		s.logSchedulerFailure("healthchanged", recovered, "", nil)
+	}
+}
+
+// AddServiceHealthChangedHook adds a hook called when a service's recorded
+// health state changes. A nil hook is ignored. See
+// [InjectorOpts.HookServiceHealthChanged].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown, Clone and other adders. The
+// hook applies to the changes delivered after this call returned; whether a
+// delivery already running sees it is unspecified.
+func (s *RootScope) AddServiceHealthChangedHook(hook func(scope *Scope, serviceName string, previous, current ServiceHealth)) {
+	if hook == nil {
+		return
+	}
+	s.hooks.serviceHealthChanged.add(hook)
+}
+
+// AddContainerHealthChangedHook adds a hook called when the overall health
+// state of the container changes. A nil hook is ignored. See
+// [InjectorOpts.HookContainerHealthChanged].
+//
+// It is safe to call at any time, concurrently with registration,
+// invocation, Start, health checks, Shutdown, Clone and other adders. The
+// hook applies to the changes delivered after this call returned; whether a
+// delivery already running sees it is unspecified.
+func (s *RootScope) AddContainerHealthChangedHook(hook func(root *RootScope, previous, current HealthState)) {
+	if hook == nil {
+		return
+	}
+	s.hooks.containerHealthChanged.add(hook)
+}

@@ -2,16 +2,15 @@ package dogerhttp
 
 import (
 	"bytes"
-	"text/template"
 
 	"github.com/kartaladev/doger"
 )
 
-func fromTemplate(tpl string, data any) (string, error) {
-	t := template.Must(template.New("").Parse(tpl))
+// render renders the page template name of the pages set with data.
+func render(name string, data any) (string, error) {
 	var buf bytes.Buffer
 
-	err := t.Execute(&buf, data) // 🤮
+	err := pages.ExecuteTemplate(&buf, name, data)
 	if err != nil {
 		return "", err
 	}

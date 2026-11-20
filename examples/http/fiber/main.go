@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/gofiber/fiber/v2"
 	dogerfiber "github.com/kartaladev/doger/http/fiber"
 )
@@ -11,5 +13,5 @@ func main() {
 	router := fiber.New()
 	dogerfiber.Use(router.Group("/debug/do"), "/debug/do", injector)
 
-	router.Listen(":8080")
+	log.Fatal(router.Listen(":8080"))
 }

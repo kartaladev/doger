@@ -1,0 +1,90 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   60024	     20579 ns/op	    8282 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    6085	    205977 ns/op	  161889 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    6694	    197757 ns/op	  126659 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    6392	    194200 ns/op	  126607 B/op	    1372 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   68962	     20371 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    4417	    235373 ns/op	  161889 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    5853	    246534 ns/op	  126685 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    5452	    217287 ns/op	  126605 B/op	    1372 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   50338	     28093 ns/op	    8283 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    5893	    274637 ns/op	  161893 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    6109	    266348 ns/op	  126682 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    5643	    293426 ns/op	  126631 B/op	    1372 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   55215	     18580 ns/op	    8282 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    5845	    264269 ns/op	  161893 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    6172	    298259 ns/op	  126694 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    5901	    365608 ns/op	  126617 B/op	    1372 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   65578	     24177 ns/op	    8282 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    3625	    278318 ns/op	  161897 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    5989	    281442 ns/op	  126688 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    4377	    275125 ns/op	  126616 B/op	    1372 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   62588	     19645 ns/op	    8282 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    5446	    303087 ns/op	  161893 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    3795	    385297 ns/op	  126737 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    6266	    356141 ns/op	  126621 B/op	    1372 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   65222	     21947 ns/op	    8282 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    5485	    239110 ns/op	  161890 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    5528	    237632 ns/op	  126687 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    4182	    398943 ns/op	  126629 B/op	    1372 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   48015	     24075 ns/op	    8282 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    4759	    252702 ns/op	  161891 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    4992	    236323 ns/op	  126690 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    5563	    200266 ns/op	  126608 B/op	    1372 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   60339	     18375 ns/op	    8282 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    5104	    217090 ns/op	  161890 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    6200	    272105 ns/op	  126693 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    5504	    235242 ns/op	  126614 B/op	    1372 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkPerRequestScope-14    	   41139	     42887 ns/op	    8283 B/op	      90 allocs/op
+BenchmarkProvideValue100-14    	    2856	    463278 ns/op	  161898 B/op	    2040 allocs/op
+BenchmarkHealthCheck50-14      	    3295	    353763 ns/op	  126746 B/op	    1372 allocs/op
+BenchmarkHealthCheck-14        	    6566	    216241 ns/op	  126611 B/op	    1372 allocs/op
+PASS

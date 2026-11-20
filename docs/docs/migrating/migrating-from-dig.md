@@ -170,7 +170,7 @@ doger.Provide(injector, func(i doger.Injector) (*UserRepository, error) {
 })
 
 // Register the interface binding
-doger.As[*UserRepository, Repository](i)
+doger.Alias[*UserRepository, Repository](i)
 ```
 
 Or bind on service loading:
@@ -399,14 +399,14 @@ func main() {
 2. **Better error messages** - More detailed error information
 3. **Service lifecycle management** - Built-in shutdown and health checks
 4. **Scoped services** - Full support for request-scoped services
-5. **No external dependencies** - Pure Go implementation
+5. **Minimal dependencies** - Pure Go, with one small library (`go-type-to-string`)
 6. **Better testing support** - Easier to mock and test
 
 ## Common Pitfalls {#common-pitfalls}
 
 1. **Error handling** - `doger` returns errors from `Invoke()`, not `Provide()`
 2. **Circular dependencies** - `doger` will detect and report these
-3. **Interface bindings** - Use `doger.As` for interface implementations
+3. **Interface bindings** - Use `doger.Alias` for interface implementations
 4. **Panics vs errors** - Prefer `doger.MustInvoke` over `doger.Invoke` when a missing service should stop the program immediately instead of being handled as a recoverable error
 
 ## Testing {#testing}

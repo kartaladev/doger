@@ -6,13 +6,13 @@ sidebar_position: 1
 
 # doger vs uber/fx
 
-**Verdict**: pick `uber/fx` if you're building a large, modular application that benefits from its batteries-included lifecycle framework and are comfortable with runtime reflection and its dependency footprint (`dig`, `zap`, `multierr`). Pick `doger` if you want compile-time-checked dependency resolution through generics, built-in health checks, and zero external dependencies, without giving up lifecycle management.
+**Verdict**: pick `uber/fx` if you're building a large, modular application that benefits from its batteries-included lifecycle framework and are comfortable with runtime reflection and its dependency footprint (`dig`, `zap`, `multierr`). Pick `doger` if you want compile-time-checked dependency resolution through generics, built-in health checks, and minimal dependencies (`go-type-to-string`), without giving up lifecycle management.
 
 ## At a glance {#at-a-glance}
 
 |                           | `doger`                                                    | `uber/fx`                                                                       |
 | ------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **Resolution mechanism**  | Go 1.18+ generics                                          | Reflection (via `uber/dig`)                                                     |
+| **Resolution mechanism**  | Go generics (Go 1.27+)                                     | Reflection (via `uber/dig`)                                                     |
 | **Type safety**           | Compile-time                                               | Runtime                                                                         |
 | **External dependencies** | None                                                       | `dig`, `zap`, `multierr`                                                        |
 | **Lifecycle hooks**       | `HookBeforeRegistration`, `HookAfterInvocation`, etc.      | `fx.Lifecycle` (`OnStart`/`OnStop`)                                             |

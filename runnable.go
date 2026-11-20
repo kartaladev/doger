@@ -1,0 +1,45 @@
+package doger
+
+import "context"
+
+// Runner is one-shot startup work, run by the built-in [Runnable] kind after
+// every Starter has started.
+//
+// Run must return: long-running work belongs in a Starter that spawns its
+// own goroutine, plus a Shutdowner that stops it. Run receives the Start-time
+// context, which root Shutdown cancels; a Runner that honours it returns when
+// Shutdown cancels Start.
+type Runner interface {
+	Run(ctx context.Context) error
+}
+
+// runnableKind is the built-in Runnable kind.
+var runnableKind = NewKind[Runner, struct{}]("runnable")
+
+// Runnable returns the built-in kind of one-shot runners, the same value on
+// every call. By default, every root container has an implicit
+// StageAfterStart handler for it that calls Run once per opted-in service,
+// in dependency then registration order, and stops at the first error.
+// Replace it with Runnable().Handle.
+func Runnable() Kind[Runner, struct{}] {
+	return runnableKind
+}
+
+// AsRunnable opts a registration into the [Runnable] kind. It is shorthand
+// for Runnable().With(struct{}{}).
+func AsRunnable() ProvideOption {
+	return Runnable().With(struct{}{})
+}
+
+// defaultRunnableEntry is the default Runnable handler entry.
+var defaultRunnableEntry = Runnable().newEntry(StageAfterStart, runRunner)
+
+// defaultKinds is the kind list every new container starts with: the
+// default Runnable handler in the first slot. Containers share it, so New
+// does not allocate it; kind lists are copied before they are written.
+var defaultKinds = []kindEntry{defaultRunnableEntry}
+
+// runRunner is the default Runnable handler: it runs the runner inline.
+func runRunner(ctx context.Context, c Component[Runner, struct{}]) error {
+	return c.Instance.Run(ctx)
+}

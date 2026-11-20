@@ -185,7 +185,7 @@ func ExampleScope_Shutdown() {
 	// Output:
 	// false
 	// 1
-	// DI: shutdown errors:
+	// doger: shutdown errors:
 	//   - api > db: shutdown error
 }
 
@@ -223,6 +223,24 @@ func ExampleScope_ShutdownWithContext_timeout() {
 	report := injector.ShutdownWithContext(ctx)
 	fmt.Println(report.Error())
 	// Output:
-	// DI: shutdown errors:
+	// doger: shutdown errors:
 	//   - api > db: context deadline exceeded
+}
+
+func ExampleScope_perRequest() {
+	root := New()
+	handle := func(requestID string) string {
+		req := root.Scope("req")
+		defer req.Shutdown() // detaches "req": the name is free again
+
+		ProvideNamedValue(req, "request-id", requestID)
+		id, _ := InvokeNamed[string](req, "request-id")
+		return id
+	}
+
+	fmt.Println(handle("a"), handle("b"))
+	fmt.Println(len(root.Children()))
+	// Output:
+	// a b
+	// 0
 }

@@ -1,12 +1,13 @@
 module github.com/kartaladev/doger
 
-go 1.18
+go 1.27
 
 //
 // Dependencies are excluded from releases. Please check CI.
 //
 
 require (
+	github.com/jonboulle/clockwork v0.5.0
 	github.com/samber/go-type-to-string v1.8.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0

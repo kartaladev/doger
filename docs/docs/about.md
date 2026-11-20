@@ -1,6 +1,6 @@
 ---
 title: ✌️ Dependency Injection in Go
-description: doger is a type-safe dependency injection toolkit for Go, built on 1.18+ generics instead of reflection or code generation. Compare it to uber/dig, uber/fx, and google/wire.
+description: doger is a type-safe dependency injection toolkit for Go, built on Go generics (Go 1.27+) instead of reflection or code generation. Compare it to uber/dig, uber/fx, and google/wire.
 sidebar_position: 0
 ---
 
@@ -12,7 +12,7 @@ import Head from '@docusaurus/Head';
       '@context': 'https://schema.org',
       '@type': 'TechArticle',
       headline: 'Dependency Injection in Go',
-      description: 'doger is a type-safe dependency injection toolkit for Go, built on 1.18+ generics instead of reflection or code generation.',
+      description: 'doger is a type-safe dependency injection toolkit for Go, built on Go generics (Go 1.27+) instead of reflection or code generation.',
       about: {'@id': 'https://kartaladev.github.io/doger/#software'},
       author: {'@id': 'https://kartaladev.github.io/doger/#person-samber'},
       mainEntityOfPage: 'https://kartaladev.github.io/doger/docs/about',
@@ -28,7 +28,7 @@ doger is a fork of [samber/do](https://github.com/samber/do) by Samuel Berthe. C
 
 :::
 
-Dependency injection (DI) in Go is the practice of supplying a component with the services it depends on, instead of letting it construct them itself — making code easier to test, swap, and reason about. `doger` is a DI toolkit for Go that implements this pattern using **1.18+ generics** instead of reflection, giving you a type-safe API with **no code generation** and **zero external dependencies**.
+Dependency injection (DI) in Go is the practice of supplying a component with the services it depends on, instead of letting it construct them itself — making code easier to test, swap, and reason about. `doger` is a DI toolkit for Go that implements this pattern using **Go generics** (Go 1.27+) instead of reflection, giving you a type-safe API with **no code generation** and **minimal dependencies**.
 
 <img
 src={require('@site/static/img/cover.webp').default}
@@ -96,7 +96,7 @@ Upstream's short name `do` is the sum of `DI` and `Go`. `doger` keeps it as its 
 - **🧪 Debugging & introspection**
   - Explain APIs: [scope tree](./troubleshooting/scope-tree.md) and [service dependencies](./troubleshooting/service-dependencies.md)
   - [Web UI](./troubleshooting/web-ui.md) & HTTP middleware (std, Gin, Fiber, Echo, Chi)
-- **🌈 Lightweight, no dependencies**
+- **🌈 Lightweight, minimal dependencies**
 - **🔅 No code generation**
 - **😷 Type‑safe API**
 

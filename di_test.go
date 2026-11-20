@@ -8,18 +8,32 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNameOf(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
 
-	is.Equal("int", NameOf[int]())
-	is.Equal("github.com/kartaladev/doger.eagerTest", NameOf[eagerTest]())
-	is.Equal("*github.com/kartaladev/doger.eagerTest", NameOf[*eagerTest]())
-	is.Equal("*map[int]bool", NameOf[*map[int]bool]())
-	is.Equal("github.com/kartaladev/doger.serviceWrapper[int]", NameOf[serviceWrapper[int]]())
+	tests := []struct {
+		name   string
+		nameOf func() string
+		want   string
+	}{
+		{name: "int", nameOf: NameOf[int], want: "int"},
+		{name: "struct", nameOf: NameOf[eagerTest], want: "github.com/kartaladev/doger.eagerTest"},
+		{name: "struct_pointer", nameOf: NameOf[*eagerTest], want: "*github.com/kartaladev/doger.eagerTest"},
+		{name: "map_pointer", nameOf: NameOf[*map[int]bool], want: "*map[int]bool"},
+		{name: "generic_struct", nameOf: NameOf[serviceWrapper[int]], want: "github.com/kartaladev/doger.serviceWrapper[int]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := assert.New(t)
+
+			is.Equal(tt.want, tt.nameOf())
+		})
+	}
 }
 
 func TestNameOf_LibraryTypes(t *testing.T) {
@@ -40,7 +54,6 @@ func TestNameOf_LibraryTypes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -131,9 +144,9 @@ func TestProvide(t *testing.T) {
 
 	// Test that error services are handled correctly
 	instance3, err3 := Invoke[test](i)
-	is.Error(err3)
+	is.ErrorAs(err3, new(*ServiceError))
 	is.Empty(instance3)
-	is.EqualError(err3, "error")
+	is.EqualError(err3, `doger: service "github.com/kartaladev/doger.test" in scope "[root]": error`)
 }
 
 func TestProvideNamed(t *testing.T) {
@@ -199,9 +212,9 @@ func TestProvideNamed(t *testing.T) {
 
 	// Test that error services are handled correctly
 	instance3, err3 := InvokeNamed[test](i, "foobar")
-	is.Error(err3)
+	is.ErrorAs(err3, new(*ServiceError))
 	is.Empty(instance3)
-	is.EqualError(err3, "error")
+	is.EqualError(err3, `doger: service "foobar" in scope "[root]": error`)
 }
 
 func TestProvideValue(t *testing.T) {
@@ -405,9 +418,9 @@ func TestProvideTransient(t *testing.T) {
 
 	// Test that error services are handled correctly
 	instance3, err3 := Invoke[test](i)
-	is.Error(err3)
+	is.ErrorAs(err3, new(*ServiceError))
 	is.Empty(instance3)
-	is.EqualError(err3, "error")
+	is.EqualError(err3, `doger: service "github.com/kartaladev/doger.test" in scope "[root]": error`)
 }
 
 func TestProvideNamedTransient(t *testing.T) {
@@ -475,9 +488,9 @@ func TestProvideNamedTransient(t *testing.T) {
 
 	// Test that error services are handled correctly
 	instance3, err3 := InvokeNamed[test](i, "foobar")
-	is.Error(err3)
+	is.ErrorAs(err3, new(*ServiceError))
 	is.Empty(instance3)
-	is.EqualError(err3, "error")
+	is.EqualError(err3, `doger: service "foobar" in scope "[root]": error`)
 }
 
 func TestProvide_race(t *testing.T) {
@@ -539,68 +552,63 @@ func TestOverride(t *testing.T) {
 	})
 }
 
-func TestOverrideNamed(t *testing.T) {
+func TestOverride_Variants(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
 
 	type test struct {
 		foobar int
 	}
 
-	i := New()
-
-	Provide(i, func(i Injector) (*test, error) {
-		return &test{42}, nil
-	})
-	is.Equal(42, MustInvoke[*test](i).foobar)
-
-	OverrideNamed(i, "*github.com/kartaladev/doger.test", func(i Injector) (*test, error) {
-		return &test{2}, nil
-	})
-	is.Equal(2, MustInvoke[*test](i).foobar)
-}
-
-func TestOverrideValue(t *testing.T) {
-	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
-
-	type test struct {
-		foobar int
+	tests := []struct {
+		name     string
+		override func(i Injector)
+		want     int
+	}{
+		{
+			// formerly TestOverrideNamed
+			name: "override_named",
+			override: func(i Injector) {
+				OverrideNamed(i, "*github.com/kartaladev/doger.test", func(i Injector) (*test, error) {
+					return &test{2}, nil
+				})
+			},
+			want: 2,
+		},
+		{
+			// formerly TestOverrideValue
+			name: "override_value",
+			override: func(i Injector) {
+				OverrideValue(i, &test{3})
+			},
+			want: 3,
+		},
+		{
+			// formerly TestOverrideNamedValue
+			name: "override_named_value",
+			override: func(i Injector) {
+				OverrideNamedValue(i, "*github.com/kartaladev/doger.test", &test{4})
+			},
+			want: 4,
+		},
 	}
 
-	i := New()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
+			is := assert.New(t)
 
-	Provide(i, func(i Injector) (*test, error) {
-		return &test{42}, nil
-	})
-	is.Equal(42, MustInvoke[*test](i).foobar)
+			i := New()
 
-	OverrideNamed(i, "*github.com/kartaladev/doger.test", func(i Injector) (*test, error) {
-		return &test{2}, nil
-	})
-	is.Equal(2, MustInvoke[*test](i).foobar)
-}
+			Provide(i, func(i Injector) (*test, error) {
+				return &test{42}, nil
+			})
+			is.Equal(42, MustInvoke[*test](i).foobar)
 
-func TestOverrideNamedValue(t *testing.T) {
-	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
-
-	type test struct {
-		foobar int
+			tt.override(i)
+			is.Equal(tt.want, MustInvoke[*test](i).foobar)
+		})
 	}
-
-	i := New()
-
-	Provide(i, func(i Injector) (*test, error) {
-		return &test{42}, nil
-	})
-	is.Equal(42, MustInvoke[*test](i).foobar)
-
-	OverrideNamedValue(i, "*github.com/kartaladev/doger.test", &test{4})
-	is.Equal(4, MustInvoke[*test](i).foobar)
 }
 
 func TestOverrideTransient(t *testing.T) {
@@ -753,8 +761,8 @@ func TestInvoke(t *testing.T) {
 	is.True(s0b.built)
 
 	_, err2 := Invoke[*test](i)
-	is.Error(err2)
-	is.EqualError(err2, "DI: could not find service `*github.com/kartaladev/doger.test`, available services: `github.com/kartaladev/doger.test`")
+	is.ErrorIs(err2, ErrServiceNotFound)
+	is.EqualError(err2, "doger: could not find service `*github.com/kartaladev/doger.test`, available services: `github.com/kartaladev/doger.test`")
 
 	ProvideNamedValue(i, NameOf[any](), 0)
 
@@ -808,7 +816,7 @@ func TestInvokeNamed(t *testing.T) {
 	is.Len(i.self.services, 2)
 
 	service0, err0 := InvokeNamed[string](i, "plop")
-	is.Error(err0)
+	is.ErrorIs(err0, ErrServiceNotFound)
 	is.Empty(service0)
 
 	instance1, err1 := InvokeNamed[test](i, "hello")
@@ -829,7 +837,7 @@ func TestInvokeNamed(t *testing.T) {
 	is.Equal(instance2, instance2any)
 
 	instance3, err3 := InvokeNamed[string](i, "foobar")
-	is.EqualError(err3, "DI: service found, but type mismatch: invoking `string` but registered `int`")
+	is.EqualError(err3, "doger: service found, but type mismatch: invoking `string` but registered `int`")
 	is.Empty(instance3)
 }
 
@@ -873,7 +881,7 @@ func TestInvokeStruct(t *testing.T) {
 
 	// not a struct
 	test1, err := InvokeStruct[int](i)
-	is.Equal("DI: must be a struct or a pointer to a struct, but got `int`", err.Error())
+	is.Equal("doger: must be a struct or a pointer to a struct, but got `int`", err.Error())
 	is.Empty(test1)
 
 	// exported field - generic type
@@ -894,7 +902,7 @@ func TestInvokeStruct(t *testing.T) {
 
 	// not found
 	type dependencyNotFound struct {
-		eagerTest *hasNonExportedEagerTestDependency `do:""` //nolint:unused
+		eagerTest *hasNonExportedEagerTestDependency `do:""` //nolint:unused // set by InvokeStruct through its tag, never read
 	}
 	test4, err := InvokeStruct[dependencyNotFound](i)
 	is.Equal(serviceNotFound(i, ErrServiceNotFound, []string{inferServiceName[*hasNonExportedEagerTestDependency]()}).Error(), err.Error())
@@ -902,7 +910,7 @@ func TestInvokeStruct(t *testing.T) {
 
 	// use tag
 	type namedDependency struct {
-		eagerTest *eagerTest `do:"int"` //nolint:unused
+		eagerTest *eagerTest `do:"int"` //nolint:unused // set by InvokeStruct through its tag, never read
 	}
 	test5, err := InvokeStruct[namedDependency](i)
 	is.Equal(serviceNotFound(i, ErrServiceNotFound, []string{inferServiceName[int]()}).Error(), err.Error())
@@ -922,7 +930,7 @@ func TestInvokeStruct(t *testing.T) {
 		EagerTest *int `do:"*github.com/kartaladev/doger.eagerTest"`
 	}
 	test7, err := InvokeStruct[namedDependencyButTypeMismatch](i)
-	is.Equal("DI: `*github.com/kartaladev/doger.eagerTest` is not assignable to field `github.com/kartaladev/doger.namedDependencyButTypeMismatch.EagerTest`", err.Error())
+	is.Equal("doger: `*github.com/kartaladev/doger.eagerTest` is not assignable to field `github.com/kartaladev/doger.namedDependencyButTypeMismatch.EagerTest`", err.Error())
 	is.Empty(test7)
 
 	// use a custom tag
@@ -949,11 +957,11 @@ func TestInvokeStruct(t *testing.T) {
 
 	test10, err := InvokeStruct[*serviceWithInterface](i)
 	is.NoError(err)
-	is.NotNil((*test10).eagerTest) //nolint:gocritic
+	is.NotNil((*test10).eagerTest) //nolint:gocritic // the explicit dereference shows the pointer depth InvokeStruct returned
 
 	test11, err := InvokeStruct[****serviceWithInterface](i)
 	is.NoError(err)
-	is.NotNil((****test11).eagerTest) //nolint:gocritic
+	is.NotNil((****test11).eagerTest) //nolint:gocritic // the explicit dereferences show the pointer depth InvokeStruct returned
 }
 
 func TestMustInvokeStruct(t *testing.T) {
@@ -982,27 +990,27 @@ func TestMustInvokeStruct(t *testing.T) {
 // 							Explicit aliases
 /////////////////////////////////////////////////////////////////////////////
 
-func TestAs(t *testing.T) {
+func TestAlias(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
 	i := New()
 	Provide(i, func(i Injector) (*lazyTestHeathcheckerOK, error) { return &lazyTestHeathcheckerOK{}, nil })
 
-	is.NoError(As[*lazyTestHeathcheckerOK, Healthchecker](i))
-	is.EqualError(As[*lazyTestShutdownerOK, Healthchecker](i), "DI: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
-	is.EqualError(As[*lazyTestHeathcheckerKO, Healthchecker](i), "DI: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
-	is.EqualError(As[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i), "DI: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
+	is.NoError(Alias[*lazyTestHeathcheckerOK, Healthchecker](i))
+	is.EqualError(Alias[*lazyTestShutdownerOK, Healthchecker](i), "doger: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(Alias[*lazyTestHeathcheckerKO, Healthchecker](i), "doger: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
+	is.EqualError(Alias[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i), "doger: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
 
 	i = New()
 	type iTestHeathchecker interface {
 		HealthCheck() error
 	}
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
-	is.NoError(As[iTestHeathchecker, Healthchecker](i))
+	is.NoError(Alias[iTestHeathchecker, Healthchecker](i))
 }
 
-func TestMustAs(t *testing.T) {
+func TestMustAlias(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
@@ -1011,7 +1019,7 @@ func TestMustAs(t *testing.T) {
 
 	// Test successful alias creation
 	is.NotPanics(func() {
-		MustAs[*lazyTestHeathcheckerOK, Healthchecker](i)
+		MustAlias[*lazyTestHeathcheckerOK, Healthchecker](i)
 	})
 
 	// Test that the alias was created and can be invoked
@@ -1021,17 +1029,17 @@ func TestMustAs(t *testing.T) {
 
 	// Test panic on invalid interface implementation
 	is.Panics(func() {
-		MustAs[*lazyTestShutdownerOK, Healthchecker](i)
+		MustAlias[*lazyTestShutdownerOK, Healthchecker](i)
 	})
 
 	// Test panic on service not declared
 	is.Panics(func() {
-		MustAs[*lazyTestHeathcheckerKO, Healthchecker](i)
+		MustAlias[*lazyTestHeathcheckerKO, Healthchecker](i)
 	})
 
 	// Test panic on self-reference
 	is.Panics(func() {
-		MustAs[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i)
+		MustAlias[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i)
 	})
 
 	// Test with interface-to-interface
@@ -1042,7 +1050,7 @@ func TestMustAs(t *testing.T) {
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NotPanics(func() {
-		MustAs[iTestHeathchecker, Healthchecker](i)
+		MustAlias[iTestHeathchecker, Healthchecker](i)
 	})
 
 	// Test that the interface alias works
@@ -1051,24 +1059,69 @@ func TestMustAs(t *testing.T) {
 	is.NotNil(hc2)
 }
 
-func TestAsNamed(t *testing.T) {
+func TestAliasNamed(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
 	i := New()
 	Provide(i, func(i Injector) (*lazyTestHeathcheckerOK, error) { return &lazyTestHeathcheckerOK{}, nil })
 
-	is.NoError(AsNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker"))
-	is.EqualError(AsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker"), "DI: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
-	is.EqualError(AsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker"), "DI: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
-	is.EqualError(AsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK"), "DI: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
+	is.NoError(AliasNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker"))
+	is.EqualError(AliasNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker"), "doger: `*github.com/kartaladev/doger.lazyTestShutdownerOK` does not implement `github.com/kartaladev/doger.Healthchecker`")
+	is.EqualError(AliasNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker"), "doger: service `*github.com/kartaladev/doger.lazyTestHeathcheckerKO` has not been declared")
+	is.EqualError(AliasNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK"), "doger: service `*github.com/kartaladev/doger.lazyTestShutdownerOK` has not been declared")
 
 	i = New()
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
-	is.NoError(AsNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker"))
+	is.NoError(AliasNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker"))
 }
 
-func TestMustAsNamed(t *testing.T) {
+func TestAliasNamed_UsableThroughEveryPath(t *testing.T) {
+	tests := []struct {
+		name string
+		use  func(t *testing.T, root *RootScope)
+	}{
+		{
+			name: "InvokeAs from a provider",
+			use: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				ProvideNamed(root, "nil-alias-decor", func(i Injector) (*greeterDecor, error) {
+					inner, err := InvokeAs[Greeter](i)
+					if err != nil {
+						return nil, err
+					}
+					return &greeterDecor{inner: inner}, nil
+				})
+				decor, err := InvokeNamed[*greeterDecor](root, "nil-alias-decor")
+				require.NoError(t, err)
+				assert.Equal(t, "decor(nil-alias-base)", decor.Greet())
+			},
+		},
+		{
+			name: "health check of the alias",
+			use: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				_, err := InvokeNamed[Greeter](root, "nil-alias")
+				require.NoError(t, err)
+				assert.NotPanics(t, func() { assert.NoError(t, HealthCheckNamed(root, "nil-alias")) })
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testWithTimeout(t, time.Second)
+
+			root := New()
+			provideGreeter(root, "nil-alias-base")
+			require.NoError(t, AliasNamed[*greeterImpl, Greeter](root, "nil-alias-base", "nil-alias"))
+
+			tt.use(t, root)
+		})
+	}
+}
+
+func TestMustAliasNamed(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
@@ -1077,7 +1130,7 @@ func TestMustAsNamed(t *testing.T) {
 
 	// Test successful named alias creation
 	is.NotPanics(func() {
-		MustAsNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker")
+		MustAliasNamed[*lazyTestHeathcheckerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerOK", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test that the named alias was created and can be invoked
@@ -1087,17 +1140,17 @@ func TestMustAsNamed(t *testing.T) {
 
 	// Test panic on invalid interface implementation
 	is.Panics(func() {
-		MustAsNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker")
+		MustAliasNamed[*lazyTestShutdownerOK, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test panic on service not declared
 	is.Panics(func() {
-		MustAsNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker")
+		MustAliasNamed[*lazyTestHeathcheckerKO, Healthchecker](i, "*github.com/kartaladev/doger.lazyTestHeathcheckerKO", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test panic on self-reference
 	is.Panics(func() {
-		MustAsNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK")
+		MustAliasNamed[*lazyTestShutdownerOK, *lazyTestShutdownerOK](i, "*github.com/kartaladev/doger.lazyTestShutdownerOK", "*github.com/kartaladev/doger.lazyTestShutdownerOK")
 	})
 
 	// Test with interface-to-interface named alias
@@ -1108,7 +1161,7 @@ func TestMustAsNamed(t *testing.T) {
 	Provide(i, func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NotPanics(func() {
-		MustAsNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker")
+		MustAliasNamed[iTestHeathchecker, Healthchecker](i, "github.com/kartaladev/doger.iTestHeathchecker", "github.com/kartaladev/doger.Healthchecker")
 	})
 
 	// Test that the interface named alias works
@@ -1120,7 +1173,7 @@ func TestMustAsNamed(t *testing.T) {
 	ProvideNamed(i, "custom-source", func(i Injector) (iTestHeathchecker, error) { return &lazyTestHeathcheckerOK{}, nil })
 
 	is.NotPanics(func() {
-		MustAsNamed[iTestHeathchecker, Healthchecker](i, "custom-source", "custom-target")
+		MustAliasNamed[iTestHeathchecker, Healthchecker](i, "custom-source", "custom-target")
 	})
 
 	hc3, err3 := InvokeNamed[Healthchecker](i, "custom-target")
@@ -1154,7 +1207,7 @@ func TestInvokeAs(t *testing.T) {
 	// not found
 	svc2, err := InvokeAs[Shutdowner](i)
 	is.Empty(svc2)
-	is.EqualError(err, "DI: could not find service satisfying interface `github.com/kartaladev/doger.Shutdowner`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`")
+	is.EqualError(err, "doger: could not find service satisfying interface `github.com/kartaladev/doger.Shutdowner`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`")
 }
 
 func TestMustInvokeAs(t *testing.T) {
@@ -1217,8 +1270,6 @@ func TestMustInvokeAs(t *testing.T) {
 
 func TestPackage(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
 
 	type test struct{}
 	type iTest any
@@ -1227,75 +1278,70 @@ func TestPackage(t *testing.T) {
 		return &test{}, nil
 	}
 
-	pkg := Package(
-		Lazy(provider1),
-		Eager(test{}),
-		Bind[*test, iTest](),
-	)
+	tests := []struct {
+		name  string
+		build func() *RootScope
+	}{
+		{
+			name: "applied_to_root",
+			build: func() *RootScope {
+				pkg := Package(
+					Lazy(provider1),
+					Eager(test{}),
+					Bind[*test, iTest](),
+				)
 
-	root := New()
-	pkg(root)
+				root := New()
+				pkg(root)
+				return root
+			},
+		},
+		{
+			// formerly TestNewWithPackage
+			name: "new_with_package",
+			build: func() *RootScope {
+				pkg := Package(
+					Lazy(provider1),
+					Eager(test{}),
+				)
 
-	svc1 := newServiceDescription(root.ID(), root.Name(), NameOf[*test]())
-	svc2 := newServiceDescription(root.ID(), root.Name(), NameOf[test]())
-	svc3 := newServiceDescription(root.ID(), root.Name(), NameOf[iTest]())
-
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
-
-	is.NotPanics(func() {
-		_ = MustInvoke[*test](root)
-		_ = MustInvoke[test](root)
-		_ = MustInvoke[iTest](root)
-	})
-
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListInvokedServices())
-}
-
-func TestNewWithPackage(t *testing.T) {
-	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
-
-	type test struct{}
-	type iTest any
-
-	provider1 := func(i Injector) (*test, error) {
-		return &test{}, nil
+				return New(
+					pkg,
+					Bind[*test, iTest](),
+				)
+			},
+		},
 	}
 
-	pkg := Package(
-		Lazy(provider1),
-		Eager(test{}),
-	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
+			is := assert.New(t)
 
-	root := New(
-		pkg,
-		Bind[*test, iTest](),
-	)
+			root := tt.build()
 
-	svc1 := newServiceDescription(root.ID(), root.Name(), NameOf[*test]())
-	svc2 := newServiceDescription(root.ID(), root.Name(), NameOf[test]())
-	svc3 := newServiceDescription(root.ID(), root.Name(), NameOf[iTest]())
+			svc1 := newServiceDescription(root.ID(), root.Name(), NameOf[*test]())
+			svc2 := newServiceDescription(root.ID(), root.Name(), NameOf[test]())
+			svc3 := newServiceDescription(root.ID(), root.Name(), NameOf[iTest]())
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
+			is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
+			is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
 
-	is.NotPanics(func() {
-		_ = MustInvoke[*test](root)
-		_ = MustInvoke[test](root)
-		_ = MustInvoke[iTest](root)
-	})
+			is.NotPanics(func() {
+				_ = MustInvoke[*test](root)
+				_ = MustInvoke[test](root)
+				_ = MustInvoke[iTest](root)
+			})
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListInvokedServices())
+			is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
+			is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListInvokedServices())
+		})
+	}
 }
 
-func TestLazy(t *testing.T) {
+func TestLazyAndTransient(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
 
 	type test struct{}
 
@@ -1307,29 +1353,46 @@ func TestLazy(t *testing.T) {
 		return test{}, fmt.Errorf("error")
 	}
 
-	root := New()
-	Lazy(provider1)(root)
-	Lazy(provider2)(root)
+	tests := []struct {
+		name     string
+		register []func(Injector)
+	}{
+		// formerly TestLazy
+		{name: "lazy", register: []func(Injector){Lazy(provider1), Lazy(provider2)}},
+		// formerly TestTransient
+		{name: "transient", register: []func(Injector){Transient(provider1), Transient(provider2)}},
+	}
 
-	svc1 := newServiceDescription(root.ID(), root.Name(), NameOf[*test]())
-	svc2 := newServiceDescription(root.ID(), root.Name(), NameOf[test]())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
+			is := assert.New(t)
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
+			root := New()
+			for _, register := range tt.register {
+				register(root)
+			}
 
-	is.NotPanics(func() {
-		_ = MustInvoke[*test](root)
-		_, _ = Invoke[test](root)
-	})
+			svc1 := newServiceDescription(root.ID(), root.Name(), NameOf[*test]())
+			svc2 := newServiceDescription(root.ID(), root.Name(), NameOf[test]())
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{svc1}, root.ListInvokedServices())
+			is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
+			is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
+
+			is.NotPanics(func() {
+				_ = MustInvoke[*test](root)
+				_, _ = Invoke[test](root)
+			})
+
+			is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
+			is.ElementsMatch([]ServiceDescription{svc1}, root.ListInvokedServices())
+		})
+	}
 }
 
-func TestLazyNamed(t *testing.T) {
+func TestLazyAndTransientNamed(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
 
 	type test struct{}
 
@@ -1341,23 +1404,42 @@ func TestLazyNamed(t *testing.T) {
 		return test{}, fmt.Errorf("error")
 	}
 
-	root := New()
-	LazyNamed("p1", provider1)(root)
-	LazyNamed("p2", provider2)(root)
+	tests := []struct {
+		name     string
+		register []func(Injector)
+	}{
+		// formerly TestLazyNamed
+		{name: "lazy_named", register: []func(Injector){LazyNamed("p1", provider1), LazyNamed("p2", provider2)}},
+		// formerly TestTransientNamed
+		{name: "transient_named", register: []func(Injector){TransientNamed("p1", provider1), TransientNamed("p2", provider2)}},
+	}
 
-	svc1 := newServiceDescription(root.ID(), root.Name(), "p1")
-	svc2 := newServiceDescription(root.ID(), root.Name(), "p2")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
+			is := assert.New(t)
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
+			root := New()
+			for _, register := range tt.register {
+				register(root)
+			}
 
-	is.NotPanics(func() {
-		_ = MustInvokeNamed[*test](root, "p1")
-		_, _ = InvokeNamed[test](root, "p2")
-	})
+			svc1 := newServiceDescription(root.ID(), root.Name(), "p1")
+			svc2 := newServiceDescription(root.ID(), root.Name(), "p2")
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{svc1}, root.ListInvokedServices())
+			is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
+			is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
+
+			is.NotPanics(func() {
+				_ = MustInvokeNamed[*test](root, "p1")
+				_, _ = InvokeNamed[test](root, "p2")
+			})
+
+			is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
+			is.ElementsMatch([]ServiceDescription{svc1}, root.ListInvokedServices())
+		})
+	}
 }
 
 func TestEager(t *testing.T) {
@@ -1412,78 +1494,8 @@ func TestEagerNamed(t *testing.T) {
 	is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListInvokedServices())
 }
 
-func TestTransient(t *testing.T) {
-	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
-
-	type test struct{}
-
-	provider1 := func(i Injector) (*test, error) {
-		return &test{}, nil
-	}
-
-	provider2 := func(i Injector) (test, error) {
-		return test{}, fmt.Errorf("error")
-	}
-
-	root := New()
-	Transient(provider1)(root)
-	Transient(provider2)(root)
-
-	svc1 := newServiceDescription(root.ID(), root.Name(), NameOf[*test]())
-	svc2 := newServiceDescription(root.ID(), root.Name(), NameOf[test]())
-
-	is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
-
-	is.NotPanics(func() {
-		_ = MustInvoke[*test](root)
-		_, _ = Invoke[test](root)
-	})
-
-	is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{svc1}, root.ListInvokedServices())
-}
-
-func TestTransientNamed(t *testing.T) {
-	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
-
-	type test struct{}
-
-	provider1 := func(i Injector) (*test, error) {
-		return &test{}, nil
-	}
-
-	provider2 := func(i Injector) (test, error) {
-		return test{}, fmt.Errorf("error")
-	}
-
-	root := New()
-	TransientNamed("p1", provider1)(root)
-	TransientNamed("p2", provider2)(root)
-
-	svc1 := newServiceDescription(root.ID(), root.Name(), "p1")
-	svc2 := newServiceDescription(root.ID(), root.Name(), "p2")
-
-	is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
-
-	is.NotPanics(func() {
-		_ = MustInvokeNamed[*test](root, "p1")
-		_, _ = InvokeNamed[test](root, "p2")
-	})
-
-	is.ElementsMatch([]ServiceDescription{svc1, svc2}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{svc1}, root.ListInvokedServices())
-}
-
 func TestBind(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
 
 	type test struct{}
 	type iTest any
@@ -1496,62 +1508,234 @@ func TestBind(t *testing.T) {
 		return test{}, fmt.Errorf("error")
 	}
 
-	root := New()
-	Lazy(provider1)(root)
-	Lazy(provider2)(root)
-	Bind[*test, iTest]()(root)
+	tests := []struct {
+		name string
+		bind func(Injector)
+	}{
+		{name: "bind", bind: Bind[*test, iTest]()},
+		// formerly TestBindNamed
+		{name: "bind_named", bind: BindNamed[*test, iTest](NameOf[*test](), NameOf[iTest]())},
+	}
 
-	svc1 := newServiceDescription(root.ID(), root.Name(), NameOf[*test]())
-	svc2 := newServiceDescription(root.ID(), root.Name(), NameOf[test]())
-	svc3 := newServiceDescription(root.ID(), root.Name(), NameOf[iTest]())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
+			is := assert.New(t)
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
+			root := New()
+			Lazy(provider1)(root)
+			Lazy(provider2)(root)
+			tt.bind(root)
 
-	is.NotPanics(func() {
-		_ = MustInvoke[*test](root)
-		_, _ = Invoke[test](root)
-		_ = MustInvoke[iTest](root)
-	})
+			svc1 := newServiceDescription(root.ID(), root.Name(), NameOf[*test]())
+			svc2 := newServiceDescription(root.ID(), root.Name(), NameOf[test]())
+			svc3 := newServiceDescription(root.ID(), root.Name(), NameOf[iTest]())
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{svc1, svc3}, root.ListInvokedServices())
+			is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
+			is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
+
+			is.NotPanics(func() {
+				_ = MustInvoke[*test](root)
+				_, _ = Invoke[test](root)
+				_ = MustInvoke[iTest](root)
+			})
+
+			is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
+			is.ElementsMatch([]ServiceDescription{svc1, svc3}, root.ListInvokedServices())
+		})
+	}
 }
 
-func TestBindNamed(t *testing.T) {
+func TestProvide_DefaultSameScope(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
-	is := assert.New(t)
 
-	type test struct{}
-	type iTest any
-
-	provider1 := func(i Injector) (*test, error) {
-		return &test{}, nil
+	duplicate := fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfDialer]())
+	lazyDefault := func(i Injector) { Provide(i, dialerProvider("default-dialer", nil), AsDefault()) }
+	explicit := func(i Injector) { Provide(i, dialerProvider("app-dialer", nil)) }
+	invoked := func(t *testing.T, i Injector) {
+		t.Helper()
+		_, err := Invoke[*dfDialer](i)
+		require.NoError(t, err)
 	}
 
-	provider2 := func(i Injector) (test, error) {
-		return test{}, fmt.Errorf("error")
+	tests := []struct {
+		name     string
+		first    func(i Injector)
+		step     func(t *testing.T, i Injector) // nil: nothing else happened
+		second   func(i Injector)
+		panicMsg string // empty: the registration succeeds
+		want     string
+	}{
+		{name: "explicit_replaces", first: lazyDefault, second: explicit, want: "app-dialer"},
+		{name: "default_skipped", first: explicit, second: lazyDefault, want: "app-dialer"},
+		{name: "after_resolve_panics", first: lazyDefault, step: invoked, second: explicit, panicMsg: duplicate, want: "default-dialer"},
+		{name: "second_default_panics", first: lazyDefault, second: lazyDefault, panicMsg: duplicate, want: "default-dialer"},
+		{
+			name:   "eager_replaced",
+			first:  func(i Injector) { ProvideValue(i, &dfDialer{label: "default-dialer"}, AsDefault()) },
+			second: explicit,
+			want:   "app-dialer",
+		},
+		{
+			name:   "transient_replaced",
+			first:  func(i Injector) { ProvideTransient(i, dialerProvider("default-dialer", nil), AsDefault()) },
+			second: explicit,
+			want:   "app-dialer",
+		},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := New()
+			tt.first(root)
+			if tt.step != nil {
+				tt.step(t, root)
+			}
+
+			if tt.panicMsg != "" {
+				assert.PanicsWithError(t, tt.panicMsg, func() { tt.second(root) })
+			} else {
+				assert.NotPanics(t, func() { tt.second(root) })
+			}
+
+			dialer, err := Invoke[*dfDialer](root)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, dialer.label)
+		})
+	}
+}
+
+func TestProvide_DefaultReplacementKeepsIndex(t *testing.T) {
+	t.Parallel()
 
 	root := New()
-	Lazy(provider1)(root)
-	Lazy(provider2)(root)
-	BindNamed[*test, iTest](NameOf[*test](), NameOf[iTest]())(root)
+	ProvideNamedValue(root, "first", 1)
+	Provide(root, dialerProvider("default-dialer", nil), AsDefault())
+	ProvideNamedValue(root, "last", 2)
 
-	svc1 := newServiceDescription(root.ID(), root.Name(), NameOf[*test]())
-	svc2 := newServiceDescription(root.ID(), root.Name(), NameOf[test]())
-	svc3 := newServiceDescription(root.ID(), root.Name(), NameOf[iTest]())
+	require.NotPanics(t, func() { Provide(root, dialerProvider("app-dialer", nil)) })
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{}, root.ListInvokedServices())
+	first := registrationIndexOf(t, root, "first")
+	dialer := registrationIndexOf(t, root, NameOf[*dfDialer]())
+	last := registrationIndexOf(t, root, "last")
+	assert.Less(t, first, dialer)
+	assert.Less(t, dialer, last)
+}
 
-	is.NotPanics(func() {
-		_ = MustInvoke[*test](root)
-		_, _ = Invoke[test](root)
-		_ = MustInvoke[iTest](root)
+func TestProvide_ExplicitDuplicateUnchanged(t *testing.T) {
+	t.Parallel()
+
+	root := New()
+	Provide(root, dialerProvider("first", nil))
+
+	assert.PanicsWithError(t, fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfDialer]()), func() {
+		Provide(root, dialerProvider("second", nil))
+	})
+}
+
+func TestProvide_ExplicitShadowingUnchanged(t *testing.T) {
+	t.Parallel()
+
+	root := New()
+	ext := root.Scope("ext")
+	Provide(root, dialerProvider("first", nil))
+	Provide(ext, dialerProvider("second", nil))
+
+	dialer, err := Invoke[*dfDialer](ext)
+
+	require.NoError(t, err)
+	assert.Equal(t, "second", dialer.label)
+}
+
+func TestProvide_DefaultRegistrationHooks(t *testing.T) {
+	t.Parallel()
+
+	lazyDefault := func(i Injector) { Provide(i, dialerProvider("default-dialer", nil), AsDefault()) }
+	explicit := func(i Injector) { Provide(i, dialerProvider("app-dialer", nil)) }
+
+	tests := []struct {
+		name          string
+		first, second func(i Injector)
+		before, after int
+	}{
+		{name: "default_then_explicit", first: lazyDefault, second: explicit, before: 2, after: 2},
+		{name: "explicit_then_default", first: explicit, second: lazyDefault, before: 2, after: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var mu sync.Mutex
+			seen := map[string]int{}
+			record := func(point string) func(*Scope, string) {
+				return func(_ *Scope, name string) {
+					if name != NameOf[*dfDialer]() {
+						return
+					}
+					mu.Lock()
+					defer mu.Unlock()
+					seen[point]++
+				}
+			}
+			root := New()
+			root.AddBeforeRegistrationHook(record("before"))
+			root.AddAfterRegistrationHook(record("after"))
+
+			tt.first(root)
+			assert.NotPanics(t, func() { tt.second(root) })
+
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, tt.before, seen["before"])
+			assert.Equal(t, tt.after, seen["after"])
+		})
+	}
+}
+
+func TestOverride_IgnoresAsDefault(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ext_default_yields_to_override", func(t *testing.T) {
+		t.Parallel()
+
+		root := New()
+		ext := root.Scope("ext")
+		Provide(ext, dialerProvider("default-dialer", nil), AsDefault())
+		Override(root, dialerProvider("override-dialer", nil), AsDefault())
+
+		dialer, err := Invoke[*dfDialer](ext)
+
+		require.NoError(t, err)
+		assert.Equal(t, "override-dialer", dialer.label)
 	})
 
-	is.ElementsMatch([]ServiceDescription{svc1, svc2, svc3}, root.ListProvidedServices())
-	is.ElementsMatch([]ServiceDescription{svc1, svc3}, root.ListInvokedServices())
+	t.Run("override_is_explicit", func(t *testing.T) {
+		t.Parallel()
+
+		root := New()
+		Override(root, dialerProvider("override-dialer", nil), AsDefault())
+
+		assert.PanicsWithError(t, fmt.Sprintf("doger: service `%s` has already been declared", NameOf[*dfDialer]()), func() {
+			Provide(root, dialerProvider("app-dialer", nil))
+		})
+	})
+
+	t.Run("stale_reader_gets_override", func(t *testing.T) {
+		t.Parallel()
+
+		root := New()
+		Provide(root, dialerProvider("default-dialer", nil), AsDefault())
+		stale, ok := root.serviceGet(NameOf[*dfDialer]())
+		require.True(t, ok)
+		Override(root, dialerProvider("override-dialer", nil))
+
+		instance, err := stale.(serviceWrapperAny).getInstanceAny(root)
+
+		require.NoError(t, err)
+		assert.Equal(t, "override-dialer", instance.(*dfDialer).label)
+	})
 }

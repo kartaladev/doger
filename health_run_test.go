@@ -1,0 +1,2013 @@
+package doger
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
+)
+
+// healthRunTestPanicking is a Healthchecker whose check panics with value.
+type healthRunTestPanicking struct{ value any }
+
+func (h *healthRunTestPanicking) HealthCheck() error { panic(h.value) }
+
+// healthRunTestPanicRecorder records the HookContainerPanic calls it gets.
+type healthRunTestPanicRecorder struct {
+	mu    sync.Mutex
+	calls [][2]any // (point, value)
+}
+
+func (r *healthRunTestPanicRecorder) hook(_ *RootScope, point string, value any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, [2]any{point, value})
+}
+
+func (r *healthRunTestPanicRecorder) recorded() [][2]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][2]any(nil), r.calls...)
+}
+
+func TestHealthCheck_Panic(t *testing.T) {
+	t.Parallel()
+
+	rootCheck := func(i *RootScope) error { return i.HealthCheck()["db"] }
+	namedCheck := func(i *RootScope) error { return HealthCheckNamed(i, "db") }
+
+	tests := []struct {
+		name     string
+		skip     string
+		withHook bool
+		value    any
+		entry    func(i *RootScope) error
+		message  string
+		match    func(t *testing.T, err error)
+	}{
+		{
+			name:    "no_hook_boom_HealthCheck",
+			value:   "boom",
+			entry:   rootCheck,
+			message: "doger: health check panic: boom",
+		},
+		{
+			name:    "no_hook_EOF_HealthCheckNamed",
+			value:   io.EOF,
+			entry:   namedCheck,
+			message: "doger: health check panic: EOF",
+			match:   func(t *testing.T, err error) { t.Helper(); assert.ErrorIs(t, err, io.EOF) },
+		},
+		{
+			name:    "no_hook_nil_HealthReport",
+			value:   nil,
+			entry:   func(i *RootScope) error { return healthRunTestReportErr(i, "db") },
+			message: "doger: health check panic: " + new(runtime.PanicNilError).Error(),
+			match: func(t *testing.T, err error) {
+				t.Helper()
+				var nilErr *runtime.PanicNilError
+				assert.ErrorAs(t, err, &nilErr)
+			},
+		},
+		{
+			name:     "hook_boom_HealthCheck",
+			withHook: true,
+			value:    "boom",
+			entry:    rootCheck,
+			message:  "doger: health check panic: boom",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.skip != "" {
+				t.Skip(tt.skip)
+			}
+			testWithTimeout(t, 5*time.Second)
+
+			recorder := &healthRunTestPanicRecorder{}
+			opts := &InjectorOpts{}
+			if tt.withHook {
+				opts.HookContainerPanic = recorder.hook
+			}
+			i := NewWithOpts(opts)
+			ProvideNamedValue(i, "db", &healthRunTestPanicking{value: tt.value})
+
+			err := tt.entry(i)
+
+			require.Error(t, err)
+			assert.EqualError(t, err, tt.message)
+			assert.ErrorIs(t, err, ErrHealthCheckPanic)
+			if tt.match != nil {
+				tt.match(t, err)
+			}
+			if tt.withHook {
+				assert.Equal(t, [][2]any{{"healthcheck", tt.value}}, recorder.recorded())
+			} else {
+				assert.Empty(t, recorder.recorded())
+			}
+		})
+	}
+}
+
+func TestHealthCheck_HookPanicPropagates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		entry func(i *RootScope, scheduler *manualScheduler)
+	}{
+		{name: "HealthCheckNamed", entry: func(i *RootScope, _ *manualScheduler) { _ = HealthCheckNamed(i, "db") }},
+		{name: "HealthCheck", entry: func(i *RootScope, _ *manualScheduler) { i.HealthCheck() }},
+		{name: "HealthReport", entry: func(i *RootScope, _ *manualScheduler) { i.HealthReport() }},
+		{name: "stored_round", entry: func(_ *RootScope, scheduler *manualScheduler) { scheduler.runRound() }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			scheduler := &manualScheduler{}
+			i := NewWithOpts(&InjectorOpts{
+				HealthScheduler:    scheduler,
+				HookContainerPanic: func(_ *RootScope, _ string, value any) { panic(value) },
+			})
+			ProvideNamedValue(i, "db", &healthRunTestPanicking{value: "boom"})
+			require.NoError(t, i.Start())
+			defer i.Shutdown()
+
+			recovered := func() (recovered any) {
+				defer func() { recovered = recover() }()
+				tt.entry(i, scheduler)
+				return nil
+			}()
+
+			assert.Equal(t, "boom", recovered)
+		})
+	}
+}
+
+// healthRunTestNoWaiterChild is set in the environment of the child process
+// that runs TestHealthCheck_HookPanicNoWaiterCrashes's scenario, which ends
+// its process.
+const healthRunTestNoWaiterChild = "DOGER_TEST_HOOK_PANIC_NO_WAITER"
+
+// healthRunTestPanicAfter tells when its check starts, then panics with
+// "boom" once released, ignoring its context.
+type healthRunTestPanicAfter struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *healthRunTestPanicAfter) HealthCheck() error {
+	close(p.started)
+	<-p.release
+	panic("boom")
+}
+
+func TestHealthCheck_HookPanicNoWaiterCrashes(t *testing.T) {
+	if os.Getenv(healthRunTestNoWaiterChild) == "1" {
+		healthRunTestHookPanicNoWaiter()
+		return
+	}
+	t.Parallel()
+	testWithTimeout(t, 30*time.Second)
+	is := assert.New(t)
+
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestHealthCheck_HookPanicNoWaiterCrashes$") //nolint:gosec // the test binary itself
+	cmd.Env = append(os.Environ(), healthRunTestNoWaiterChild+"=1")
+	out, err := cmd.CombinedOutput()
+
+	is.Error(err, "the child process survived")
+	is.True(strings.HasPrefix(string(out), "panic: boom"), "the child process's output: %s", out)
+}
+
+// healthRunTestHookPanicNoWaiter runs, in the child process, a check whose
+// only caller leaves before it panics, with a HookContainerPanic that panics
+// again: the process ends with that panic, or prints "survived" and exits 0.
+func healthRunTestHookPanicNoWaiter() {
+	i := NewWithOpts(&InjectorOpts{HookContainerPanic: func(_ *RootScope, _ string, value any) { panic(value) }})
+	check := &healthRunTestPanicAfter{started: make(chan struct{}), release: make(chan struct{})}
+	ProvideNamedValue(i, "db", check)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- HealthCheckNamedWithContext(ctx, i, "db") }()
+	<-check.started
+	cancel()
+	<-done // no caller waits for the check any more
+	close(check.release)
+
+	time.Sleep(5 * time.Second)
+	fmt.Println("survived")
+	os.Exit(0)
+}
+
+// healthRunTestCounter is a Healthchecker that counts its calls and returns
+// err.
+type healthRunTestCounter struct {
+	calls atomic.Int32
+	err   error
+}
+
+func (c *healthRunTestCounter) HealthCheck() error {
+	c.calls.Add(1)
+	return c.err
+}
+
+func TestHealthCheck_EachCheckOnce(t *testing.T) {
+	t.Parallel()
+
+	errDown := errors.New("down")
+	dbName := NameOf[*healthRunTestCounter]()
+	hcName := NameOf[Healthchecker]()
+
+	// each row registers its services and returns the scope-wide check to
+	// run, the map it must return and the counters with their expected calls
+	tests := []struct {
+		name   string
+		setup  func(i *RootScope, a, b *healthRunTestCounter) func() map[string]error
+		errA   error
+		want   map[string]error
+		countA int32
+		countB int32
+	}{
+		{
+			name: "shadowed_from_child",
+			setup: func(i *RootScope, a, b *healthRunTestCounter) func() map[string]error {
+				ProvideNamedValue(i, "svc", a)
+				child := i.Scope("child")
+				ProvideNamedValue(child, "svc", b)
+				return child.HealthCheck
+			},
+			want: map[string]error{"svc": nil}, countA: 0, countB: 1,
+		},
+		{
+			name: "shadowed_from_root",
+			setup: func(i *RootScope, a, b *healthRunTestCounter) func() map[string]error {
+				ProvideNamedValue(i, "svc", a)
+				ProvideNamedValue(i.Scope("child"), "svc", b)
+				return i.HealthCheck
+			},
+			want: map[string]error{"svc": nil}, countA: 1, countB: 0,
+		},
+		{
+			name: "alias",
+			setup: func(i *RootScope, a, _ *healthRunTestCounter) func() map[string]error {
+				ProvideValue(i, a)
+				must0(Alias[*healthRunTestCounter, Healthchecker](i))
+				return i.HealthCheck
+			},
+			want: map[string]error{dbName: nil, hcName: nil}, countA: 1,
+		},
+		{
+			name: "alias_error",
+			setup: func(i *RootScope, a, _ *healthRunTestCounter) func() map[string]error {
+				ProvideValue(i, a)
+				must0(Alias[*healthRunTestCounter, Healthchecker](i))
+				return i.HealthCheck
+			},
+			errA: errDown,
+			want: map[string]error{dbName: errDown, hcName: errDown}, countA: 1,
+		},
+		{
+			name: "export_from_root_scope",
+			setup: func(i *RootScope, a, _ *healthRunTestCounter) func() map[string]error {
+				child := i.Scope("child")
+				ProvideNamedValue(child, "svc", a)
+				must0(ExportNamed[*healthRunTestCounter](child, "svc"))
+				return i.self.HealthCheck
+			},
+			want: map[string]error{"svc": nil}, countA: 1,
+		},
+		{
+			name: "export_from_source_scope",
+			setup: func(i *RootScope, a, _ *healthRunTestCounter) func() map[string]error {
+				child := i.Scope("child")
+				ProvideNamedValue(child, "svc", a)
+				must0(ExportNamed[*healthRunTestCounter](child, "svc"))
+				return child.HealthCheck
+			},
+			want: map[string]error{"svc": nil}, countA: 1,
+		},
+		{
+			name: "yielded_default",
+			setup: func(i *RootScope, a, b *healthRunTestCounter) func() map[string]error {
+				child := i.Scope("child")
+				ProvideNamedValue(child, "svc", a, AsDefault())
+				ProvideNamedValue(i, "svc", b)
+				return child.HealthCheck
+			},
+			want: map[string]error{"svc": nil}, countA: 0, countB: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+			is := assert.New(t)
+
+			a, b := &healthRunTestCounter{err: tt.errA}, &healthRunTestCounter{}
+			check := tt.setup(New(), a, b)
+
+			is.Equal(tt.want, check())
+			is.Equal(tt.countA, a.calls.Load(), "calls of A")
+			is.Equal(tt.countB, b.calls.Load(), "calls of B")
+		})
+	}
+}
+
+func TestHealthCheck_MapShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		target func(t *testing.T, i *RootScope) map[string]error
+		want   map[string]error
+	}{
+		{
+			name:   "root_scope",
+			target: func(_ *testing.T, i *RootScope) map[string]error { return i.HealthCheck() },
+			want:   map[string]error{"answer": nil, "db": nil, "ext:redis/pool": nil},
+		},
+		{
+			name: "child_scope",
+			target: func(t *testing.T, i *RootScope) map[string]error {
+				child, ok := i.ChildByName("child")
+				require.True(t, ok)
+				return child.HealthCheck()
+			},
+			want: map[string]error{"answer": nil, "db": nil, "cache": nil},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			i := New()
+			ProvideNamedValue(i, "answer", 42)
+			ProvideNamedValue(i, "db", &healthRunTestCounter{})
+			ProvideNamedValue(i.Scope("child"), "cache", &healthRunTestCounter{})
+			require.NoError(t, Extend(i, &testExtension{name: "redis", extend: func(x *ExtensionContext) error {
+				ProvideNamedValue(x.Scope(), "pool", &healthRunTestCounter{})
+				return nil
+			}}))
+
+			assert.Equal(t, tt.want, tt.target(t, i))
+		})
+	}
+}
+
+// healthRunTestBlocking is a Healthchecker that counts its calls, blocks
+// until released, ignoring its context, then returns err.
+type healthRunTestBlocking struct {
+	calls   atomic.Int32
+	release chan struct{}
+	err     error
+}
+
+func newHealthRunTestBlocking(err error) *healthRunTestBlocking {
+	return &healthRunTestBlocking{release: make(chan struct{}), err: err}
+}
+
+func (b *healthRunTestBlocking) HealthCheck() error {
+	b.calls.Add(1)
+	<-b.release
+	return b.err
+}
+
+// Not parallel: goleak checks the goroutines this test leaves.
+func TestHealthCheck_NoPileUp(t *testing.T) {
+	tests := []struct {
+		name  string
+		skip  string
+		entry func(i *RootScope) error
+	}{
+		{name: "HealthCheck", entry: func(i *RootScope) error { return i.HealthCheck()["db"] }},
+		{name: "HealthCheckNamed", entry: func(i *RootScope) error { return HealthCheckNamed(i, "db") }},
+		{name: "HealthReport", entry: func(i *RootScope) error { return healthRunTestReportErr(i, "db") }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.skip != "" {
+				t.Skip(tt.skip)
+			}
+			testWithTimeout(t, 10*time.Second)
+			defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				// caching off, so no HealthReport read is answered from the
+				// recorded timeout and each one meets the check in flight
+				i := NewWithOpts(&InjectorOpts{
+					HealthCheckTimeout:   5 * time.Millisecond,
+					HealthReportCacheTTL: -time.Nanosecond,
+				})
+				db := newHealthRunTestBlocking(nil)
+				ProvideNamedValue(i, "db", db)
+
+				for range 100 {
+					is.EqualError(tt.entry(i), healthCheckTestDeadlineMessage)
+				}
+				is.Equal(int32(1), db.calls.Load(), "calls of the check")
+
+				close(db.release)
+			})
+		})
+	}
+}
+
+func TestHealthCheck_ConcurrentShareInFlight(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		i := New()
+		checks := make([]*healthRunTestBlocking, 10)
+		for n := range checks {
+			checks[n] = newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), checks[n])
+		}
+
+		results := make(chan map[string]error, 50)
+		for range 50 {
+			go func() { results <- i.HealthCheck() }()
+		}
+		synctest.Wait() // every call waits
+
+		for _, check := range checks {
+			close(check.release)
+		}
+
+		maps := make([]map[string]error, 0, 50)
+		for range 50 {
+			maps = append(maps, <-results)
+		}
+
+		for n, check := range checks {
+			is.Equal(int32(1), check.calls.Load(), "calls of svc-%d", n)
+		}
+		for _, m := range maps {
+			is.Len(m, 10)
+			for name, err := range m {
+				is.NoError(err, name)
+			}
+		}
+		delete(maps[0], "svc-0")
+		for _, m := range maps[1:] {
+			is.Len(m, 10)
+		}
+	})
+}
+
+func TestHealthCheck_JoinRunning(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		errDown := errors.New("down")
+		i := New()
+		db := newHealthRunTestBlocking(errDown)
+		ProvideNamedValue(i, "db", db)
+
+		forced := make(chan map[string]error, 1)
+		go func() { forced <- i.HealthCheck() }()
+		synctest.Wait() // the forced call runs the check
+
+		named := make(chan error, 1)
+		go func() { named <- HealthCheckNamed(i, "db") }()
+		synctest.Wait()
+
+		close(db.release)
+
+		is.Same(errDown, <-named)
+		is.Same(errDown, (<-forced)["db"])
+		is.Equal(int32(1), db.calls.Load(), "calls of the check")
+	})
+}
+
+func TestHealthCheck_SequentialCheckAgain(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		entry func(i *RootScope) error
+		n     int32
+	}{
+		{name: "HealthCheck_1", entry: func(i *RootScope) error { return i.HealthCheck()["db"] }, n: 1},
+		{name: "HealthCheck_3", entry: func(i *RootScope) error { return i.HealthCheck()["db"] }, n: 3},
+		{name: "HealthCheckNamed_2", entry: func(i *RootScope) error { return HealthCheckNamed(i, "db") }, n: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+			is := assert.New(t)
+
+			i := New()
+			db := &healthRunTestCounter{}
+			ProvideNamedValue(i, "db", db)
+
+			for range tt.n {
+				is.NoError(tt.entry(i))
+			}
+			is.Equal(tt.n, db.calls.Load(), "calls of the check")
+		})
+	}
+}
+
+// healthRunTestCtxAware is a HealthcheckerWithContext that counts its calls,
+// tracks how many run at once, blocks until released or, when untilCtx, until
+// its context is done, records its context's error and returns it.
+type healthRunTestCtxAware struct {
+	calls, running, maxRunning atomic.Int32
+	release                    chan struct{}
+	untilCtx                   bool // also return once ctx is done
+	ignoreCtx                  bool // wait for release only
+
+	mu     sync.Mutex
+	ctxErr []error
+}
+
+func newHealthRunTestCtxAware() *healthRunTestCtxAware {
+	return &healthRunTestCtxAware{release: make(chan struct{}), untilCtx: true}
+}
+
+func (c *healthRunTestCtxAware) HealthCheck(ctx context.Context) error {
+	c.calls.Add(1)
+	if n := c.running.Add(1); n > c.maxRunning.Load() {
+		c.maxRunning.Store(n)
+	}
+	defer c.running.Add(-1)
+
+	if c.ignoreCtx {
+		<-c.release
+	} else {
+		select {
+		case <-c.release:
+		case <-ctx.Done():
+		}
+	}
+
+	err := contextDone(ctx)
+	c.mu.Lock()
+	c.ctxErr = append(c.ctxErr, err)
+	c.mu.Unlock()
+
+	return err
+}
+
+func (c *healthRunTestCtxAware) recordedErrs() []error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]error(nil), c.ctxErr...)
+}
+
+func TestHealthCheck_JoinerOwnBound(t *testing.T) {
+	t.Parallel()
+
+	named := func(i *RootScope) error { return HealthCheckNamed(i, "db") }
+	forced := func(i *RootScope) error { return i.HealthCheck()["db"] }
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		single  time.Duration
+		global  time.Duration
+		entry   func(i *RootScope) error
+		advance time.Duration
+		want    string // "" while still waiting
+	}{
+		{name: "named_timeout_50ms_at_50ms", timeout: 50 * time.Millisecond, entry: named, advance: 50 * time.Millisecond, want: healthCheckTestDeadlineMessage},
+		{name: "named_timeout_50ms_at_49ms", timeout: 50 * time.Millisecond, entry: named, advance: 49 * time.Millisecond},
+		{name: "named_single_20ms_at_20ms", timeout: 50 * time.Millisecond, single: 20 * time.Millisecond, entry: named, advance: 20 * time.Millisecond, want: healthCheckTestDeadlineMessage},
+		{name: "named_single_unbounded_at_10m", timeout: 50 * time.Millisecond, single: -time.Nanosecond, entry: named, advance: 10 * time.Minute},
+		{name: "forced_global_30ms_at_30ms", global: 30 * time.Millisecond, entry: forced, advance: 30 * time.Millisecond, want: healthCheckTestDeadlineMessage},
+		{name: "forced_global_30ms_at_29ms", global: 30 * time.Millisecond, entry: forced, advance: 29 * time.Millisecond},
+		{name: "named_global_30ms_does_not_apply", timeout: -time.Nanosecond, global: 30 * time.Millisecond, entry: named, advance: 10 * time.Minute},
+		{name: "named_default_10s_at_10s", entry: named, advance: 10 * time.Second, want: healthCheckTestDeadlineMessage},
+		{name: "named_default_10s_before_10s", entry: named, advance: 9999 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				fc := newFakeClock()
+				i := NewWithOpts(&InjectorOpts{
+					Clock:                    fc,
+					HealthCheckTimeout:       tt.timeout,
+					HealthCheckSingleTimeout: tt.single,
+					HealthCheckGlobalTimeout: tt.global,
+				})
+				db := newHealthRunTestBlocking(nil)
+				ProvideNamedValue(i, "db", db)
+
+				// another caller starts the check, earlier
+				starter := make(chan map[string]error, 1)
+				go func() { starter <- i.HealthCheck() }()
+				synctest.Wait()
+				fc.Advance(25 * time.Millisecond)
+				synctest.Wait()
+
+				result := make(chan error, 1)
+				go func() { result <- tt.entry(i) }()
+				synctest.Wait()
+				fc.Advance(tt.advance)
+				synctest.Wait()
+
+				if tt.want == "" {
+					is.Empty(result, "the call returned before its own bound")
+				} else {
+					is.Len(result, 1, "the call did not return at its own bound")
+				}
+				is.Equal(int32(1), db.calls.Load(), "calls of the check")
+
+				close(db.release)
+				<-starter
+				err := <-result
+				if tt.want != "" {
+					is.EqualError(err, tt.want)
+				}
+			})
+		})
+	}
+}
+
+// healthRunTestJoinedCheck is the check of "db" in the scenarios where a
+// caller joins a check whose starter then leaves at its bound.
+type healthRunTestJoinedCheck struct {
+	service any
+	release func()
+	calls   func() int32
+}
+
+// healthRunTestJoinedChecks are the checks of those scenarios: one ignoring
+// its context and returning nil, one ignoring it and returning "down", and
+// one returning its context's error once that context ends.
+var healthRunTestJoinedChecks = []struct {
+	name  string
+	check func() healthRunTestJoinedCheck
+}{
+	{name: "ignores_ctx_returns_nil", check: func() healthRunTestJoinedCheck {
+		b := newHealthRunTestBlocking(nil)
+		return healthRunTestJoinedCheck{service: b, release: func() { close(b.release) }, calls: b.calls.Load}
+	}},
+	{name: "ignores_ctx_returns_down", check: func() healthRunTestJoinedCheck {
+		b := newHealthRunTestBlocking(errors.New("down"))
+		return healthRunTestJoinedCheck{service: b, release: func() { close(b.release) }, calls: b.calls.Load}
+	}},
+	{name: "returns_ctx_err", check: func() healthRunTestJoinedCheck {
+		c := newHealthRunTestCtxAware()
+		return healthRunTestJoinedCheck{service: c, release: func() { close(c.release) }, calls: c.calls.Load}
+	}},
+}
+
+// healthRunTestJoinAfterStarterBound runs the steps shared by those
+// scenarios in a synctest bubble: with HealthCheckGlobalTimeout 30ms, a
+// HealthCheck() starts the check of "db", HealthCheckNamed joins it 10ms
+// later, the starter returns its timeout at its bound, then the check is
+// released. It returns the injector and the joining call's result.
+func healthRunTestJoinAfterStarterBound(t *testing.T, check healthRunTestJoinedCheck) (*RootScope, error) {
+	t.Helper()
+
+	fc := newFakeClock()
+	i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckGlobalTimeout: 30 * time.Millisecond})
+	ProvideNamedValue(i, "db", check.service)
+
+	starter := make(chan map[string]error, 1)
+	go func() { starter <- i.HealthCheck() }()
+	synctest.Wait()
+	fc.Advance(10 * time.Millisecond)
+	synctest.Wait()
+
+	joiner := make(chan error, 1)
+	go func() { joiner <- HealthCheckNamed(i, "db") }()
+	synctest.Wait()
+	fc.Advance(50 * time.Millisecond)
+	synctest.Wait()
+
+	require.Len(t, starter, 1, "the HealthCheck() call did not return at its bound")
+	require.EqualError(t, (<-starter)["db"], healthCheckTestDeadlineMessage)
+
+	check.release()
+	synctest.Wait()
+
+	return i, <-joiner
+}
+
+func TestHealthCheck_JoinerGetsCheckResult(t *testing.T) {
+	t.Parallel()
+
+	wants := map[string]string{
+		"ignores_ctx_returns_nil":  "",
+		"ignores_ctx_returns_down": "down",
+		"returns_ctx_err":          healthCheckTestDeadlineMessage,
+	}
+
+	for _, tt := range healthRunTestJoinedChecks {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				check := tt.check()
+				i, err := healthRunTestJoinAfterStarterBound(t, check)
+
+				if want := wants[tt.name]; want == "" {
+					is.NoError(err)
+				} else {
+					is.EqualError(err, want)
+				}
+				is.Equal(int32(1), check.calls(), "calls of the check")
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_CallerLeaves(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		i := New()
+		db := newHealthRunTestCtxAware()
+		ProvideNamedValue(i, "db", db)
+
+		ctxA, cancelA := context.WithCancel(context.Background())
+		a := make(chan map[string]error, 1)
+		go func() { a <- i.HealthCheckWithContext(ctxA) }()
+		synctest.Wait() // A started the check
+
+		b := make(chan map[string]error, 1)
+		go func() { b <- i.HealthCheck() }()
+		synctest.Wait() // B joined it
+
+		cancelA()
+		synctest.Wait()
+		close(db.release)
+
+		is.EqualError((<-a)["db"], "doger: health check timeout: context canceled")
+		is.NoError((<-b)["db"])
+	})
+}
+
+func TestHealthCheck_EndedContextStartsNoCheck(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		entry     func(ctx context.Context, i *RootScope) (HealthState, error)
+		wantState HealthState // of the report entry; asserted when report
+		report    bool
+	}{
+		{name: "HealthCheckWithContext", entry: func(ctx context.Context, i *RootScope) (HealthState, error) {
+			return HealthUnknown, i.HealthCheckWithContext(ctx)["db"]
+		}},
+		{name: "HealthCheckNamedWithContext", entry: func(ctx context.Context, i *RootScope) (HealthState, error) {
+			return HealthUnknown, HealthCheckNamedWithContext(ctx, i, "db")
+		}},
+		{name: "HealthReportWithContext", report: true, wantState: HealthUnhealthy, entry: func(ctx context.Context, i *RootScope) (HealthState, error) {
+			for _, entry := range i.HealthReportWithContext(ctx).Services {
+				if entry.Service.Service == "db" {
+					return entry.State, entry.Err
+				}
+			}
+			return HealthUnknown, errors.New(`no entry for "db"`)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				log := &healthMonitorTestLog{}
+				i := NewWithOpts(&InjectorOpts{Logger: log.logger()})
+				db := newHealthRunTestCtxAware()
+				ProvideNamedValue(i, "db", db)
+
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				start := time.Now()
+				state, err := tt.entry(ctx, i)
+				is.Zero(time.Since(start), "the call did not return at once")
+				is.EqualError(err, "doger: health check timeout: context canceled")
+				if tt.report {
+					is.Equal(tt.wantState, state)
+				}
+
+				synctest.Wait() // a check started anyway has returned
+				is.Empty(log.containing("health check started", "service=db"))
+				close(db.release)
+			})
+		})
+	}
+}
+
+// An abandoned check that returns between a caller's queueing and its wait,
+// as in healthCheckTargets, starts no fresh check for a caller whose context
+// ended, before or after it queued.
+func TestHealthCheck_EndedContextQueuesNoFreshCheck(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// afterQueueing cancels the caller's context once it queued, rather
+		// than before
+		afterQueueing bool
+	}{
+		{name: "ended_before_queueing"},
+		{name: "ended_after_queueing", afterQueueing: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				i := New()
+				db := newHealthRunTestCtxAware()
+				db.ignoreCtx = true
+				ProvideNamedValue(i, "db", db)
+
+				abandonCtx, abandon := context.WithCancel(context.Background())
+				abandoned := make(chan error, 1)
+				go func() { abandoned <- HealthCheckNamedWithContext(abandonCtx, i, "db") }()
+				synctest.Wait() // the first check runs
+				abandon()
+				<-abandoned // it runs on, abandoned
+
+				ctx, cancel := context.WithCancel(context.Background())
+				if !tt.afterQueueing {
+					cancel()
+				}
+				service, ok := i.self.serviceGet("db")
+				require.True(t, ok)
+				waiter := i.queueWrapperCheck(ctx, i.self, "db", service)
+				cancel()
+
+				close(db.release)
+				synctest.Wait() // the abandoned check returned
+
+				is.EqualError(i.health.wait(waiter), "doger: health check timeout: context canceled")
+				synctest.Wait()
+				is.Equal(int32(1), db.calls.Load(), "calls of the check")
+			})
+		})
+	}
+}
+
+// healthRunTestTraceKey is the context key of TestHealthCheck_StarterContext.
+type healthRunTestTraceKey struct{}
+
+// healthRunTestContextRecorder is a HealthcheckerWithContext recording
+// whether its context has a deadline and its trace value.
+type healthRunTestContextRecorder struct {
+	hasDeadline atomic.Bool
+	trace       atomic.Value
+}
+
+func (r *healthRunTestContextRecorder) HealthCheck(ctx context.Context) error {
+	_, ok := ctx.Deadline()
+	r.hasDeadline.Store(ok)
+	r.trace.Store(ctx.Value(healthRunTestTraceKey{}))
+	return nil
+}
+
+func TestHealthCheck_StarterContext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		skip  string
+		entry func(ctx context.Context, i *RootScope) error
+	}{
+		{name: "HealthCheckWithContext", entry: func(ctx context.Context, i *RootScope) error { return i.HealthCheckWithContext(ctx)["c"] }},
+		{name: "HealthCheckNamedWithContext", entry: func(ctx context.Context, i *RootScope) error { return HealthCheckNamedWithContext(ctx, i, "c") }},
+		{name: "HealthReportWithContext", entry: func(ctx context.Context, i *RootScope) error {
+			return healthRunTestReportErrWithContext(ctx, i, "c")
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.skip != "" {
+				t.Skip(tt.skip)
+			}
+			testWithTimeout(t, 5*time.Second)
+			is := assert.New(t)
+
+			i := New()
+			c := &healthRunTestContextRecorder{}
+			ProvideNamedValue(i, "c", c)
+
+			ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), healthRunTestTraceKey{}, "trace-1"), time.Minute)
+			defer cancel()
+
+			is.NoError(tt.entry(ctx, i))
+			is.True(c.hasDeadline.Load(), "the check saw no deadline")
+			is.Equal("trace-1", c.trace.Load())
+		})
+	}
+}
+
+func TestHealthCheck_LastCallerCancels(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		i := New()
+		db := newHealthRunTestCtxAware()
+		ProvideNamedValue(i, "db", db)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		result := make(chan map[string]error, 1)
+		go func() { result <- i.HealthCheckWithContext(ctx) }()
+		synctest.Wait()
+		cancel()
+
+		is.EqualError((<-result)["db"], "doger: health check timeout: context canceled")
+		synctest.Wait() // the check returned
+		is.Equal([]error{context.Canceled}, db.recordedErrs())
+
+		close(db.release)
+	})
+}
+
+func TestHealthCheck_AbandonedNotJoined(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		i := New()
+		db := newHealthRunTestCtxAware()
+		db.ignoreCtx = true
+		ProvideNamedValue(i, "db", db)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		first := make(chan map[string]error, 1)
+		go func() { first <- i.HealthCheckWithContext(ctx) }()
+		synctest.Wait()
+		cancel()
+		<-first // the check is left running
+
+		second := make(chan map[string]error, 1)
+		go func() { second <- i.HealthCheck() }()
+		synctest.Wait()
+		close(db.release)
+
+		err := (<-second)["db"]
+		is.NotErrorIs(err, context.Canceled)
+		is.NoError(err)
+		is.Equal(int32(2), db.calls.Load(), "calls of the check")
+		is.Equal(int32(1), db.maxRunning.Load(), "checks running at once")
+	})
+}
+
+// healthRunTestGate is a Healthchecker that counts the checks running at
+// once on a shared gauge, blocks until released, and returns nil.
+type healthRunTestGate struct {
+	running, maxRunning *atomic.Int32
+	release             chan struct{}
+}
+
+func (g *healthRunTestGate) HealthCheck() error {
+	n := g.running.Add(1)
+	for {
+		current := g.maxRunning.Load()
+		if n <= current || g.maxRunning.CompareAndSwap(current, n) {
+			break
+		}
+	}
+	<-g.release
+	g.running.Add(-1)
+	return nil
+}
+
+func TestHealthCheck_ParallelismCap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		n       uint
+		running int32
+	}{
+		{name: "n_1", n: 1, running: 1},
+		{name: "n_4", n: 4, running: 4},
+		{name: "n_0_default", n: 0, running: 20},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: tt.n})
+				var running, maxRunning atomic.Int32
+				release := make(chan struct{})
+				for n := range 20 {
+					ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), &healthRunTestGate{running: &running, maxRunning: &maxRunning, release: release})
+				}
+
+				result := make(chan map[string]error, 1)
+				go func() { result <- i.HealthCheck() }()
+				synctest.Wait() // no further check starts
+
+				is.Equal(tt.running, running.Load(), "checks running")
+				close(release)
+
+				results := <-result
+				is.Len(results, 20)
+				for name, err := range results {
+					is.NoError(err, name)
+				}
+				is.Equal(tt.running, maxRunning.Load(), "checks running at once")
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_SlotWaitHonorsContext(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1})
+		hung := newHealthRunTestBlocking(nil)
+		ProvideNamedValue(i, "hung", hung)
+		ProvideNamedValue(i, "db", &healthRunTestCounter{})
+
+		holder := make(chan map[string]error, 1)
+		go func() { holder <- i.HealthCheck() }()
+		for hung.calls.Load() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		result := make(chan map[string]error, 1)
+		go func() { result <- i.HealthCheckWithContext(ctx) }()
+
+		select {
+		case results := <-result:
+			is.ErrorIs(results["db"], ErrHealthCheckTimeout)
+			is.ErrorIs(results["db"], context.DeadlineExceeded)
+		case <-time.After(time.Second):
+			is.Fail("the call did not return within 1s while waiting for a slot")
+		}
+
+		close(hung.release)
+		<-holder
+		i.Shutdown()
+	})
+}
+
+func TestHealthCheck_SlotWaitDoesNotBlockProvide(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 10*time.Second)
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1})
+		hung := newHealthRunTestBlocking(nil)
+		ProvideNamedValue(i, "hung", hung)
+
+		var wg sync.WaitGroup
+		wg.Go(func() { _ = i.HealthCheck() }) // runs "hung"
+		for hung.calls.Load() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		for range 1001 {
+			wg.Go(func() { _ = i.HealthCheck() })
+		}
+		time.Sleep(50 * time.Millisecond) // let them queue
+
+		provided := make(chan struct{})
+		go func() {
+			defer close(provided)
+			ProvideNamedValue(i, "late", 42)
+		}()
+
+		select {
+		case <-provided:
+		case <-time.After(time.Second):
+			is.Fail("ProvideNamedValue did not return within 1s while health checks waited for a slot")
+		}
+
+		close(hung.release)
+		wg.Wait()
+		<-provided
+		i.Shutdown()
+	})
+}
+
+func TestHealthCheck_OutlivedBoundFreesSlot(t *testing.T) {
+	t.Parallel()
+
+	// dbHealth returns nil when the entry for "db" of r is HealthHealthy
+	dbHealth := func(r HealthReport) error {
+		for _, entry := range r.Services {
+			if entry.Service.Service == "db" {
+				if entry.State != HealthHealthy {
+					return fmt.Errorf("state %s: %w", entry.State, entry.Err)
+				}
+				return nil
+			}
+		}
+		return errors.New(`no entry for "db"`)
+	}
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		// unbounded makes "hog" hold the slot in a HealthCheck() call still
+		// waiting for it, with no bound; otherwise in a HealthCheck() call
+		// that timed out on it and returned
+		unbounded bool
+		// started starts the injector before the entry is called
+		started bool
+		// entry returns the result of "db": nil when healthy
+		entry func(i *RootScope, scheduler *manualScheduler) error
+		after time.Duration
+	}{
+		{
+			name:    "forced_behind_timed_out_holder",
+			timeout: time.Second,
+			entry:   func(i *RootScope, _ *manualScheduler) error { return i.HealthCheck()["db"] },
+			after:   time.Second,
+		},
+		{
+			name:    "report_behind_timed_out_holder",
+			timeout: time.Second,
+			entry:   func(i *RootScope, _ *manualScheduler) error { return dbHealth(i.HealthReport()) },
+			after:   time.Second,
+		},
+		{
+			name:    "round_behind_timed_out_holder",
+			timeout: time.Second,
+			started: true,
+			entry: func(i *RootScope, scheduler *manualScheduler) error {
+				scheduler.runRound()
+				return dbHealth(i.HealthReport()) // the recorded state, once monitored
+			},
+			after: time.Second,
+		},
+		{
+			name:      "report_behind_unbounded_holder",
+			unbounded: true,
+			entry:     func(i *RootScope, _ *manualScheduler) error { return dbHealth(i.HealthReport()) },
+			after:     DefaultHealthReportCheckTimeout,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				scheduler := &manualScheduler{}
+				i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1, HealthCheckTimeout: tt.timeout, HealthScheduler: scheduler})
+				hog := newHealthRunTestBlocking(nil)
+				ProvideNamedValue(i, "hog", hog)
+				holder := make(chan map[string]error, 1)
+				if tt.unbounded {
+					go func() { holder <- i.HealthCheck() }()
+					synctest.Wait() // hog holds the only slot
+				} else {
+					is.ErrorIs(i.HealthCheck()["hog"], ErrHealthCheckTimeout)
+				}
+				db := &healthRunTestCounter{}
+				ProvideNamedValue(i, "db", db)
+				if tt.started {
+					require.NoError(t, i.Start())
+				}
+
+				type result struct {
+					err     error
+					elapsed time.Duration
+				}
+				done := make(chan result, 1)
+				go func() {
+					start := time.Now()
+					err := tt.entry(i, scheduler)
+					done <- result{err: err, elapsed: time.Since(start)}
+				}()
+
+				returned := false
+				select {
+				case got := <-done:
+					returned = true
+					is.Equal(tt.after, got.elapsed, "returned after its call")
+					is.NoError(got.err)
+					is.Equal(int32(1), db.calls.Load(), "calls of db")
+				case <-time.After(time.Hour):
+					is.Fail("the entry had not returned after 1h")
+				}
+
+				close(hog.release)
+				if !returned {
+					<-done
+				}
+				if tt.unbounded {
+					<-holder
+				}
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_BoundStartsAtSlot(t *testing.T) {
+	t.Parallel()
+
+	// each entry returns the error of every service, by name
+	report := func(i *RootScope) map[string]error {
+		results := map[string]error{}
+		for _, entry := range i.HealthReport().Services {
+			results[entry.Service.Service] = entry.Err
+			if entry.State != HealthHealthy {
+				results[entry.Service.Service] = fmt.Errorf("state %s: %w", entry.State, entry.Err)
+			}
+		}
+		return results
+	}
+	forced := func(i *RootScope) map[string]error { return i.HealthCheck() }
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		takes   []time.Duration
+		entry   func(i *RootScope) map[string]error
+	}{
+		{name: "report_9s_0s", takes: []time.Duration{9 * time.Second, 0}, entry: report},
+		{name: "report_9s_2s", takes: []time.Duration{9 * time.Second, 2 * time.Second}, entry: report},
+		{name: "report_6s_6s_6s", takes: []time.Duration{6 * time.Second, 6 * time.Second, 6 * time.Second}, entry: report},
+		{name: "forced_timeout_10s_9s_2s", timeout: 10 * time.Second, takes: []time.Duration{9 * time.Second, 2 * time.Second}, entry: forced},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				fc := newFakeClock()
+				i := NewWithOpts(&InjectorOpts{Clock: fc, HealthCheckParallelism: 1, HealthCheckTimeout: tt.timeout})
+				for n, takes := range tt.takes {
+					ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), &healthCheckTestOnClock{clock: fc, duration: takes})
+				}
+
+				result := make(chan map[string]error, 1)
+				go func() { result <- tt.entry(i) }()
+				synctest.Wait()
+				for steps := 0; len(result) == 0; steps++ {
+					require.Less(t, steps, 60, "the entry had not returned after 60s of the fake clock")
+					fc.Advance(time.Second)
+					synctest.Wait()
+				}
+
+				results := <-result
+				is.Len(results, len(tt.takes))
+				for name, err := range results {
+					is.NoError(err, name)
+				}
+
+				// let every check the entry stopped waiting for return
+				for _, takes := range tt.takes {
+					for range takes / time.Second {
+						fc.Advance(time.Second)
+						synctest.Wait()
+					}
+				}
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_GlobalTimeoutBoundsSlotWait(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		advance  time.Duration
+		returned bool
+	}{
+		{name: "at_29ms", advance: 29 * time.Millisecond},
+		{name: "at_30ms", advance: 30 * time.Millisecond, returned: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				fc := newFakeClock()
+				i := NewWithOpts(&InjectorOpts{
+					Clock:                    fc,
+					HealthCheckParallelism:   1,
+					HealthCheckTimeout:       50 * time.Millisecond,
+					HealthCheckGlobalTimeout: 30 * time.Millisecond,
+				})
+				child := i.Scope("child")
+				hog := newHealthRunTestBlocking(nil)
+				ProvideNamedValue(child, "hog", hog)
+				ProvideNamedValue(i, "db", &healthReportTestSwitch{})
+
+				hogRead := make(chan HealthReport, 1)
+				go func() { hogRead <- child.HealthReport() }() // "hog" takes the only slot
+				synctest.Wait()
+
+				forced := make(chan map[string]error, 1)
+				go func() { forced <- i.HealthCheck() }() // "db" waits for the slot
+				synctest.Wait()
+				fc.Advance(tt.advance)
+				synctest.Wait()
+
+				if !tt.returned {
+					is.Empty(forced, "the call returned before its global timeout")
+				} else if is.Len(forced, 1, "the call did not return at its global timeout") {
+					is.EqualError((<-forced)["db"], healthCheckTestDeadlineMessage)
+				}
+
+				close(hog.release)
+				<-hogRead
+				synctest.Wait()
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_NoQueueLimit(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 10*time.Second)
+	is := assert.New(t)
+
+	i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1})
+	for n := range 2000 {
+		ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), &healthRunTestCounter{})
+	}
+
+	results := i.HealthCheck()
+	is.Len(results, 2000)
+	for name, err := range results {
+		is.NoError(err, name)
+	}
+	i.Shutdown()
+}
+
+// healthRunTestAggregate is a HealthcheckerWithContext whose check is the
+// single-service check of "leaf".
+type healthRunTestAggregate struct{ injector Injector }
+
+func (a *healthRunTestAggregate) HealthCheck(ctx context.Context) error {
+	return HealthCheckNamedWithContext(ctx, a.injector, "leaf")
+}
+
+func TestHealthCheck_SingleTakesOverQueued(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		entry func(i *RootScope) any
+		want  any
+	}{
+		{name: "HealthCheck", entry: func(i *RootScope) any { return i.HealthCheck() }, want: map[string]error{"agg": nil, "leaf": nil}},
+		{name: "HealthCheckNamed", entry: func(i *RootScope) any { return HealthCheckNamed(i, "agg") }, want: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				for range 50 { // the order the limiter runs the checks in varies
+					i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1})
+					leaf := newHealthRunTestCtxAware()
+					close(leaf.release)
+					ProvideNamedValue(i, "leaf", leaf)
+					ProvideNamedValue(i, "agg", &healthRunTestAggregate{injector: i})
+
+					result := make(chan any, 1)
+					go func() { result <- tt.entry(i) }()
+
+					select {
+					case got := <-result:
+						if tt.want == nil {
+							is.Nil(got)
+						} else {
+							is.Equal(tt.want, got)
+						}
+					case <-time.After(time.Second):
+						is.Fail("the call did not return within 1s")
+						return
+					}
+					is.LessOrEqual(leaf.maxRunning.Load(), int32(1), "leaf checks running at once")
+					i.Shutdown()
+				}
+			})
+		})
+	}
+}
+
+// healthRunTestQueuedLeaf is a HealthcheckerWithContext whose first check
+// blocks until released, ignoring its context, and whose later checks record
+// whether their context has a deadline, then return nil.
+type healthRunTestQueuedLeaf struct {
+	calls    atomic.Int32
+	release  chan struct{}
+	deadline atomic.Bool // the last later check's context had one
+}
+
+func (l *healthRunTestQueuedLeaf) HealthCheck(ctx context.Context) error {
+	if l.calls.Add(1) == 1 {
+		<-l.release
+		return nil
+	}
+	_, ok := ctx.Deadline()
+	l.deadline.Store(ok)
+	return nil
+}
+
+func TestHealthCheck_QueuedKeepSlotRule(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		single  time.Duration
+		// holder makes a service "hog" hold the only slot in a HealthCheck()
+		// call until released
+		holder bool
+		// first leaves the first check of "leaf" running, abandoned
+		first func(i *RootScope)
+		// second is called once first returned
+		second func(i *RootScope) any
+	}{
+		{
+			name:    "forced_waits_for_slot",
+			timeout: -time.Nanosecond, // unbounded: 0 is the 10s default
+			holder:  true,
+			first: func(i *RootScope) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+				defer cancel()
+				_ = HealthCheckNamedWithContext(ctx, i, "leaf")
+			},
+			second: func(i *RootScope) any { return i.HealthCheck() },
+		},
+		{
+			name:    "single_unbounded",
+			timeout: 50 * time.Millisecond,
+			single:  -time.Nanosecond,
+			first:   func(i *RootScope) { _ = i.HealthCheck() },
+			second:  func(i *RootScope) any { return HealthCheckNamed(i, "leaf") },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				i := NewWithOpts(&InjectorOpts{
+					HealthCheckParallelism:   1,
+					HealthCheckTimeout:       tt.timeout,
+					HealthCheckSingleTimeout: tt.single,
+				})
+				hog := newHealthRunTestBlocking(nil)
+				holder := make(chan map[string]error, 1)
+				if tt.holder {
+					ProvideNamedValue(i, "hog", hog)
+					go func() { holder <- i.HealthCheck() }()
+					synctest.Wait()
+				}
+				leaf := &healthRunTestQueuedLeaf{release: make(chan struct{})}
+				ProvideNamedValue(i, "leaf", leaf)
+
+				tt.first(i)
+				second := make(chan any, 1)
+				go func() { second <- tt.second(i) }()
+				synctest.Wait()
+				close(leaf.release)
+				synctest.Wait()
+
+				if tt.holder {
+					is.Equal(int32(1), leaf.calls.Load(), "the second check started while hog held the slot")
+					close(hog.release)
+					<-holder
+					synctest.Wait()
+				}
+				<-second
+				is.Equal(int32(2), leaf.calls.Load(), "checks of leaf")
+				is.False(leaf.deadline.Load(), "the second check's context has a deadline")
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_QueuedBehindAbandonedKeepsBound(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		entry func(i *RootScope) (HealthState, error)
+		// report asserts the state of the entry for "leaf"
+		report bool
+	}{
+		{name: "HealthCheck", entry: func(i *RootScope) (HealthState, error) {
+			return HealthUnknown, i.HealthCheck()["leaf"]
+		}},
+		{name: "HealthReport", report: true, entry: func(i *RootScope) (HealthState, error) {
+			for _, entry := range i.HealthReport().Services {
+				if entry.Service.Service == "leaf" {
+					return entry.State, entry.Err
+				}
+			}
+			return HealthUnknown, errors.New(`no entry for "leaf"`)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1, HealthCheckTimeout: 20 * time.Millisecond})
+				leaf := &healthRunTestQueuedLeaf{release: make(chan struct{})}
+				ProvideNamedValue(i, "leaf", leaf)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+				_ = HealthCheckNamedWithContext(ctx, i, "leaf") // its check runs on, abandoned
+				cancel()
+
+				type result struct {
+					state   HealthState
+					err     error
+					elapsed time.Duration
+				}
+				done := make(chan result, 1)
+				go func() {
+					start := time.Now()
+					state, err := tt.entry(i)
+					done <- result{state: state, err: err, elapsed: time.Since(start)}
+				}()
+				time.Sleep(time.Millisecond)
+
+				// hog holds the only slot, within its own 20ms bound
+				hog := newHealthRunTestBlocking(nil)
+				ProvideNamedValue(i, "hog", hog)
+				holder := make(chan map[string]error, 1)
+				go func() { holder <- i.HealthCheck() }()
+				time.Sleep(4 * time.Millisecond)
+				close(leaf.release) // the check started for the caller waits for the slot
+
+				got := <-done
+				is.Equal(20*time.Millisecond, got.elapsed)
+				is.EqualError(got.err, "doger: health check timeout: context deadline exceeded")
+				if tt.report {
+					is.Equal(HealthUnhealthy, got.state)
+				}
+				is.Equal(int32(1), leaf.calls.Load(), "checks of leaf")
+
+				close(hog.release)
+				<-holder
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+// Not parallel: goleak checks the goroutines a new container leaves.
+func TestNew_NoHealthGoroutine(t *testing.T) {
+	tests := []struct {
+		name      string
+		n         uint
+		scheduler HealthScheduler
+		// build builds the container with opts; nil means NewWithOpts
+		build func(opts *InjectorOpts) *RootScope
+	}{
+		{name: "n_0", n: 0},
+		{name: "n_4", n: 4},
+		{name: "scheduler", scheduler: healthRunTestGoroutineScheduler{}},
+		{name: "Clone", n: 4, scheduler: healthRunTestGoroutineScheduler{}, build: func(opts *InjectorOpts) *RootScope {
+			return NewWithOpts(opts).Clone()
+		}},
+		{name: "CloneWithOpts", n: 4, scheduler: healthRunTestGoroutineScheduler{}, build: func(opts *InjectorOpts) *RootScope {
+			return New().CloneWithOpts(opts)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ignore := goleak.IgnoreCurrent()
+
+			build := tt.build
+			if build == nil {
+				build = func(opts *InjectorOpts) *RootScope { return NewWithOpts(opts) }
+			}
+			i := build(&InjectorOpts{HealthCheckParallelism: tt.n, HealthScheduler: tt.scheduler})
+			ProvideNamedValue(i, "db", &healthRunTestCounter{})
+
+			assert.NoError(t, goleak.Find(ignore))
+			i.Shutdown()
+		})
+	}
+}
+
+// healthRunTestReportErr returns the Err of the entry for name in a root
+// HealthReport, or an error when there is none.
+func healthRunTestReportErr(i *RootScope, name string) error {
+	return healthRunTestReportErrWithContext(context.Background(), i, name)
+}
+
+// healthRunTestReportErrWithContext is healthRunTestReportErr with ctx.
+func healthRunTestReportErrWithContext(ctx context.Context, i *RootScope, name string) error {
+	for _, entry := range i.HealthReportWithContext(ctx).Services {
+		if entry.Service.Service == name {
+			return entry.Err
+		}
+	}
+
+	return fmt.Errorf("no entry for %q", name)
+}
+
+// healthRunTestGoroutineScheduler is a HealthScheduler that would start a
+// goroutine when called.
+type healthRunTestGoroutineScheduler struct{}
+
+func (healthRunTestGoroutineScheduler) ScheduleHealthRounds(_ Clock, _ func(context.Context)) (func(context.Context) error, error) {
+	done := make(chan struct{})
+	go func() { <-done }()
+	return func(context.Context) error { close(done); return nil }, nil
+}
+
+// healthRunTestGoexitSuffix ends the message of a check that exited its
+// goroutine.
+const healthRunTestGoexitSuffix = "health check panic: runtime.Goexit"
+
+// healthRunTestGoexitOnce is a check calling runtime.Goexit on its first
+// call and returning nil afterwards, counting its calls.
+func healthRunTestGoexitOnce(calls *atomic.Int32) healthReportTestFunc {
+	return healthReportTestFunc{check: func(context.Context) error {
+		if calls.Add(1) == 1 {
+			runtime.Goexit()
+		}
+		return nil
+	}}
+}
+
+func TestHealthCheck_GoexitDoesNotWedge(t *testing.T) {
+	t.Parallel()
+
+	named := func(_ *testing.T, i *RootScope) error { return HealthCheckNamed(i, "db") }
+	forced := func(_ *testing.T, i *RootScope) error { return i.HealthCheck()["db"] }
+	report := func(t *testing.T, i *RootScope) error {
+		t.Helper()
+		entry := healthReportTestEntry(t, i.HealthReport(), "db")
+		if entry.Err == nil && entry.State != HealthHealthy {
+			return fmt.Errorf("state %v", entry.State)
+		}
+		return entry.Err
+	}
+
+	tests := []struct {
+		name        string
+		parallelism uint
+		entry       func(t *testing.T, i *RootScope) error
+	}{
+		{name: "named_unlimited", entry: named},
+		{name: "forced_unlimited", entry: forced},
+		{name: "forced_parallelism_1", parallelism: 1, entry: forced},
+		{name: "report_unlimited", entry: report},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				i := NewWithOpts(&InjectorOpts{
+					HealthCheckTimeout:     50 * time.Millisecond,
+					HealthCheckParallelism: tt.parallelism,
+					HealthReportCacheTTL:   -1,
+				})
+				var calls atomic.Int32
+				ProvideNamedValue(i, "db", healthRunTestGoexitOnce(&calls))
+
+				first := tt.entry(t, i)
+				is.ErrorIs(first, ErrHealthCheckPanic)
+				if is.ErrorIs(first, ErrHealthCheckPanic) {
+					is.True(strings.HasSuffix(first.Error(), healthRunTestGoexitSuffix), "first: %v", first)
+				}
+				is.NoError(tt.entry(t, i), "second call")
+				is.Equal(int32(2), calls.Load(), "calls of the check")
+				i.Shutdown()
+			})
+		})
+	}
+}
+
+func TestHealthCheck_GoexitAllWaiters(t *testing.T) {
+	t.Parallel()
+
+	const waiters = 10
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		panics := &healthRunTestPanicRecorder{}
+		log := newLogRecorder(slog.LevelDebug)
+		i := NewWithOpts(&InjectorOpts{HookContainerPanic: panics.hook, Logger: log.logger()})
+		release := make(chan struct{})
+		ProvideNamedValue(i, "db", healthReportTestFunc{check: func(context.Context) error {
+			<-release
+			runtime.Goexit()
+			return nil
+		}})
+
+		results := make(chan error, waiters)
+		for range waiters {
+			go func() { results <- HealthCheckNamed(i, "db") }()
+		}
+		synctest.Wait()
+		close(release)
+
+		for range waiters {
+			err := <-results
+			is.ErrorIs(err, ErrHealthCheckPanic)
+			if is.ErrorIs(err, ErrHealthCheckPanic) {
+				is.True(strings.HasSuffix(err.Error(), healthRunTestGoexitSuffix), "got %v", err)
+			}
+		}
+		is.Empty(panics.recorded(), "HookContainerPanic calls")
+		recovered := log.withMessage("panic recovered")
+		if is.Len(recovered, 1, "one Error record for the one check") {
+			is.Equal(slog.LevelError, recovered[0].level)
+			is.Equal("healthcheck", recovered[0].attrs["point"])
+			is.Equal("db", recovered[0].attrs["service"])
+			is.Equal("runtime.Goexit", recovered[0].attrs["panic_type"])
+		}
+		values := log.withMessage("panic value")
+		if is.Len(values, 1, "one Debug record for the one check") {
+			is.Equal(slog.LevelDebug, values[0].level)
+			is.Equal("runtime.Goexit", values[0].attrs["value"])
+		}
+		i.Shutdown()
+	})
+}
+
+// TestHealthCheck_QueuedDeadlineBoundary pins that a check whose per-service
+// bound was deferred until it left the queue, and that returns exactly when
+// that bound elapses, reports a timeout (the "at the deadline" guard of
+// callResult). The fake clock fires the bound and wakes the check at the
+// same instant in no fixed order, so the guard decides only some runs: with
+// the guard weakened to clock.Now().After(deadline) (mutant M15), a few
+// percent of the runs return nil, so the mutant is not equivalent.
+func TestHealthCheck_QueuedDeadlineBoundary(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 10*time.Second)
+
+	const runs = 200
+
+	var unexpected int
+	var firstErr error
+	synctest.Test(t, func(t *testing.T) {
+		for range runs {
+			fc := newFakeClock()
+			i := NewWithOpts(&InjectorOpts{
+				Clock:                  fc,
+				HealthCheckParallelism: 1,
+				HealthCheckTimeout:     10 * time.Millisecond,
+				HealthReportCacheTTL:   -1,
+			})
+			hog := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "hog", hog)
+			first := make(chan map[string]error, 1)
+			go func() { first <- i.HealthCheck() }()
+			synctest.Wait()
+
+			// "db" waits behind "hog" for the only slot
+			ProvideNamedValue(i, "db", &healthCheckTestOnClock{clock: fc, duration: 10 * time.Millisecond})
+			second := make(chan map[string]error, 1)
+			go func() { second <- i.HealthCheck() }()
+			synctest.Wait()
+
+			close(hog.release) // "db" takes the slot: its bound starts now
+			synctest.Wait()
+			fc.Advance(10 * time.Millisecond) // "db" returns exactly at its bound
+			err := (<-second)["db"]
+			<-first
+
+			if err == nil || err.Error() != healthCheckTestDeadlineMessage {
+				unexpected++
+				if firstErr == nil {
+					firstErr = fmt.Errorf("got %v", err) //nolint:errorlint // only formats the unexpected result for the failure message; nothing unwraps it
+				}
+			}
+			i.Shutdown()
+		}
+	})
+
+	assert.Zero(t, unexpected, "runs not timing out at the deferred bound (first: %v)", firstErr)
+}
+
+// healthRunTestTwoCalls is a Healthchecker whose first call blocks until
+// first is closed and whose later calls block until second is closed.
+type healthRunTestTwoCalls struct {
+	calls         atomic.Int32
+	first, second chan struct{}
+}
+
+func newHealthRunTestTwoCalls() *healthRunTestTwoCalls {
+	return &healthRunTestTwoCalls{first: make(chan struct{}), second: make(chan struct{})}
+}
+
+func (c *healthRunTestTwoCalls) HealthCheck() error {
+	if c.calls.Add(1) == 1 {
+		<-c.first
+	} else {
+		<-c.second
+	}
+	return nil
+}
+
+// healthRunTestAbandon starts a single-service check of "db" with a context
+// it then cancels, leaving the check running but abandoned: a caller
+// arriving afterwards waits for it to return, then for a fresh check.
+func healthRunTestAbandon(t *testing.T, i *RootScope) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	go func() { first <- HealthCheckNamedWithContext(ctx, i, "db") }()
+	synctest.Wait()
+	cancel()
+	require.ErrorIs(t, <-first, context.Canceled, "the abandoned call")
+}
+
+func TestHealthCheck_QueuedBehindAbandonedCall(t *testing.T) {
+	t.Parallel()
+
+	t.Run("service_left_while_callers_queued", func(t *testing.T) {
+		t.Parallel()
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			i := New()
+			db := newHealthRunTestBlocking(nil)
+			ProvideNamedValue(i, "db", db)
+			healthRunTestAbandon(t, i)
+
+			queued := make(chan error, 1)
+			go func() { queued <- HealthCheckNamed(i, "db") }()
+			synctest.Wait()
+
+			// "db" leaves while the caller waits for the abandoned check
+			OverrideNamedValue(i, "db", &healthReportTestSwitch{})
+			close(db.release)
+
+			is.NoError(<-queued, "the queued caller gets the result of the check of the service that left")
+			is.Equal(int32(1), db.calls.Load(), "calls of the check")
+			i.Shutdown()
+		})
+	})
+
+	// The fresh check is built from whichever queued caller the map yields
+	// first: when it is the pooled HealthCheck() call, the single-service
+	// caller takes the fresh check over and runs it at once. Both orders
+	// run over the iterations.
+	t.Run("take_over_by_fresh_check", func(t *testing.T) {
+		t.Parallel()
+
+		const runs = 20
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			for range runs {
+				i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1})
+				db := newHealthRunTestBlocking(nil)
+				ProvideNamedValue(i, "db", db)
+				healthRunTestAbandon(t, i)
+
+				pooled := make(chan map[string]error, 1)
+				single := make(chan error, 1)
+				go func() { pooled <- i.HealthCheck() }()
+				go func() { single <- HealthCheckNamed(i, "db") }()
+				synctest.Wait()
+				close(db.release)
+
+				is.NoError((<-pooled)["db"])
+				is.NoError(<-single)
+				is.Equal(int32(2), db.calls.Load(), "the abandoned check and one fresh check")
+				i.Shutdown()
+			}
+		})
+	})
+
+	// The fresh check is pending since the earliest queued caller asked,
+	// whichever caller the map yields first.
+	t.Run("queue_ordering", func(t *testing.T) {
+		t.Parallel()
+
+		const runs = 20
+
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			for range runs {
+				fc := newFakeClockAt(healthReportTestEpoch)
+				i := NewWithOpts(&InjectorOpts{Clock: fc})
+				db := newHealthRunTestTwoCalls()
+				ProvideNamedValue(i, "db", db)
+				healthRunTestAbandon(t, i)
+
+				fc.Advance(time.Second)
+				earlier := make(chan map[string]error, 1)
+				go func() { earlier <- i.HealthCheck() }()
+				synctest.Wait()
+				fc.Advance(time.Second)
+				later := make(chan error, 1)
+				go func() { later <- HealthCheckNamed(i, "db") }()
+				synctest.Wait()
+
+				close(db.first) // the abandoned check returns: the fresh one starts
+				synctest.Wait()
+				ended, cancel := context.WithCancel(context.Background())
+				cancel()
+				entry := healthReportTestEntry(t, i.HealthReportWithContext(ended), "db")
+				is.Equal(healthReportTestEpoch.Add(time.Second), entry.PendingSince, "pending since the earliest queued caller asked")
+
+				close(db.second)
+				is.NoError((<-earlier)["db"])
+				is.NoError(<-later)
+				i.Shutdown()
+			}
+		})
+	})
+}

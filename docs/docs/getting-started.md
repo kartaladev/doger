@@ -13,9 +13,11 @@ Discover **doger in less than 5 minutes**.
 
 ## What you'll need {#what-youll-need}
 
-Compatible with [Go](https://go.dev/doc/install/) 1.18 or later.
+Compatible with [Go](https://go.dev/doc/install/) 1.27 or later.
 
-This library has no dependencies except the Go std lib.
+Go 1.27 is the minimum: every module declares `go 1.27`, because the code sets the promoted fields of embedded structs directly in struct literals (`collectionCandidate{name: ...}` with `name` from an embedded `placement`), which the compiler accepts only from Go 1.27. It also relies on `sync.WaitGroup.Go` and, in its tests, `testing/synctest` (both Go 1.25). With `GOTOOLCHAIN=auto` (the default), an older Go downloads 1.27 for you; with `GOTOOLCHAIN=local`, it stops at the go.mod check with an error such as "go.mod requires go >= 1.27".
+
+Besides the Go std lib, this library depends only on [`samber/go-type-to-string`](https://github.com/samber/go-type-to-string). The opt-in `clock/clockwork` and `scheduler/gocron` modules add [`jonboulle/clockwork`](https://github.com/jonboulle/clockwork).
 
 Import package:
 
@@ -26,8 +28,6 @@ go get -u github.com/kartaladev/doger
 ## Create a DI container {#create-a-di-container}
 
 The simplest way to start is to use the default options:
-
-**Play: https://go.dev/play/p/g549GqBbj-n**
 
 ```go
 import "github.com/kartaladev/doger"
@@ -168,8 +168,6 @@ graph LR
   </TabItem>
 </Tabs>
 
-**Play: https://go.dev/play/p/cp5wNpo-5wn**
-
 ### Register services using package declaration {#register-services-using-package-declaration}
 
 The services can be assembled into a package, and then, imported all at once into a new container.
@@ -221,5 +219,3 @@ The services can be assembled into a package, and then, imported all at once int
 
   </TabItem>
 </Tabs>
-
-**Play: https://go.dev/play/p/kmf8aOVyj96**

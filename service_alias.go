@@ -4,7 +4,6 @@ import (
 	"context"
 	"reflect"
 	"sync"
-	"sync/atomic"
 
 	"github.com/kartaladev/doger/stacktrace"
 )
@@ -14,18 +13,19 @@ var (
 	_ serviceWrapperHealthcheck = (*serviceAlias[int, int])(nil)
 	_ serviceWrapperShutdown    = (*serviceAlias[int, int])(nil)
 	_ serviceWrapperClone       = (*serviceAlias[int, int])(nil)
+	_ serviceWrapperAliasTarget = (*serviceAlias[int, int])(nil)
 )
 
 type serviceAlias[Initial any, Alias any] struct {
+	regIndex   uint64 // registration order, unique per root container
 	mu         sync.RWMutex
 	name       string
 	typeName   string // string representation of the Alias type
 	scope      Injector
 	targetName string // string representation of the Initial type
 
-	providerFrame           stacktrace.Frame
-	invokationFrames        map[stacktrace.Frame]struct{} // map garanties uniqueness
-	invokationFramesCounter uint32
+	providerFrame stacktrace.Frame
+	invocationFrames
 }
 
 func newServiceAlias[Initial any, Alias any](
@@ -33,7 +33,7 @@ func newServiceAlias[Initial any, Alias any](
 	scope Injector,
 	targetName string,
 ) *serviceAlias[Initial, Alias] {
-	providerFrame, _ := stacktrace.NewFrameFromCaller()
+	providerFrame := registrationFrame()
 
 	return &serviceAlias[Initial, Alias]{
 		mu:         sync.RWMutex{},
@@ -42,9 +42,8 @@ func newServiceAlias[Initial any, Alias any](
 		scope:      scope,
 		targetName: targetName,
 
-		providerFrame:           providerFrame,
-		invokationFrames:        map[stacktrace.Frame]struct{}{},
-		invokationFramesCounter: 0,
+		providerFrame:    providerFrame,
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
@@ -61,7 +60,13 @@ func (s *serviceAlias[Initial, Alias]) getServiceType() ServiceType {
 }
 
 func (s *serviceAlias[Initial, Alias]) getReflectType() reflect.Type {
-	return reflect.TypeOf((*Alias)(nil)).Elem() // if T is a pointer or interface, it will return a typed nil
+	return reflect.TypeFor[Alias]() // if T is a pointer or interface, it will return a typed nil
+}
+
+// aliasTarget returns the injector the alias resolves its target from, and
+// the target's name.
+func (s *serviceAlias[Initial, Alias]) aliasTarget() (Injector, string) {
+	return s.scope, s.targetName
 }
 
 func (s *serviceAlias[Initial, Alias]) getInstanceAny(i Injector) (any, error) {
@@ -69,17 +74,9 @@ func (s *serviceAlias[Initial, Alias]) getInstanceAny(i Injector) (any, error) {
 }
 
 func (s *serviceAlias[Initial, Alias]) getInstance(i Injector) (Alias, error) {
-	// Collect up to 100 invokation frames.
-	// In the future, we can implement a LFU list, to evict the oldest
-	// frames and keep the most recent ones, but it would be much more costly.
-	if atomic.AddUint32(&s.invokationFramesCounter, 1) < MaxInvocationFrames {
-		frame, ok := stacktrace.NewFrameFromCaller()
-		if ok {
-			s.mu.Lock()
-			s.invokationFrames[frame] = struct{}{}
-			s.mu.Unlock()
-		}
-	}
+	// a closure here, not stacktrace.NewFrameFromCaller itself: the frame
+	// recorded is then in this file, as before (invocation-frame rule, D16)
+	s.recordInvocationFrame(invocationFrameCap(i), func() (stacktrace.Frame, bool) { return stacktrace.NewFrameFromCaller() }) //nolint:gocritic // see above
 
 	// Use the virtual scope received as parameter to ensure proper circular dependency detection.
 	// The injector passed here should be a virtual scope that contains the current invocation chain
@@ -89,6 +86,9 @@ func (s *serviceAlias[Initial, Alias]) getInstance(i Injector) (Alias, error) {
 	}
 
 	switch target := any(instance).(type) {
+	case nil:
+		// a nil-interface target gives the zero value
+		return empty[Alias](), nil
 	case Alias:
 		return target, nil
 	default:
@@ -139,41 +139,42 @@ func (s *serviceAlias[Initial, Alias]) isShutdowner() bool {
 	return service.isShutdowner()
 }
 
-func (s *serviceAlias[Initial, Alias]) shutdown(ctx context.Context) error {
-	serviceAny, _, ok := s.scope.serviceGetRec(s.targetName)
-	if !ok {
-		return nil
-	}
-
-	service, ok := serviceAny.(serviceWrapperShutdown)
-	if !ok {
-		return nil
-	}
-
-	return service.shutdown(ctx)
+// shutdown never shuts the target down: the target is shut down only through
+// its own registration, exactly once. Scope shutdown still removes the alias.
+func (s *serviceAlias[Initial, Alias]) shutdown(context.Context) error {
+	return nil
 }
 
 func (s *serviceAlias[Initial, Alias]) clone(newScope Injector) any {
 	return &serviceAlias[Initial, Alias]{
 		mu:         sync.RWMutex{},
 		name:       s.name,
+		regIndex:   s.regIndex,
 		typeName:   s.typeName,
 		scope:      newScope,
 		targetName: s.targetName,
 
-		providerFrame:           s.providerFrame,
-		invokationFrames:        map[stacktrace.Frame]struct{}{},
-		invokationFramesCounter: 0,
+		providerFrame:    s.providerFrame,
+		invocationFrames: newInvocationFrames(),
 	}
 }
 
 func (s *serviceAlias[Initial, Alias]) source() (stacktrace.Frame, []stacktrace.Frame) {
-	s.mu.RLock()
-	invokationFrames := make([]stacktrace.Frame, 0, len(s.invokationFrames))
-	for frame := range s.invokationFrames {
-		invokationFrames = append(invokationFrames, frame)
-	}
-	s.mu.RUnlock()
-
-	return s.providerFrame, invokationFrames
+	return s.providerFrame, s.invocationFrameList()
 }
+
+func (s *serviceAlias[Initial, Alias]) getRegistrationIndex() uint64 {
+	return s.regIndex
+}
+
+func (s *serviceAlias[Initial, Alias]) setRegistrationIndex(index uint64) {
+	s.regIndex = index
+}
+
+// getOptions returns nil: an alias carries no opt-ins and does not inherit its target's.
+func (s *serviceAlias[Initial, Alias]) getOptions() *serviceOptions {
+	return nil
+}
+
+// setOptions ignores opts: an alias carries no opt-ins.
+func (s *serviceAlias[Initial, Alias]) setOptions(*serviceOptions) {}

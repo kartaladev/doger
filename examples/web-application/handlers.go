@@ -21,7 +21,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	h.Logger.Log(fmt.Sprintf("HTTP request: GET /users/%s", userID))
 
 	userData := h.UserService.GetUser(userID)
-	fmt.Fprintf(w, "User data: %s", userData) //nolint:errcheck
+	_, _ = fmt.Fprintf(w, "User data: %s", userData) // the response is already committed
 }
 
 // OrderHandler represents HTTP handler for order operations.
@@ -37,7 +37,7 @@ func (h *OrderHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := h.OrderService.GetOrder(orderID)
-	fmt.Fprintf(w, "Order: %s", result) //nolint:errcheck
+	_, _ = fmt.Fprintf(w, "Order: %s", result) // the response is already committed
 }
 
 // HealthHandler represents HTTP handler for health checks.
@@ -66,5 +66,5 @@ func (h *HealthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, "All services healthy") //nolint:errcheck
+	_, _ = fmt.Fprint(w, "All services healthy") // the response is already committed
 }

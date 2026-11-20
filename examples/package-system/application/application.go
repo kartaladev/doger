@@ -12,6 +12,7 @@ type Application struct {
 	Logger       Logger
 }
 
+// Run runs the application.
 func (app *Application) Run() {
 	app.Logger.Log("Starting application...")
 

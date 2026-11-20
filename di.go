@@ -1,7 +1,7 @@
 package doger
 
 import (
-	"fmt"
+	"log/slog"
 	"reflect"
 )
 
@@ -35,8 +35,6 @@ type Provider[T any] func(Injector) (T, error)
 // The function uses type inference to determine the service name
 // based on the generic type parameter T.
 //
-// Play: https://go.dev/play/p/g549GqBbj-n
-//
 // Example:
 //
 //	serviceName := doger.NameOf[*Database]()
@@ -47,16 +45,26 @@ func NameOf[T any]() string {
 // Provide registers a service in the DI container, using type inference.
 // The service will be lazily instantiated when first requested.
 //
-// Play: https://go.dev/play/p/4JutUJ5Rqau
+// Once the shutdown of the scope has begun, Provide and the other Provide*
+// and Override* functions panic with an error matching [ErrShutdown]: a
+// container cannot be reused after Shutdown.
+//
+// The provider runs on the goroutine that first invokes the service, once;
+// see [Invoke] for concurrent invocations and the cycle errors a provider
+// may get from them.
 //
 // Example:
 //
 //	doger.Provide(injector, func(i doger.Injector) (*MyService, error) {
 //	    return &MyService{...}, nil
 //	})
-func Provide[T any](i Injector, provider Provider[T]) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func Provide[T any](i Injector, provider Provider[T], opts ...ProvideOption) {
 	name := inferServiceName[T]()
-	ProvideNamed(i, name, provider)
+	ProvideNamed(i, name, provider, opts...)
 }
 
 // ProvideNamed registers a named service in the DI container.
@@ -64,8 +72,6 @@ func Provide[T any](i Injector, provider Provider[T]) {
 // with different names for disambiguation.
 //
 // The service will be lazily instantiated when first requested.
-//
-// Play: https://go.dev/play/p/9JuTQhLGIlh
 //
 // Example:
 //
@@ -75,23 +81,29 @@ func Provide[T any](i Injector, provider Provider[T]) {
 //	doger.ProvideNamed(injector, "backup-db", func(i doger.Injector) (*Database, error) {
 //	    return &Database{URL: "postgres://backup.acme.dev:5432/db"}, nil
 //	})
-func ProvideNamed[T any](i Injector, name string, provider Provider[T]) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func ProvideNamed[T any](i Injector, name string, provider Provider[T], opts ...ProvideOption) {
 	provide(i, name, provider, func(s string, a Provider[T]) serviceWrapper[T] {
 		return newServiceLazy(s, a)
-	})
+	}, opts)
 }
 
 // ProvideValue registers a value in the DI container, using type inference to determine the service name.
 // The value is immediately available and will not be recreated on each request.
 //
-// Play: https://go.dev/play/p/5TOSiI-c17Y
-//
 // Example:
 //
 //	ProvideValue(injector, &MyService{})
-func ProvideValue[T any](i Injector, value T) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func ProvideValue[T any](i Injector, value T, opts ...ProvideOption) {
 	name := inferServiceName[T]()
-	ProvideNamedValue(i, name, value)
+	ProvideNamedValue(i, name, value, opts...)
 }
 
 // ProvideNamedValue registers a named value in the DI container.
@@ -104,16 +116,18 @@ func ProvideValue[T any](i Injector, value T) {
 //
 //	doger.ProvideNamedValue(injector, "app-config", &Config{Port: 8080})
 //	doger.ProvideNamedValue(injector, "db-config", &Config{Port: 5432})
-func ProvideNamedValue[T any](i Injector, name string, value T) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func ProvideNamedValue[T any](i Injector, name string, value T, opts ...ProvideOption) {
 	provide(i, name, value, func(s string, a T) serviceWrapper[T] {
 		return newServiceEager(s, a)
-	})
+	}, opts)
 }
 
 // ProvideTransient registers a factory in the DI container, using type inference to determine the service name.
 // The service will be recreated each time it is requested, providing a fresh instance.
-//
-// Play: https://go.dev/play/p/hzOJwtNXwT9
 //
 // Example:
 //
@@ -128,9 +142,13 @@ func ProvideNamedValue[T any](i Injector, name string, value T) {
 //	id2, _ := doger.Invoke[string](injector)
 //
 //	fmt.Println(id1 != id2) // Output: true
-func ProvideTransient[T any](i Injector, provider Provider[T]) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func ProvideTransient[T any](i Injector, provider Provider[T], opts ...ProvideOption) {
 	name := inferServiceName[T]()
-	ProvideNamedTransient(i, name, provider)
+	ProvideNamedTransient(i, name, provider, opts...)
 }
 
 // ProvideNamedTransient registers a named factory in the DI container.
@@ -152,10 +170,14 @@ func ProvideTransient[T any](i Injector, provider Provider[T]) {
 //	id2, _ := doger.InvokeNamed[string](injector, "request-id")
 //
 //	fmt.Println(id1 != id2) // Output: true
-func ProvideNamedTransient[T any](i Injector, name string, provider Provider[T]) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func ProvideNamedTransient[T any](i Injector, name string, provider Provider[T], opts ...ProvideOption) {
 	provide(i, name, provider, func(s string, a Provider[T]) serviceWrapper[T] {
 		return newServiceTransient(s, a)
-	})
+	}, opts)
 }
 
 // provide is an internal helper function that handles the common logic
@@ -164,16 +186,161 @@ func ProvideNamedTransient[T any](i Injector, name string, provider Provider[T])
 // - No duplicate service names are registered
 // - The service is properly created and stored
 // - Logging is performed for successful registration.
-func provide[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T]) {
-	_i := getInjectorOrDefault(i)
-	if _i.serviceExist(name) {
-		panic(fmt.Errorf("DI: service `%s` has already been declared", name))
+func provide[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T], opts []ProvideOption) {
+	if err := tryProvide(i, name, valueOrProvider, serviceCtor, opts); err != nil {
+		panic(err)
+	}
+}
+
+// tryProvide is provide returning the duplicate-registration error instead
+// of panicking with it.
+func tryProvide[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T], opts []ProvideOption) error {
+	_i := mustInjector(i)
+	scope := injectorScope(_i)
+	if err := scope.checkOpen(); err != nil {
+		return err
+	}
+	options := buildServiceOptions(opts)
+
+	// without a default involved, a duplicate fails first, as it always did
+	if (options == nil || !options.isDefault) && nonDefaultExists(scope, name) {
+		return duplicateServiceError(name)
 	}
 
 	service := serviceCtor(name, valueOrProvider)
-	_i.serviceSet(name, service)
+	validateServiceOptions(name, service, options)
+	service.setOptions(options)
+	wrapped := wrapIfDefault(scope, service, options)
 
-	_i.RootScope().opts.Logf("DI: service %s injected", name)
+	root := _i.RootScope()
+	root.hooks.onBeforeRegistration(scope, name)
+
+	outcome, err := registerLocked(scope, name, wrapped)
+	if err != nil {
+		return err
+	}
+	if outcome == registerSkipped {
+		return nil
+	}
+
+	root.hooks.onAfterRegistration(scope, name)
+	scope.log(slog.LevelDebug, "service registered", slog.String("service", name))
+
+	return nil
+}
+
+// registerLocked registers incoming as name in scope under the scope's write
+// lock, so deciding between storing, replacing a default and skipping is
+// atomic with the write. It runs no hook. A taken name returns the duplicate
+// error and leaves the scope unchanged.
+func registerLocked(scope *Scope, name string, incoming serviceWrapperAny) (registerOutcome, error) {
+	root := scope.rootScope
+
+	scope.mu.Lock()
+	if err := scope.checkOpen(); err != nil {
+		scope.mu.Unlock()
+		return registerDuplicate, err
+	}
+	replaced, outcome := scope.services[name], registerStored
+	if replaced != nil {
+		outcome = sameScopeOutcome(replaced, incoming)
+	}
+	switch outcome {
+	case registerStored:
+		incoming.setRegistrationIndex(root.nextRegIndex.Add(1) - 1)
+		scope.storeLocked(name, replaced, incoming)
+	case registerReplaced:
+		incoming.setRegistrationIndex(replaced.(serviceWrapperAny).getRegistrationIndex()) //nolint:errcheck,forcetypeassert // every value a scope stores is a service wrapper, which implements serviceWrapperAny
+		store := func() { scope.storeLocked(name, replaced, incoming) }
+		if !replaced.(serviceWrapperSupersede).supersede(store) { //nolint:errcheck,forcetypeassert // registerReplaced is decided only when replaced is a default, and every serviceWrapperDefault is a *serviceDefault, which implements serviceWrapperSupersede
+			outcome = registerDuplicate
+		}
+	case registerSkipped, registerDuplicate:
+	}
+	scope.mu.Unlock()
+
+	if outcome == registerDuplicate {
+		return outcome, duplicateServiceError(name)
+	}
+	if outcome == registerReplaced {
+		root.forget(replaced)
+	}
+
+	return outcome, nil
+}
+
+// registerOutcome is what registering a service does to the scope's entry
+// of its name.
+type registerOutcome int
+
+const (
+	registerStored    registerOutcome = iota // the name was free
+	registerReplaced                         // an explicit registration replaced an unresolved default
+	registerSkipped                          // a default met an explicit service
+	registerDuplicate                        // the name is taken
+)
+
+// sameScopeOutcome returns what registering incoming does to existing, a
+// registration of the same name in the same scope.
+func sameScopeOutcome(existing, incoming any) registerOutcome {
+	_, existingIsDefault := existing.(serviceWrapperDefault)
+	_, incomingIsDefault := incoming.(serviceWrapperDefault)
+
+	switch {
+	case existingIsDefault && !incomingIsDefault:
+		return registerReplaced
+	case !existingIsDefault && incomingIsDefault:
+		return registerSkipped
+	default:
+		return registerDuplicate
+	}
+}
+
+// nonDefaultExists reports whether scope itself registers name, other than
+// as a default.
+func nonDefaultExists(scope *Scope, name string) bool {
+	service, ok := scope.serviceGet(name)
+	if !ok {
+		return false
+	}
+	_, isDefault := service.(serviceWrapperDefault)
+
+	return !isDefault
+}
+
+// duplicateServiceError is the error of a registration whose name is taken.
+func duplicateServiceError(name string) error {
+	return libErrorMatching(ErrServiceAlreadyDeclared, "service `%s` has already been declared", name)
+}
+
+// duplicateScopeError is the panic value of a child scope declaration
+// whose name its parent already has.
+func duplicateScopeError(name string) error {
+	return libErrorMatching(ErrScopeAlreadyDeclared, "scope `%s` has already been declared", name)
+}
+
+// wrapIfDefault returns the wrapper to store for service in scope: decorated
+// as a default when options carry AsDefault, service itself otherwise.
+func wrapIfDefault[T any](scope *Scope, service serviceWrapper[T], options *serviceOptions) serviceWrapper[T] {
+	if options != nil && options.isDefault {
+		return newServiceDefault(service, scope)
+	}
+
+	return service
+}
+
+// assignRegistrationIndex returns the registration index for name in scope.
+// A name already registered in scope itself keeps its index, so an override
+// keeps the position of the first registration. Otherwise the next index of
+// the root container is taken.
+func assignRegistrationIndex(scope Injector, name string) uint64 {
+	if previous, ok := scope.serviceGet(name); ok {
+		if indexed, ok := previous.(interface{ getRegistrationIndex() uint64 }); ok {
+			return indexed.getRegistrationIndex()
+		}
+	}
+
+	return scope.RootScope().nextRegIndex.Add(1) - 1
 }
 
 // Override replaces the service in the DI container, using type inference to determine the service name.
@@ -183,10 +350,12 @@ func provide[T any, A any](i Injector, name string, valueOrProvider A, serviceCt
 // that has already been registered. However, be cautious as it may lead to
 // resource leaks if the original service was already instantiated.
 //
-// Play: https://go.dev/play/p/g549GqBbj-n
-func Override[T any](i Injector, provider Provider[T]) {
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func Override[T any](i Injector, provider Provider[T], opts ...ProvideOption) {
 	name := inferServiceName[T]()
-	OverrideNamed(i, name, provider)
+	OverrideNamed(i, name, provider, opts...)
 }
 
 // OverrideNamed replaces the named service in the DI container.
@@ -195,11 +364,13 @@ func Override[T any](i Injector, provider Provider[T]) {
 // This function allows you to replace a specific named service that has
 // already been registered. Use with caution to avoid resource leaks.
 //
-// Play: https://go.dev/play/p/-gNF1BUEB5Q
-func OverrideNamed[T any](i Injector, name string, provider Provider[T]) {
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func OverrideNamed[T any](i Injector, name string, provider Provider[T], opts ...ProvideOption) {
 	override(i, name, provider, func(s string, a Provider[T]) serviceWrapper[T] {
 		return newServiceLazy(s, a)
-	})
+	}, opts)
 }
 
 // OverrideValue replaces the value in the DI container, using type inference to determine the service name.
@@ -208,10 +379,12 @@ func OverrideNamed[T any](i Injector, name string, provider Provider[T]) {
 // This function replaces an existing value service with a new one.
 // The old value will not be properly cleaned up if it was already instantiated.
 //
-// Play: https://go.dev/play/p/-gNF1BUEB5Q
-func OverrideValue[T any](i Injector, value T) {
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func OverrideValue[T any](i Injector, value T, opts ...ProvideOption) {
 	name := inferServiceName[T]()
-	OverrideNamedValue(i, name, value)
+	OverrideNamedValue(i, name, value, opts...)
 }
 
 // OverrideNamedValue replaces the named value in the DI container.
@@ -220,11 +393,13 @@ func OverrideValue[T any](i Injector, value T) {
 // This function allows you to replace a specific named value service.
 // Use with caution to avoid resource leaks.
 //
-// Play: https://go.dev/play/p/-gNF1BUEB5Q
-func OverrideNamedValue[T any](i Injector, name string, value T) {
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func OverrideNamedValue[T any](i Injector, name string, value T, opts ...ProvideOption) {
 	override(i, name, value, func(s string, a T) serviceWrapper[T] {
 		return newServiceEager(s, a)
-	})
+	}, opts)
 }
 
 // OverrideTransient replaces the factory in the DI container, using type inference to determine the service name.
@@ -234,10 +409,12 @@ func OverrideNamedValue[T any](i Injector, name string, value T) {
 // Since transient services are recreated on each request, this is generally safer
 // than overriding lazy or eager services.
 //
-// Play: https://go.dev/play/p/_wYwBADbCaN
-func OverrideTransient[T any](i Injector, provider Provider[T]) {
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func OverrideTransient[T any](i Injector, provider Provider[T], opts ...ProvideOption) {
 	name := inferServiceName[T]()
-	OverrideNamedTransient(i, name, provider)
+	OverrideNamedTransient(i, name, provider, opts...)
 }
 
 // OverrideNamedTransient replaces the named factory in the DI container.
@@ -247,30 +424,53 @@ func OverrideTransient[T any](i Injector, provider Provider[T]) {
 // Since transient services are recreated on each request, this is generally safer
 // than overriding lazy or eager services.
 //
-// Play: https://go.dev/play/p/_wYwBADbCaN
-func OverrideNamedTransient[T any](i Injector, name string, provider Provider[T]) {
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func OverrideNamedTransient[T any](i Injector, name string, provider Provider[T], opts ...ProvideOption) {
 	override(i, name, provider, func(s string, a Provider[T]) serviceWrapper[T] {
 		return newServiceTransient(s, a)
-	})
+	}, opts)
 }
 
 // override is an internal helper function that handles the common logic
 // for overriding services in the DI container. Unlike provide, it allows
 // replacing existing services without throwing an error.
-func override[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T]) {
-	_i := getInjectorOrDefault(i)
+func override[T any, A any](i Injector, name string, valueOrProvider A, serviceCtor func(string, A) serviceWrapper[T], opts []ProvideOption) {
+	_i := mustInjector(i)
 
 	// Note: We don't check if the service exists here, allowing override
 	service := serviceCtor(name, valueOrProvider)
+	options := buildServiceOptions(opts)
+	validateServiceOptions(name, service, options)
+	if options != nil {
+		options.isDefault = false // an override is explicit
+	}
+	service.setRegistrationIndex(assignRegistrationIndex(_i, name))
+	service.setOptions(options)
 	_i.serviceSet(name, service) // @TODO: should we unload/shutdown the previous service ?
 
-	_i.RootScope().opts.Logf("DI: service %s overridden", name)
+	injectorScope(_i).log(slog.LevelDebug, "service overridden", slog.String("service", name))
 }
 
 // Invoke retrieves and instantiates a service from the DI container using type inference.
 // The service will be created if it hasn't been instantiated yet (for lazy services).
 //
-// Play: https://go.dev/play/p/4JutUJ5Rqau
+// Once the shutdown of the invoking scope has begun, Invoke and the other
+// Invoke* functions return an error matching [ErrShutdown]. A service is
+// never built again after its shutdown: an invocation that looked it up just
+// before gets ErrShutdown too.
+//
+// Concurrency: a lazy service is built once, however many goroutines invoke
+// it; the others wait for that build and share its outcome, its error
+// included. Resolution never deadlocks inside the container: a cycle met by
+// concurrent first invocations, or a provider resolving its own service
+// again through a captured injector, returns an error matching
+// [ErrCircularDependency] instead of blocking, and a later invocation builds
+// again. Two cases are not detected: a transient provider re-entering itself
+// through a captured injector recurses until Go reports a stack overflow,
+// and a provider that waits for a goroutine it spawned, which resolves the
+// provider's own service, blocks.
 //
 // Example:
 //
@@ -283,8 +483,6 @@ func Invoke[T any](i Injector) (T, error) {
 // InvokeNamed retrieves and instantiates a named service from the DI container.
 // This allows you to retrieve specific named services when multiple services
 // of the same type are registered.
-//
-// Play: https://go.dev/play/p/9JuTQhLGIlh
 //
 // Example:
 //
@@ -315,8 +513,6 @@ func InvokeNamed[T any](i Injector, name string) (T, error) {
 // This function is useful when you're certain the service exists and want
 // to avoid error handling in your code.
 //
-// Play: https://go.dev/play/p/456pBhI36Q2
-//
 // Example:
 //
 //	service := doger.MustInvoke[*MyService](injector)
@@ -330,8 +526,6 @@ func MustInvoke[T any](i Injector) T {
 // This function is useful when you're certain the named service exists and want
 // to avoid error handling in your code.
 //
-// Play: https://go.dev/play/p/456pBhI36Q2
-//
 // Example:
 //
 //	service := doger.MustInvokeNamed[*MyService](injector, "my-service")
@@ -344,7 +538,22 @@ func MustInvokeNamed[T any](i Injector, name string) T {
 // If the service is not found in the DI container, an error is returned.
 // If the service is found but not assignable to the struct field, an error is returned.
 //
-// Play: https://go.dev/play/p/I3_Rznkprpj
+// An empty tag (`do:""`) names the service after the field type. When no
+// visible service has that name, or, called from a provider, only the
+// service that provider builds has it, InvokeStruct falls back to resolution
+// by type, selecting among assignable services with the rule of [InvokeAs].
+// The fallback depends on the name only: a service with that name that fails
+// to build returns its error, even one matching [ErrServiceNotFound].
+//
+// The tag value `*` injects a collection: a []E field receives
+// [InvokeAll][E] and a map[string]E field [InvokeAllMap][E]; any other field
+// kind is an error. A service named `*` cannot be injected by tag.
+//
+// A dependency whose value is a nil interface sets its field to the zero
+// value. An invalid target (not a struct or a pointer chain to one, a
+// recursive pointer type, a service not assignable to its field, a `*` tag
+// on another field kind) returns an error matching [ErrStructInjection]; a
+// dependency that fails to resolve returns its own error instead.
 //
 // Example:
 //
@@ -368,8 +577,19 @@ func MustInvokeNamed[T any](i Injector, name string) T {
 //	// Invoke struct with injected services
 //	app, err := doger.InvokeStruct[App](injector)
 func InvokeStruct[T any](i Injector) (T, error) {
+	injector, err := getInjector(i)
+	if err != nil {
+		return empty[T](), err
+	}
+	if err := injectorScope(injector).checkOpen(); err != nil {
+		return empty[T](), err
+	}
+
 	structName := inferServiceName[T]()
-	output := deepEmpty[T]() // if the struct is hidden behind a pointer, we need to init the struct value deep enough
+	output, err := deepEmpty[T]() // if the struct is hidden behind a pointer, we need to init the struct value deep enough
+	if err != nil {
+		return empty[T](), err
+	}
 	value := reflect.ValueOf(&output)
 
 	for value.Elem().Kind() == reflect.Pointer {
@@ -379,10 +599,10 @@ func InvokeStruct[T any](i Injector) (T, error) {
 	// Check if the empty value is a struct (before passing a pointer to reflect.ValueOf).
 	// It will be checked in invokeByTags, but the error message is different.
 	if value.Kind() != reflect.Pointer || value.Elem().Kind() != reflect.Struct {
-		return empty[T](), fmt.Errorf("DI: must be a struct or a pointer to a struct, but got `%s`", structName)
+		return empty[T](), structInjectionError("must be a struct or a pointer to a struct, but got `%s`", structName)
 	}
 
-	err := invokeByTags(i, structName, value, true)
+	err = invokeByTags(i, structName, value, true)
 	if err != nil {
 		return empty[T](), err
 	}
@@ -394,8 +614,6 @@ func InvokeStruct[T any](i Injector) (T, error) {
 // The struct fields must be tagged with `do:""` or `do:"name"`, where `name` is the service name in the DI container.
 // If the service is not found in the DI container, it panics.
 // If the service is found but not assignable to the struct field, it panics.
-//
-// Play: https://go.dev/play/p/lRKqRT9TQVf
 //
 // Example:
 //
@@ -426,16 +644,20 @@ func MustInvokeStruct[T any](i Injector) T {
 // 							Explicit aliases
 /////////////////////////////////////////////////////////////////////////////
 
-// As declares an alias for a service, allowing it to be retrieved using a different type.
-// This function creates a type alias where the Alias type can be used to retrieve the Initial service.
-// The alias is automatically named using the type name of Alias.
+// Alias registers, in the scope of i, an alias named after Target that
+// resolves the service named after Initial, so the service can be invoked
+// as Target. It replaces the As function of samber/do; [Bind] is its
+// package-loading form.
 //
-// Parameters:
-//   - i: The injector to register the alias in
+// Alias returns an error and registers nothing when Initial does not
+// implement Target (the message names both types), when no visible scope
+// registers Initial (matching [ErrServiceNotFound]), when the scope of i
+// already registers the alias name (matching [ErrServiceAlreadyDeclared]),
+// or when i is nil (matching [ErrNilInjector]).
 //
-// Returns an error if the alias cannot be created (e.g., type incompatibility or missing service).
-//
-// Play: https://go.dev/play/p/T5zKBRZaZhj
+// Shutting the alias down (with its scope, or with Shutdown/ShutdownNamed on
+// the alias name) removes the alias but never shuts its target down: the
+// target is shut down only through its own registration, exactly once.
 //
 // Example:
 //
@@ -445,46 +667,35 @@ func MustInvokeStruct[T any](i Injector) T {
 //	})
 //
 //	// Create an alias so it can be retrieved as an interface
-//	doger.As[*PostgresqlDatabase, Database](injector)
+//	doger.Alias[*PostgresqlDatabase, Database](injector)
 //
 //	// Now both work:
 //	db := doger.MustInvoke[*PostgresqlDatabase](injector)
 //	db := doger.MustInvoke[Database](injector)
-func As[Initial any, Alias any](i Injector) error {
+func Alias[Initial any, Target any](i Injector) error {
 	initialName := NameOf[Initial]()
-	aliasName := NameOf[Alias]()
+	aliasName := NameOf[Target]()
 
-	return AsNamed[Initial, Alias](i, initialName, aliasName)
+	return AliasNamed[Initial, Target](i, initialName, aliasName)
 }
 
-// MustAs declares an alias for a service and panics if an error occurs.
-// This is a convenience function that wraps As and panics on error.
-//
-// Parameters:
-//   - i: The injector to register the alias in
-//
-// Panics if the alias cannot be created (e.g., type incompatibility or missing service).
-//
-// Play: https://go.dev/play/p/_wGjnRJfwV8
+// MustAlias is like [Alias] but panics with the error Alias would return.
 //
 // Example:
 //
-//	doger.MustAs[*PostgresqlDatabase, Database](injector)
-func MustAs[Initial any, Alias any](i Injector) {
-	must0(As[Initial, Alias](i))
+//	doger.MustAlias[*PostgresqlDatabase, Database](injector)
+func MustAlias[Initial any, Target any](i Injector) {
+	must0(Alias[Initial, Target](i))
 }
 
-// AsNamed declares a named alias for a named service.
-// This function allows you to create aliases with custom names for both the initial service and the alias.
+// AliasNamed registers, in the scope of i, an alias named alias that
+// resolves the service named initial, typed Initial, as Target. It is
+// [Alias] with explicit names, and returns the same errors; [BindNamed] is
+// its package-loading form.
 //
-// Parameters:
-//   - i: The injector to register the alias in
-//   - initial: The name of the existing service to alias
-//   - alias: The name for the new alias service
-//
-// Returns an error if the alias cannot be created (e.g., type incompatibility or missing service).
-//
-// Play: https://go.dev/play/p/h1R5rxKizwR
+// Shutting the alias down (with its scope, or with Shutdown/ShutdownNamed on
+// the alias name) removes the alias but never shuts its target down: the
+// target is shut down only through its own registration, exactly once.
 //
 // Example:
 //
@@ -494,45 +705,120 @@ func MustAs[Initial any, Alias any](i Injector) {
 //	})
 //
 //	// Create an alias with custom names
-//	doger.AsNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
+//	doger.AliasNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
 //
 //	// Retrieve using the alias name
 //	db := doger.MustInvokeNamed[Database](injector, "db-interface")
-func AsNamed[Initial any, Alias any](i Injector, initial string, alias string) error {
-	// first, we check if Initial can be cast to Alias
-	if !genericCanCastToGeneric[Initial, Alias]() {
-		return fmt.Errorf("DI: `%s` does not implement `%s`", initial, alias)
+func AliasNamed[Initial any, Target any](i Injector, initial string, alias string) error {
+	_i, err := getInjector(i)
+	if err != nil {
+		return err
+	}
+	if err := injectorScope(_i).checkOpen(); err != nil {
+		return err
 	}
 
-	_i := getInjectorOrDefault(i)
+	// first, we check if Initial can be cast to Target
+	if !genericCanCastToGeneric[Initial, Target]() {
+		return libErrorf("`%s` does not implement `%s`", NameOf[Initial](), NameOf[Target]())
+	}
+
 	if ok := _i.serviceExistRec(initial); !ok {
-		return fmt.Errorf("DI: service `%s` has not been declared", initial)
+		return libErrorMatching(ErrServiceNotFound, "service `%s` has not been declared", initial)
 	}
 
-	provide(i, alias, nil, func(_ string, _ any) serviceWrapper[Alias] {
-		return newServiceAlias[Initial, Alias](alias, i, initial)
-	})
-
-	return nil
+	return tryProvide(_i, alias, nil, func(_ string, _ any) serviceWrapper[Target] {
+		return newServiceAlias[Initial, Target](alias, _i, initial)
+	}, nil)
 }
 
-// MustAsNamed declares a named alias for a named service and panics if an error occurs.
-// This is a convenience function that wraps AsNamed and panics on error.
-//
-// Parameters:
-//   - i: The injector to register the alias in
-//   - initial: The name of the existing service to alias
-//   - alias: The name for the new alias service
-//
-// Panics if the alias cannot be created (e.g., type incompatibility or missing service).
-//
-// Play: https://go.dev/play/p/8QI2XUm9yLH
+// MustAliasNamed is like [AliasNamed] but panics with the error AliasNamed
+// would return.
 //
 // Example:
 //
-//	doger.MustAsNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
-func MustAsNamed[Initial any, Alias any](i Injector, initial string, alias string) {
-	must0(AsNamed[Initial, Alias](i, initial, alias))
+//	doger.MustAliasNamed[*PostgresqlDatabase, Database](injector, "my-db", "db-interface")
+func MustAliasNamed[Initial any, Target any](i Injector, initial string, alias string) {
+	must0(AliasNamed[Initial, Target](i, initial, alias))
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// 							Collections
+/////////////////////////////////////////////////////////////////////////////
+
+// InvokeAll invokes every visible service whose registered type is
+// assignable to T, and returns them as a slice. A nil injector gives
+// [ErrNilInjector].
+//
+// Membership is decided by registered type, without building anything: a
+// service is a member when the type it was registered with is assignable to
+// T, so services of other types are never built. Eager values are members
+// as is. Beware InvokeAll[any]: every service matches, so every one is built.
+//
+// Members come ancestors first: by scope depth from the root scope down to
+// the invoking scope, then by registration order within a scope (an
+// override keeps the position of the registration it replaces). The order
+// is the same across calls and in clones.
+//
+// With no match, InvokeAll returns an empty, non-nil slice and a nil error,
+// never ErrServiceNotFound. When a member fails to build, it returns nil and
+// an error naming the member and wrapping its cause; members built before
+// it stay built.
+//
+// Visibility follows scope ancestry: services of the invoking scope and of
+// its ancestors, never of siblings or children. When a name exists in
+// several of these scopes, only the nearest service is considered, even if
+// it is not assignable to T: it then hides the ancestor's, as InvokeNamed
+// would. Inside a provider, the invoking scope is the scope the provider's
+// service is registered in. Aliases (Alias, Bind) are never members: their
+// target represents itself.
+//
+// A default registration ([AsDefault]) not resolved yet is left out when a
+// non-default member is assignable to its registered type, and neither it
+// nor a default that yielded hides a non-default of its name in an ancestor.
+// Including a default in the result resolves it.
+//
+// Inside a provider, the service that provider builds is not a member, so a
+// composite can collect every other implementation of its own interface.
+// Any other member already in the invocation chain still fails the call
+// with ErrCircularDependency.
+//
+// Invocation hooks fire once per member, with the member's name, as for N
+// calls to Invoke. The result is a snapshot: services registered later are
+// not added to it, and changing it does not affect later calls; transient
+// members give a new instance on every call. Resolve once and keep the
+// result outside hot loops.
+func InvokeAll[T any](i Injector) ([]T, error) {
+	injector, err := getInjector(i)
+	if err != nil {
+		return nil, err
+	}
+
+	return invokeAllByGenericType[T](collectionFrom(injector))
+}
+
+// MustInvokeAll is like [InvokeAll] but panics with the error InvokeAll
+// would return.
+func MustInvokeAll[T any](i Injector) []T {
+	return must1(InvokeAll[T](i))
+}
+
+// InvokeAllMap returns the same members as [InvokeAll], keyed by service
+// name, under the same visibility, alias, self-exclusion, shadowing and
+// failure rules. With no match, it returns an empty, non-nil map.
+func InvokeAllMap[T any](i Injector) (map[string]T, error) {
+	injector, err := getInjector(i)
+	if err != nil {
+		return nil, err
+	}
+
+	return invokeAllMapByGenericType[T](collectionFrom(injector))
+}
+
+// MustInvokeAllMap is like [InvokeAllMap] but panics with the error
+// InvokeAllMap would return.
+func MustInvokeAllMap[T any](i Injector) map[string]T {
+	return must1(InvokeAllMap[T](i))
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -543,12 +829,24 @@ func MustAsNamed[Initial any, Alias any](i Injector, initial string, alias strin
 // This function searches through all registered services to find one that can be cast to the requested type T.
 // It's useful when you want to retrieve a service by interface without explicitly creating aliases.
 //
+// When several visible services are assignable to T, it selects the one in
+// the nearest scope (the invoking scope before its ancestors), then the
+// earliest registration (an override keeps its position), then the smallest
+// service name. Aliases are candidates too. A service hidden by a service
+// of the same name in a nearer scope is not a candidate, as for InvokeAll.
+// Called from a provider, the service that provider builds is not a
+// candidate either, nor is an alias whose target chain resolves to it, so a
+// decorator can resolve the service it wraps; when it is the only match, the
+// error matches ErrServiceNotMatch. This holds for an injector a provider
+// stored and uses after it returned too: it still skips that provider's
+// service.
+// Use InvokeNamed to pin a specific service. A selected service whose value
+// is a nil interface gives the zero value of T and a nil error.
+//
 // Parameters:
 //   - i: The injector to search for the service
 //
 // Returns the service instance and any error that occurred during invocation.
-//
-// Play: https://go.dev/play/p/1uXvNenBbgk
 //
 // Example:
 //
@@ -566,14 +864,13 @@ func InvokeAs[T any](i Injector) (T, error) {
 // MustInvokeAs invokes a service in the DI container by finding the first service that matches the provided type or interface.
 // This function panics if an error occurs during invocation.
 // It's useful when you want to retrieve a service by interface without explicitly creating aliases.
+// The selection rule is the one of [InvokeAs].
 //
 // Parameters:
 //   - i: The injector to search for the service
 //
 // Returns the service instance.
 // Panics if the service cannot be found or invoked.
-//
-// Play: https://go.dev/play/p/29gb2TJG4m5
 //
 // Example:
 //
@@ -600,8 +897,6 @@ func MustInvokeAs[T any](i Injector) T {
 //   - services: Variable number of service registration functions to execute
 //
 // Returns a function that can be passed to New(), NewWithOpts(), or Scope() to register all services.
-//
-// Play: https://go.dev/play/p/kmf8aOVyj96
 //
 // Example:
 //
@@ -637,8 +932,6 @@ func Package(services ...func(i Injector)) func(Injector) {
 //
 // Returns a function that registers the service as lazy when executed.
 //
-// Play: https://go.dev/play/p/M6-wd1qt-GZ
-//
 // Example:
 //
 //	// Global to a package
@@ -647,9 +940,13 @@ func Package(services ...func(i Injector)) func(Injector) {
 //	    	return &Database{}, nil
 //		}),
 //	)
-func Lazy[T any](p Provider[T]) func(Injector) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func Lazy[T any](p Provider[T], opts ...ProvideOption) func(Injector) {
 	return func(injector Injector) {
-		Provide(injector, p)
+		Provide(injector, p, opts...)
 	}
 }
 
@@ -663,8 +960,6 @@ func Lazy[T any](p Provider[T]) func(Injector) {
 //
 // Returns a function that registers the service as lazy with the specified name when executed.
 //
-// Play: https://go.dev/play/p/xAs-exXR9Sz
-//
 // Example:
 //
 //	// Global to a package
@@ -673,9 +968,13 @@ func Lazy[T any](p Provider[T]) func(Injector) {
 //	    	return &Database{}, nil
 //		}),
 //	)
-func LazyNamed[T any](serviceName string, p Provider[T]) func(Injector) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func LazyNamed[T any](serviceName string, p Provider[T], opts ...ProvideOption) func(Injector) {
 	return func(injector Injector) {
-		ProvideNamed(injector, serviceName, p)
+		ProvideNamed(injector, serviceName, p, opts...)
 	}
 }
 
@@ -688,17 +987,19 @@ func LazyNamed[T any](serviceName string, p Provider[T]) func(Injector) {
 //
 // Returns a function that registers the service as eager when executed.
 //
-// Play: https://go.dev/play/p/M6-wd1qt-GZ
-//
 // Example:
 //
 //	// Global to a package
 //	var Package = doger.Package(
 //		doger.Eager[*Config](&Config{Port: 8080})
 //	)
-func Eager[T any](value T) func(Injector) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func Eager[T any](value T, opts ...ProvideOption) func(Injector) {
 	return func(injector Injector) {
-		ProvideValue(injector, value)
+		ProvideValue(injector, value, opts...)
 	}
 }
 
@@ -712,17 +1013,19 @@ func Eager[T any](value T) func(Injector) {
 //
 // Returns a function that registers the service as eager with the specified name when executed.
 //
-// Play: https://go.dev/play/p/pvByI4EkFEJ
-//
 // Example:
 //
 //	// Global to a package
 //	var Package = doger.Package(
 //		doger.EagerNamed[*Config]("app-config", &Config{Port: 8080})
 //	)
-func EagerNamed[T any](serviceName string, value T) func(Injector) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func EagerNamed[T any](serviceName string, value T, opts ...ProvideOption) func(Injector) {
 	return func(injector Injector) {
-		ProvideNamedValue(injector, serviceName, value)
+		ProvideNamedValue(injector, serviceName, value, opts...)
 	}
 }
 
@@ -735,8 +1038,6 @@ func EagerNamed[T any](serviceName string, value T) func(Injector) {
 //
 // Returns a function that registers the service as transient when executed.
 //
-// Play: https://go.dev/play/p/M6-wd1qt-GZ
-//
 // Example:
 //
 //	// Global to a package
@@ -745,9 +1046,13 @@ func EagerNamed[T any](serviceName string, value T) func(Injector) {
 //	    	return &Logger{}, nil
 //		})
 //	)
-func Transient[T any](p Provider[T]) func(Injector) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func Transient[T any](p Provider[T], opts ...ProvideOption) func(Injector) {
 	return func(injector Injector) {
-		ProvideTransient(injector, p)
+		ProvideTransient(injector, p, opts...)
 	}
 }
 
@@ -761,8 +1066,6 @@ func Transient[T any](p Provider[T]) func(Injector) {
 //
 // Returns a function that registers the service as transient with the specified name when executed.
 //
-// Play: https://go.dev/play/p/d9IJOAbKRUH
-//
 // Example:
 //
 //	// Global to a package
@@ -771,9 +1074,13 @@ func Transient[T any](p Provider[T]) func(Injector) {
 //	    	return &Logger{}, nil
 //		})
 //	)
-func TransientNamed[T any](serviceName string, p Provider[T]) func(Injector) {
+//
+// Options: opts attach opt-ins to the registration, such as [AsStarter] or
+// [DependsOnNamed]. A nil option is ignored, and a call without options
+// behaves exactly as before options existed.
+func TransientNamed[T any](serviceName string, p Provider[T], opts ...ProvideOption) func(Injector) {
 	return func(injector Injector) {
-		ProvideNamedTransient(injector, serviceName, p)
+		ProvideNamedTransient(injector, serviceName, p, opts...)
 	}
 }
 
@@ -783,12 +1090,11 @@ func TransientNamed[T any](serviceName string, p Provider[T]) func(Injector) {
 //
 // Parameters:
 //   - Initial: The original type to bind from
-//   - Alias: The type to bind to (must be implemented by Initial)
+//   - Target: The type to bind to (must be implemented by Initial)
 //
 // Returns a function that creates the type alias when executed.
-// Panics if the binding cannot be created.
-//
-// Play: https://go.dev/play/p/j69I52whJr2
+// Panics if the binding cannot be created. Like [Alias], the alias never shuts
+// its target down.
 //
 // Example:
 //
@@ -796,9 +1102,9 @@ func TransientNamed[T any](serviceName string, p Provider[T]) func(Injector) {
 //	var Package = doger.Package(
 //		doger.Bind[*Database, DatabaseInterface]()
 //	)
-func Bind[Initial any, Alias any]() func(Injector) {
+func Bind[Initial any, Target any]() func(Injector) {
 	return func(injector Injector) {
-		MustAs[Initial, Alias](injector)
+		MustAlias[Initial, Target](injector)
 	}
 }
 
@@ -810,12 +1116,11 @@ func Bind[Initial any, Alias any]() func(Injector) {
 //   - initial: The name of the original service
 //   - alias: The name for the alias service
 //   - Initial: The original type to bind from
-//   - Alias: The type to bind to (must be implemented by Initial)
+//   - Target: The type to bind to (must be implemented by Initial)
 //
 // Returns a function that creates the named type alias when executed.
-// Panics if the binding cannot be created.
-//
-// Play: https://go.dev/play/p/m2gW7s9_qgq
+// Panics if the binding cannot be created. Like [AliasNamed], the alias never
+// shuts its target down.
 //
 // Example:
 //
@@ -823,8 +1128,8 @@ func Bind[Initial any, Alias any]() func(Injector) {
 //	var Package = doger.Package(
 //		doger.BindNamed[*Database, DatabaseInterface]("main-db", "db-interface")
 //	)
-func BindNamed[Initial any, Alias any](initial string, alias string) func(Injector) {
+func BindNamed[Initial any, Target any](initial string, alias string) func(Injector) {
 	return func(injector Injector) {
-		MustAsNamed[Initial, Alias](injector, initial, alias)
+		MustAliasNamed[Initial, Target](injector, initial, alias)
 	}
 }

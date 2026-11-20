@@ -1,7 +1,9 @@
-go 1.26.0
+go 1.27
 
 use (
 	.
+
+	./clock/clockwork
 
 	./examples/dag
 	./examples/eager-loading
@@ -28,4 +30,6 @@ use (
 	./http/fiber
 	./http/gin
 	./http/std
+
+	./scheduler/gocron
 )

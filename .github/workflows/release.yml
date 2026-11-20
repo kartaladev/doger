@@ -8,89 +8,116 @@ on:
         description: 'Semver (eg: v1.2.3)'
         required: true
 
+permissions:
+  contents: read
+
+# The post-processing steps live in scripts/release-steps.sh, which
+# scripts/release-dry-run.sh also runs: CI dry-runs exactly this release.
 jobs:
   release:
-    # forks of this repository cannot cut releases of github.com/kartaladev/doger
-    if: github.repository == 'kartaladev/doger'
+    # releases are cut only from main, and forks of this repository cannot
+    # cut releases of github.com/kartaladev/doger
+    if: github.ref == 'refs/heads/main' && github.repository == 'kartaladev/doger'
     runs-on: ubuntu-latest
-    # required to push the release tag and create the GitHub release
+    # required reviewers and deployment rules are set on the environment
+    environment: release
+    # required to push the release tags and create the GitHub release
     permissions:
       contents: write
     steps:
-    # the module path has no /vN suffix, so only v0 and v1 versions are valid;
-    # pre-releases such as v0.2.0-rc.1 are allowed
+    # the tests, tidy and govulncheck below run dependency code: keep the
+    # write token out of .git/config, and hand it only to the tag push and
+    # the release action
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    # the module path has no /vN suffix, so only v0 and v1 versions are
+    # valid; pre-releases such as v0.2.0-rc.1 are allowed
     - name: Check semver
       env:
         SEMVER: ${{ inputs.semver }}
       run: |
-          re='^v[01]\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
-          if ! [[ "$SEMVER" =~ $re ]]; then
-            echo "::error::semver '$SEMVER' must be a v0 or v1 version such as v0.1.0 or v0.2.0-rc.1 (module path github.com/kartaladev/doger has no major-version suffix)"
+          if ! scripts/release-steps.sh check-semver "$SEMVER"; then
+            echo "::error::semver '$SEMVER' must be a v0 or v1 version such as v0.1.0 or v0.2.0-rc.1"
             exit 1
           fi
 
-    - uses: actions/checkout@v7
-
     - name: Set up Go
-      uses: actions/setup-go@v7
+      uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
       with:
         go-version-file: 'go.work'
+        cache-dependency-path: '**/go.sum'
 
     - name: Test
-      run: make test
-      
-    # to be valid after cleanup
-    - name: Drop use of ./examples/... from go.work 
-      run: find ./examples -type d -exec go work edit -dropuse={} \;
+      run: make test-all
 
-    # remove tests to clean dependencies
-    - name: Remove xxx_test.go files
-      run: rm -rf $(find . -type f -name "*_test.go" ! -name "*_example_test.go") examples/ docs/ tests/
+    - name: Install govulncheck
+      run: make govulncheck-install
 
-    - name: Cleanup dependencies
-      run: go mod tidy
+    # drop examples from go.work, remove *_test.go (except examples),
+    # examples/, docs/ and tests/
+    - name: Remove tests
+      run: scripts/release-steps.sh strip
 
-    # consumers ignore the adapters' local replace directives, so each adapter
-    # must require the root module at the version being released
-    - name: Pin HTTP adapters to the released root version
+    # go mod tidy in the root module and in every adapter while their local
+    # replace still points at the root, so test-only requirements go away
+    - name: Tidy every released module
+      run: scripts/release-steps.sh tidy
+
+    # govulncheck on the stripped and tidied tree. It runs before pinning:
+    # pinning only renames the root requirement, which the workspace cannot
+    # resolve until the release is published; the dependencies are the same
+    - name: Vulnerabilities
+      run: make vuln
+
+    # consumers ignore replace directives, so each adapter (http, scheduler,
+    # clock) requires the root module at the version being released and
+    # loses its local replace
+    - name: Pin adapters to the released root version
       env:
         SEMVER: ${{ inputs.semver }}
+      run: scripts/release-steps.sh pin "$SEMVER"
+
+    - name: Build and vet every released module
+      run: scripts/release-steps.sh verify
+
+    - name: Write the released go.mod files into logs
       run: |
-          for dir in http/*/; do
-            [ -f "${dir}go.mod" ] || continue
-            (cd "$dir" && go mod edit -require="github.com/kartaladev/doger@${SEMVER}")
+          for dir in $(scripts/release-steps.sh modules); do
+            echo "=== $dir/go.mod"
+            cat "$dir/go.mod"
           done
 
-    - name: List files
-      run: tree -Cfi
-    - name: Write new go.mod into logs
-      run: cat go.mod
-    - name: Write new go.sum into logs
-      run: cat go.sum
-
-    # the root module is tagged <semver>, each HTTP adapter http/<x>/<semver>
+    # every released module (derived from the go.mod files) is tagged: the
+    # root <semver>, every other module <dir>/<semver>, for example
+    # http/gin/v0.2.0, scheduler/gocron/v0.2.0, clock/clockwork/v0.2.0
     - name: Create tags
       env:
         SEMVER: ${{ inputs.semver }}
         ACTOR: ${{ github.triggering_actor }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
           git config --global user.name "$ACTOR"
           git config --global user.email "${ACTOR}@users.noreply.github.com"
 
           git add .
           git commit --allow-empty -m "bump ${SEMVER}"
-          tags=("$SEMVER")
-          for dir in http/*/; do
-            [ -f "${dir}go.mod" ] || continue
-            tags+=("${dir%/}/${SEMVER}")
-          done
+          mapfile -t tags < <(scripts/release-steps.sh tags "$SEMVER")
           for tag in "${tags[@]}"; do
             git tag "$tag"
           done
-          git push origin "${tags[@]}"
+          # the token is passed for this push only, as actions/checkout would
+          # (an http extraheader), and never written to .git/config
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push origin "${tags[@]}"
 
     - name: Release
-      uses: softprops/action-gh-release@v3
+      uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
       with:
         name: ${{ inputs.semver }}
         tag_name: ${{ inputs.semver }}
+        generate_release_notes: true
+        token: ${{ secrets.GITHUB_TOKEN }}

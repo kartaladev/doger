@@ -1,0 +1,267 @@
+package doger
+
+import (
+	"reflect"
+	"slices"
+)
+
+// serviceOptions records the opt-ins attached to one registration.
+type serviceOptions struct {
+	starter         bool
+	starterDeferred bool // registered under an interface type: checked on the instance at Start
+	dependsOn       []string
+	kinds           []kindBinding
+	order           *int // collection order set by WithOrder; nil when unset
+	isDefault       bool // registered with AsDefault: replaceable by an explicit registration
+	healthTags      []string
+	healthTagsSet   bool // WithHealthTags given: healthTags replace the default tag
+	optionalHealth  bool // AsOptionalHealth: a failure degrades instead of failing
+}
+
+// ProvideOption attaches an opt-in to a registration. Values come only from
+// the constructors of this package, such as [AsStarter] and [DependsOnNamed].
+// A nil option is ignored.
+type ProvideOption func(*serviceOptions)
+
+// AsStarter opts a registration into being started by [RootScope.Start].
+//
+// Starters are detected by registered type, so a service registered under an
+// interface type that has no Start method needs AsStarter to be started.
+// Repeating it is the same as giving it once.
+//
+// Registration panics, before the service is stored, when AsStarter is
+// applied to a transient service ("doger: transient service `name` cannot be
+// started") or to a concrete type with no Start method of a Starter variant
+// ("doger: service `name` does not implement any Starter interface"). A service
+// registered under an interface type is checked on its instance at Start.
+func AsStarter() ProvideOption {
+	return func(o *serviceOptions) {
+		o.starter = true
+	}
+}
+
+// DependsOn declares that the registration depends on the service of type T.
+// It is a shorthand for DependsOnNamed(NameOf[T]()).
+func DependsOn[T any]() ProvideOption {
+	return DependsOnNamed(NameOf[T]())
+}
+
+// DependsOnNamed declares that the registration depends on the named service.
+//
+// Repeated declarations accumulate in the given order, and duplicates are
+// collapsed. DependsOnNamed never panics at registration, transients
+// included: the target does not need to exist yet.
+func DependsOnNamed(name string) ProvideOption {
+	return func(o *serviceOptions) {
+		if !slices.Contains(o.dependsOn, name) {
+			o.dependsOn = append(o.dependsOn, name)
+		}
+	}
+}
+
+// WithOrder sets the registration's position in the slices returned by
+// InvokeAll: lower values come first. It takes precedence over the
+// instance's Order() method, which is then not called. Given more than
+// once, the last one wins. It affects only collections, never construction,
+// start or shutdown order, and has no effect on Invoke.
+func WithOrder(n int) ProvideOption {
+	return func(o *serviceOptions) {
+		o.order = &n
+	}
+}
+
+// AsDefault registers the service as a default: a fallback that a package or
+// an extension ships and the application may replace. Explicit registrations,
+// those without AsDefault, win over it whatever the registration order:
+//
+//   - An explicit registration of the same name in an ancestor scope wins: on
+//     its first resolution, the default yields to it and resolves to its
+//     instance, without calling its own provider.
+//   - In the same scope, an explicit registration of the same name replaces
+//     the default as long as the default was not resolved yet, and a default
+//     registered where an explicit service of the name exists is skipped.
+//
+// Every registration form accepts it: lazy, eager (ProvideValue), transient
+// and the Package helpers (Lazy, Eager, Transient and their named forms).
+// For an eager value, which exists at registration, it means "replaceable
+// until first resolved". Override* ignores it: an override is explicit.
+// Repeating it is the same as giving it once.
+//
+// The decision is made once and never changes. Besides an invocation, these
+// fix it: by-type selection or a collection picking the default, Start,
+// Refresh or Scope.Start considering it, a health check of its scope, and
+// root shutdown of an eager default never resolved. A default that yields behaves like an alias of its
+// target: it is not started, shut down, health-checked or handled by a kind
+// on its own, and its other options have no effect.
+//
+// The container shuts an eager default value down only when the default uses
+// it. A value that was replaced, or that yielded, is owned by the code that
+// created it.
+func AsDefault() ProvideOption {
+	return func(o *serviceOptions) {
+		o.isDefault = true
+	}
+}
+
+const (
+	// HealthTagReadiness is the health tag of the checks that tell whether
+	// the container may receive traffic. A health checker registered without
+	// WithHealthTags carries it, and only it.
+	HealthTagReadiness = "readiness"
+	// HealthTagLiveness is the health tag of the checks that tell whether the
+	// container is alive. No checker carries it unless registered with
+	// WithHealthTags(HealthTagLiveness): with zero configuration, liveness
+	// depends only on the container phase, as liveness should not depend on
+	// external systems.
+	HealthTagLiveness = "liveness"
+)
+
+// WithHealthTags sets the health tags of the registration, replacing the
+// default HealthTagReadiness. Repeated options accumulate, duplicates
+// collapsed; WithHealthTags() with no tag leaves the service with no tag, so
+// it appears only in unfiltered reports. Tags select the services a report
+// covers (see MatchHealthTags) and have no effect on HealthCheck() or the
+// single-service functions, nor on a service that is not a health checker.
+//
+// Registration panics, before the service is stored, for an empty tag
+// ("doger: service `name` has an empty health tag") or a transient
+// registration ("doger: transient service `name` cannot be health-checked").
+func WithHealthTags(tags ...string) ProvideOption {
+	return func(o *serviceOptions) {
+		o.healthTagsSet = true
+		for _, tag := range tags {
+			if !slices.Contains(o.healthTags, tag) {
+				o.healthTags = append(o.healthTags, tag)
+			}
+		}
+	}
+}
+
+// AsOptionalHealth marks the registration's health check optional: a
+// failure makes its report entry HealthDegraded instead of HealthUnhealthy,
+// whatever its tags. Repeating it is the same as giving it once. It has no
+// effect on HealthCheck() or the single-service functions, which return the
+// check's error unchanged, nor on a service that is not a health checker.
+//
+// Registration panics, before the service is stored, for a transient
+// registration ("doger: transient service `name` cannot be health-checked").
+func AsOptionalHealth() ProvideOption {
+	return func(o *serviceOptions) {
+		o.optionalHealth = true
+	}
+}
+
+// buildServiceOptions applies opts and returns the resulting options, or nil
+// when no non-nil option was given, so registrations without options keep
+// their current code paths.
+func buildServiceOptions(opts []ProvideOption) *serviceOptions {
+	var options *serviceOptions
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if options == nil {
+			options = &serviceOptions{}
+		}
+		opt(options)
+	}
+
+	return options
+}
+
+// starterTypes are the method sets of the four Starter variants.
+var starterTypes = []reflect.Type{
+	reflect.TypeFor[Starter](),
+	reflect.TypeFor[StarterWithError](),
+	reflect.TypeFor[StarterWithContext](),
+	reflect.TypeFor[StarterWithContextAndError](),
+}
+
+// typeIsStarter reports whether t implements one of the Starter variants.
+func typeIsStarter(t reflect.Type) bool {
+	return slices.ContainsFunc(starterTypes, func(starter reflect.Type) bool {
+		return typeCanCastToType(t, starter)
+	})
+}
+
+// validateServiceOptions panics, before the service is stored, when opts
+// cannot apply to the registration. Interface-typed registrations that do not
+// satisfy an opt-in are marked deferred and checked on the instance at Start.
+func validateServiceOptions(name string, service serviceWrapperAny, opts *serviceOptions) {
+	if opts == nil {
+		return
+	}
+
+	if slices.Contains(opts.healthTags, "") {
+		panic(libErrorf("service `%s` has an empty health tag", name))
+	}
+
+	if service.getServiceType() == ServiceTypeTransient {
+		validateTransientOpts(name, opts)
+		return
+	}
+
+	validateStarterOpt(name, service.getReflectType(), opts)
+	validateKindOpt(name, service.getReflectType(), opts)
+}
+
+// validateTransientOpts rejects opt-ins that need a single instance.
+func validateTransientOpts(name string, opts *serviceOptions) {
+	if opts.starter {
+		panic(libErrorf("transient service `%s` cannot be started", name))
+	}
+	if len(opts.kinds) > 0 {
+		panic(libErrorf("transient service `%s` cannot be handled by kind `%s`", name, opts.kinds[0].id.name))
+	}
+	if opts.healthTagsSet || opts.optionalHealth {
+		panic(libErrorf("transient service `%s` cannot be health-checked", name))
+	}
+}
+
+// validateKindOpt checks kind bindings against the registered type.
+func validateKindOpt(name string, registered reflect.Type, opts *serviceOptions) {
+	seen := map[*kindID]struct{}{}
+	for i := range opts.kinds {
+		binding := &opts.kinds[i]
+		if _, ok := seen[binding.id]; ok {
+			panic(libErrorf("kind `%s` applied twice to service `%s`", binding.id.name, name))
+		}
+		seen[binding.id] = struct{}{}
+
+		switch {
+		case typeCanCastToType(registered, binding.target):
+		case registered.Kind() == reflect.Interface:
+			binding.deferred = true
+		default:
+			panic(libErrorf("service `%s` is not assignable to `%s` required by kind `%s`", name, binding.target.String(), binding.id.name))
+		}
+	}
+}
+
+// validateStarterOpt checks AsStarter against the registered type.
+func validateStarterOpt(name string, registered reflect.Type, opts *serviceOptions) {
+	switch {
+	case !opts.starter, typeIsStarter(registered):
+	case registered.Kind() == reflect.Interface:
+		opts.starterDeferred = true
+	default:
+		panic(libErrorf("service `%s` does not implement any Starter interface", name))
+	}
+}
+
+// resolveDeclaredDependencies invokes each declared dependency, in declaration
+// order, on the virtual scope the wrapper received. This reuses circular
+// dependency detection, DAG edge recording and invocation hooks unchanged.
+func resolveDeclaredDependencies(i Injector, opts *serviceOptions) error {
+	if opts == nil {
+		return nil
+	}
+
+	for _, dependency := range opts.dependsOn {
+		if _, err := invokeAnyByNameAs(i, dependency, DependencySourceDependsOn); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

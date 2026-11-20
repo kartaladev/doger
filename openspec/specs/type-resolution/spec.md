@@ -1,0 +1,274 @@
+# type-resolution Specification
+
+## Purpose
+
+Makes resolution by assignable type deterministic: `InvokeAs[T]`, `MustInvokeAs[T]` and the implicit-aliasing fallback of struct injection pick the same service on every run, instead of an arbitrary map-iteration match.
+
+## Requirements
+
+### Requirement: InvokeAs picks the first match deterministically
+When several visible services are assignable to `T`, `InvokeAs[T]` and `MustInvokeAs[T]` SHALL select the one in the nearest scope (the invoking scope before its ancestors), then the earliest registration, then the smallest service name. A service hidden by a service of the same name in a nearer scope SHALL NOT be a candidate, as for collections. Aliases SHALL remain candidates, as today, except those of the invoking service.
+
+#### Scenario: Selection among several matches
+```gherkin
+Given a root scope and a child scope "request"
+And services registered in order: <registrations>, each implementing "Greeter"
+When the consumer calls InvokeAs[Greeter] from <scope>
+Then the selected service is "<selected>"
+
+Examples:
+  | registrations                                              | scope     | selected |
+  | "b" in root, "a" in root                                   | root      | b        |
+  | "a" in root, "b" in root                                   | root      | a        |
+  | "a" in root, "z" in "request"                              | "request" | z        |
+  | "a" in root, "z" in "request"                              | root      | a        |
+  | "b" in root, "a" in root, then Override of "b" in root     | root      | b        |
+  | "b" in root, then root cloned, "a" in the clone's root     | the clone | b        |
+  | "b" in root, "a" in root, then root cloned                 | the clone | b        |
+  | "x" in root, "a" in root, alias "g" of "a" as Greeter in "request" | "request" | g, which resolves "a" |
+  | "a" in root, "z" with doger.AsDefault() in "request"       | "request" | a        |
+```
+
+#### Scenario: A shadowed service is not a candidate
+```gherkin
+Given a root scope with lazy "db" implementing "Store"
+And a child scope "request" where "db" is registered as <child_db>
+When the consumer calls <call> from "request"
+Then the result is <result>
+
+Examples:
+  | child_db                     | call                                                    | result                                           |
+  | the value "a string"         | InvokeAs[Store]                                          | an error matching ErrServiceNotMatch             |
+  | the value "a string"         | InvokeStruct for a struct with field `S Store \`do:""\`` | an error matching ErrServiceNotFound, as when no service implements Store |
+  | lazy "db" implementing Store | InvokeAs[Store]                                          | the child's "db"                                 |
+```
+
+#### Scenario: Selection is stable across runs
+```gherkin
+Given a root scope with 20 lazy services "s00" to "s19" registered in that order, each implementing "Greeter"
+When the consumer calls InvokeAs[Greeter] on a new container built the same way, 100 times
+Then every call selects "s00"
+```
+
+#### Scenario: Single and missing matches are unchanged
+```gherkin
+Given a root scope with <services>
+When the consumer calls InvokeAs[Greeter]
+Then the result is <result>
+
+Examples:
+  | services                           | result                         |
+  | one lazy "a" implementing Greeter  | "a", nil error                 |
+  | no service implementing Greeter    | an error matching ErrServiceNotMatch |
+```
+
+<!-- cases: 1 default: the first row; there is no option -->
+<!-- cases: N/A 2 overrides: InvokeNamed selects a specific service -->
+<!-- cases: 3 zero values: no matching service keeps ErrServiceNotMatch -->
+<!-- cases: 4 boundaries: one match, two, twenty -->
+<!-- cases: N/A 5 errors: error paths are unchanged -->
+<!-- cases: 6 duplicates: Override keeps the position of the first registration (registration-options); a same-name service in a nearer scope hides an ancestor's -->
+<!-- cases: 7 lifecycle: child scope and clone rows -->
+<!-- cases: 8 concurrency: the stable scenario replaces the former random pick; runs under -race -->
+<!-- cases: N/A 9 panics: unchanged -->
+<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - the pick was random, so no consumer could rely on a specific one; hooks still receive the requested type name. BEHAVIOR CHANGE (flagged) - a shadowed ancestor service is no longer returned. The default row applies only to registrations given AsDefault(). -->
+
+### Requirement: InvokeAs skips the invoking service
+When `InvokeAs[T]` or `MustInvokeAs[T]` is called from a provider, the service that provider builds SHALL NOT be a candidate, as for collections, and neither SHALL an alias whose target chain resolves to it, so a decorator can resolve the service it wraps. When it is the only match, the result SHALL be an error matching `ErrServiceNotMatch`.
+
+#### Scenario: The invoking service is not a candidate
+```gherkin
+Given a root scope with lazy "decor" implementing "Logger", whose provider calls InvokeAs[Logger] and wraps the result
+And <others>
+When the consumer calls InvokeNamed for "decor"
+Then the result is <result>
+
+Examples:
+  | others                                            | result                                               |
+  | lazy "base" implementing Logger, registered after "decor" | "decor" wrapping "base", nil error                  |
+  | lazy "base" implementing Logger, registered before "decor" | "decor" wrapping "base", nil error                 |
+  | no other service implementing Logger              | an error matching ErrServiceNotMatch, not ErrCircularDependency |
+  | alias "decor-alias" of "decor" as Logger, then lazy "base" implementing Logger | "decor" wrapping "base", nil error |
+  | alias "a1" of "decor", alias "a2" of "a1", both as Logger, then lazy "base" implementing Logger | "decor" wrapping "base", nil error |
+  | alias "decor-alias" of "decor" as Logger, and no other service | an error matching ErrServiceNotMatch, not ErrCircularDependency |
+```
+
+#### Scenario: MustInvokeAs from a provider
+```gherkin
+Given a root scope with lazy "decor" implementing "Greeter", whose provider wraps MustInvokeAs[Greeter](i)
+And lazy "base" implementing "Greeter", registered after "decor"
+When the consumer calls InvokeNamed for "decor"
+Then "decor" wraps "base"
+And ExplainNamedService(root, "decor") lists exactly the dependency base
+```
+
+#### Scenario: A stored provider injector still skips its service
+```gherkin
+Given a root scope with lazy "decor" implementing "Greeter", whose provider stores its injector and returns
+And lazy "base" implementing "Greeter", registered after "decor"
+And the consumer invoked "decor"
+When the consumer calls InvokeAs[Greeter] with the stored injector
+Then the result is "base"
+```
+
+#### Scenario: The alias skip compares names
+```gherkin
+Given a root scope with lazy "svc" implementing "Greeter" and alias "g" of "svc" registered with AliasNamed
+And child scope "child" with lazy "svc" implementing "Greeter", whose provider calls InvokeAs[Greeter](i)
+When the consumer invokes "svc" from "child"
+Then the error matches ErrServiceNotMatch, not ErrCircularDependency, because "g" targets the name "svc" of the invoking service
+```
+
+<!-- cases: 1 default: the first row -->
+<!-- cases: N/A 2 overrides: InvokeNamed selects a specific service, including the provider's own -->
+<!-- cases: 3 zero values: no other match gives ErrServiceNotMatch -->
+<!-- cases: 4 boundaries: zero and one other match -->
+<!-- cases: 5 errors: ErrServiceNotMatch instead of ErrCircularDependency -->
+<!-- cases: 6 duplicates: registration order no longer matters for self-selection; aliases of the invoking service, direct or chained, are skipped too, by target name, even when the target name resolves to a shadowed ancestor service -->
+<!-- cases: 7 lifecycle: a provider's injector stored and used after the provider returned still skips its service -->
+<!-- cases: N/A 8 concurrency, 9 panics: unchanged -->
+<!-- cases: 10 compatibility: AliasNamed replaces AsNamed (BREAKING rename, see service-aliases). BEHAVIOR CHANGE (flagged) - a decorator calling InvokeAs for its own interface no longer fails with ErrCircularDependency; a lone self-match fails with ErrServiceNotMatch. BEHAVIOR CHANGE (flagged) - an alias of the invoking service is skipped too -->
+
+### Requirement: Implicit-aliasing struct injection uses the same selection
+When `InvokeStruct` falls back to type-based resolution for an empty tag (`do:""`), it SHALL select the candidate by the same rule as `InvokeAs`, including skipping the service whose provider calls it. It SHALL fall back only when no visible service has the field type's name, or when the only one is the service whose provider calls it. A service with that name that fails to build SHALL return its error, even one matching `ErrServiceNotFound`.
+
+#### Scenario: Struct fallback selects deterministically
+```gherkin
+Given a root scope with lazy "b" then lazy "a", both implementing "Greeter"
+And a struct type with field `G Greeter \`do:""\``
+When the consumer calls InvokeStruct for that struct 100 times on new containers built the same way
+Then field G is service "b" every time
+```
+
+<!-- cases: 1 default: the scenario -->
+<!-- cases: N/A 2 overrides: a named tag selects a specific service -->
+<!-- cases: N/A 3 zero values: an empty tag is the subject -->
+<!-- cases: N/A 4 boundaries: covered by the InvokeAs requirement -->
+<!-- cases: N/A 5 errors: unchanged -->
+#### Scenario: Struct fallback skips the invoking service
+```gherkin
+Given a root scope with lazy "decor" implementing "Greeter", whose provider calls InvokeStruct for a struct with field `G Greeter \`do:""\``
+And lazy "base" implementing "Greeter", registered after "decor"
+When the consumer calls InvokeNamed for "decor"
+Then the provider's field G is service "base"
+```
+
+#### Scenario: The fallback decides by name
+```gherkin
+Given a root scope with <services>
+And a struct type with field `G Greeter \`do:""\``
+When the consumer <call>
+Then the result is <result>
+
+Examples:
+  | services                                                                                                                      | call                                   | result                                            |
+  | lazy "other" implementing "Greeter", and a lazy service named after "Greeter" whose provider invokes the missing "missing-config" | calls InvokeStruct for that struct     | an error matching ErrServiceNotFound naming "missing-config" |
+  | lazy "base" implementing "Greeter", and a "decor" registered with Provide[Greeter] whose provider calls InvokeStruct for that struct | invokes Greeter                        | "decor(base)"                                     |
+  | only a "decor" registered with Provide[Greeter] whose provider calls InvokeStruct for that struct                              | invokes Greeter                        | an error matching ErrCircularDependency           |
+```
+
+<!-- cases: N/A 6 duplicates, 7 lifecycle: covered by the InvokeAs requirement -->
+<!-- cases: 8 concurrency: 100 repetitions -->
+<!-- cases: N/A 9 panics: unchanged -->
+<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged), same as InvokeAs; the fallback deciding by name is BREAKING for a type-named service failing with ErrServiceNotFound (flagged) -->
+
+### Requirement: InvokeAs prefers non-default services over defaults
+By-type selection (`InvokeAs[T]` and implicit-aliasing struct injection) SHALL consider unresolved defaults only if no other visible candidate is assignable to `T`. A default that already chose its own provider SHALL rank, and shadow, as a non-default; a yielded default SHALL NOT be a candidate. An unresolved or yielded default SHALL NOT hide a same-name non-default in an ancestor.
+
+#### Scenario: Selection by type with defaults
+```gherkin
+Given a root scope with child scope "ext"
+And a lazy "envSource" (an *app.EnvSource) registered in <default_in> with doger.AsDefault(), never invoked
+And <explicit>
+When the consumer calls doger.InvokeAs[app.PropertySource] from scope "ext"
+Then the selected service is "<selected>"
+
+Examples:
+  | default_in | explicit                                                     | selected   |
+  | ext        | a lazy "mySource" (an *app.MySource) registered in root      | mySource   |
+  | root       | a lazy "mySource" (an *app.MySource) registered in root      | mySource   |
+  | ext        | nothing                                                      | envSource  |
+  | ext        | a lazy "other" (an *app.Other, not a PropertySource) in root | envSource  |
+```
+
+#### Scenario: A default that chose its own provider keeps its rank
+```gherkin
+Given a root scope with child scope "ext"
+And a lazy "envSource" (an *app.EnvSource) registered in scope "ext" with doger.AsDefault()
+And "envSource" was invoked from scope "ext"
+And a lazy "mySource" (an *app.MySource) registered in the root afterwards
+When the consumer calls doger.InvokeAs[app.PropertySource] from scope "ext"
+Then the selected service is "envSource"
+```
+
+#### Scenario: A same-name default does not hide the ancestor's service
+```gherkin
+Given a root scope with child scope "ext"
+And a lazy "source" (an *app.MySource) registered in the root
+And a lazy "source" (an *app.EnvSource) registered in scope "ext" with doger.AsDefault()
+When the consumer calls doger.InvokeAs[app.PropertySource] from scope "ext"
+Then the result is the root's *app.MySource instance
+```
+
+#### Scenario: Two defaults are ordered as before
+```gherkin
+Given a root scope with child scope "ext"
+And a lazy "rootSource" registered in the root with doger.AsDefault()
+And a lazy "extSource" registered in scope "ext" with doger.AsDefault(), both *app.EnvSource
+When the consumer calls doger.InvokeAs[app.PropertySource] from scope "ext"
+Then the selected service is "extSource"
+```
+
+#### Scenario: Struct injection by type prefers non-default services
+```gherkin
+Given a root scope
+And a lazy "envSource" (an *app.EnvSource) registered with doger.AsDefault()
+And a lazy "mySource" (an *app.MySource) registered without options
+When the consumer calls doger.InvokeStruct[struct{ Src app.PropertySource `do:""` }]
+Then field Src holds the "mySource" instance
+```
+
+<!-- cases: 2 overrides: invoking by name selects a default explicitly; registering an explicit service is the override -->
+<!-- cases: 3 zero values: no match yields the existing ErrServiceNotMatch -->
+<!-- cases: 4 boundaries: zero, one and two defaults -->
+<!-- cases: N/A 5 invalid input: unchanged InvokeAs errors -->
+<!-- cases: 6 duplicate: the same-name scenario -->
+<!-- cases: 7 lifecycle: the chosen-default scenario pins the frozen decision -->
+<!-- cases: N/A 8 concurrency: selection runs under the existing locks; decide() is covered in default-registrations -->
+<!-- cases: N/A 9 panics: selection does not panic -->
+<!-- cases: 10 compatibility: without defaults, selection is unchanged -->
+
+### Requirement: InvokeAs returns a nil-interface instance without panicking
+When the service selected by `InvokeAs[T]` or `MustInvokeAs[T]` resolves to a nil interface value, the call SHALL return the zero value of `T` and a nil error instead of panicking.
+
+#### Scenario: Selecting a service whose value is a nil interface
+```gherkin
+Given a root scope with ProvideNamedValue[io.Reader](root, "reader", nil)
+When the consumer calls <call>
+Then the result is a nil io.Reader
+And <outcome>
+
+Examples:
+  | call                        | outcome                 |
+  | InvokeAs[io.Reader](root)   | the error is nil        |
+  | MustInvokeAs[io.Reader](root) | the call does not panic |
+```
+
+#### Scenario: A non-nil selection is unchanged
+```gherkin
+Given a root scope with ProvideNamedValue[io.Reader](root, "reader", strings.NewReader("x"))
+When the consumer calls InvokeAs[io.Reader](root)
+Then the result reads "x"
+And the error is nil
+```
+
+<!-- cases: 1 default: no configuration -->
+<!-- cases: N/A 2 overrides: none -->
+<!-- cases: 3 zero values: the nil interface is the subject -->
+<!-- cases: N/A 4 boundaries: one candidate -->
+<!-- cases: N/A 5 errors: success path; ErrServiceNotMatch paths are unchanged -->
+<!-- cases: N/A 6 duplicates: selection order is the existing requirement -->
+<!-- cases: N/A 7 lifecycle: unrelated -->
+<!-- cases: N/A 8 concurrency: no shared state written -->
+<!-- cases: 9 panics: previously an interface-conversion panic -->
+<!-- cases: 10 backward compatibility: non-nil selections are unchanged (second scenario) -->

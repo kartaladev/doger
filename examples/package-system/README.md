@@ -10,10 +10,6 @@ This example demonstrates how to organize services into modular packages using t
 - **Interface Aliasing**: Using `do.As` to create type aliases across packages
 - **Dependency Resolution**: Services in packages can depend on services from other packages
 
-## Playground Demo
-
-**Play: https://go.dev/play/p/dUKDptcQ1a3**
-
 ## How it Works
 
 1. **Configuration Package**: Provides application configuration

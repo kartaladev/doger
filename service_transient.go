@@ -15,6 +15,8 @@ var (
 )
 
 type serviceTransient[T any] struct {
+	opts     *serviceOptions // nil when registered without options
+	regIndex uint64          // registration order, unique per root container
 	name     string
 	typeName string
 
@@ -44,7 +46,7 @@ func (s *serviceTransient[T]) getServiceType() ServiceType {
 }
 
 func (s *serviceTransient[T]) getReflectType() reflect.Type {
-	return reflect.TypeOf((*T)(nil)).Elem() // if T is a pointer or interface, it will return a typed nil
+	return reflect.TypeFor[T]() // if T is a pointer or interface, it will return a typed nil
 }
 
 func (s *serviceTransient[T]) getInstanceAny(i Injector) (any, error) {
@@ -52,7 +54,23 @@ func (s *serviceTransient[T]) getInstanceAny(i Injector) (any, error) {
 }
 
 func (s *serviceTransient[T]) getInstance(i Injector) (T, error) {
-	return handleProviderPanic(s.provider, i)
+	// a caller that looked the service up before its scope closed builds
+	// nothing
+	if err := injectorScope(i).checkOpen(); err != nil {
+		return empty[T](), err
+	}
+	if err := resolveDeclaredDependencies(i, s.opts); err != nil {
+		return empty[T](), wrapBuildError(i, s.name, err)
+	}
+
+	instance, err := handleProviderPanic(s.provider, i)
+	if err != nil {
+		return empty[T](), wrapBuildError(i, s.name, err)
+	}
+
+	onAfterBuild(i, s.name, instance)
+
+	return instance, nil
 }
 
 func (s *serviceTransient[T]) isHealthchecker() bool {
@@ -78,6 +96,8 @@ func (s *serviceTransient[T]) shutdown(ctx context.Context) error {
 func (s *serviceTransient[T]) clone(newScope Injector) any {
 	return &serviceTransient[T]{
 		name:     s.name,
+		regIndex: s.regIndex,
+		opts:     s.opts,
 		typeName: s.typeName,
 
 		provider: s.provider,
@@ -88,4 +108,20 @@ func (s *serviceTransient[T]) source() (stacktrace.Frame, []stacktrace.Frame) {
 	// @TODO: implement stacktrace ?
 	// It requires to store each instance of service, which is not good because of memory leaks.
 	return stacktrace.Frame{}, []stacktrace.Frame{}
+}
+
+func (s *serviceTransient[T]) getRegistrationIndex() uint64 {
+	return s.regIndex
+}
+
+func (s *serviceTransient[T]) setRegistrationIndex(index uint64) {
+	s.regIndex = index
+}
+
+func (s *serviceTransient[T]) getOptions() *serviceOptions {
+	return s.opts
+}
+
+func (s *serviceTransient[T]) setOptions(opts *serviceOptions) {
+	s.opts = opts
 }

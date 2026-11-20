@@ -27,7 +27,7 @@ func (u *UserService) CreateUser(username, email string) error {
 
 	// Publish user created event
 	event := Event{
-		Type: "user.created",
+		Type: EventUserCreated,
 		Data: UserCreatedEvent{
 			UserID:   userID,
 			Username: username,
@@ -52,7 +52,7 @@ func (o *OrderService) CreateOrder(userID string, amount float64) error {
 
 	// Publish order created event
 	event := Event{
-		Type: "order.created",
+		Type: EventOrderCreated,
 		Data: OrderCreatedEvent{
 			OrderID: orderID,
 			UserID:  userID,
@@ -77,7 +77,7 @@ func (p *PaymentService) ProcessPayment(orderID string, amount float64) error {
 
 	// Publish payment processed event
 	event := Event{
-		Type: "payment.processed",
+		Type: EventPaymentProcessed,
 		Data: PaymentProcessedEvent{
 			PaymentID: paymentID,
 			OrderID:   orderID,

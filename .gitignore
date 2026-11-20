@@ -36,3 +36,6 @@ cover.html
 .vscode
 
 .idea/
+
+# agent checkouts
+.claude/worktrees/

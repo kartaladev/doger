@@ -150,7 +150,7 @@ And invoking "db" as int returns 42
 <!-- cases: 10 backward compatibility: the int, *bytes.Buffer and explicit-name rows pin that non-library names are unchanged; library-type names are deliberately BREAKING -->
 
 ### Requirement: Service-not-found errors name library types with the doger import path
-When a service of a library type cannot be found, the returned error SHALL match `ErrServiceNotFound` with `errors.Is`, SHALL keep the `DI: ` message prefix, and SHALL name the type with the import path `github.com/kartaladev/doger`.
+When a service of a library type cannot be found, the returned error SHALL match `ErrServiceNotFound` with `errors.Is`, SHALL start with the `doger: ` message prefix, and SHALL name the type with the import path `github.com/kartaladev/doger`.
 
 #### Scenario: Not-found errors for library types
 ```gherkin
@@ -161,8 +161,8 @@ And the error message is "<message>"
 
 Examples:
   | registered     | requested           | message                                                                                                   |
-  | nothing        | *doger.RootScope    | DI: could not find service `*github.com/kartaladev/doger.RootScope`, no service available                  |
-  | the int value 42 | doger.Healthchecker | DI: could not find service `github.com/kartaladev/doger.Healthchecker`, available services: `int`        |
+  | nothing        | *doger.RootScope    | doger: could not find service `*github.com/kartaladev/doger.RootScope`, no service available               |
+  | the int value 42 | doger.Healthchecker | doger: could not find service `github.com/kartaladev/doger.Healthchecker`, available services: `int`     |
 ```
 
 <!-- cases: N/A 2 overrides: error text has no option -->
@@ -173,7 +173,7 @@ Examples:
 <!-- cases: N/A 7 lifecycle: unrelated to naming -->
 <!-- cases: N/A 8 concurrency: unrelated to naming -->
 <!-- cases: N/A 9 panics: invoking a missing service returns an error, it does not panic -->
-<!-- cases: 10 backward compatibility: the `DI: ` prefix and the sentence shape are unchanged; only the library type path changes -->
+<!-- cases: 10 backward compatibility: BREAKING (flagged) the `DI: ` prefix becomes `doger: `; the sentence shape is unchanged -->
 
 ### Requirement: Debug UI shows doger branding
 The debug UI pages SHALL name the library `doger` in their titles and headings, and the index page SHALL link to this repository's resources. The only remaining mention of `samber/do` SHALL be a single attribution link to the upstream project on the index page.
@@ -243,7 +243,7 @@ Examples:
 <!-- cases: 10 backward compatibility: deliberately changed (titles, heading, links); routes stay unchanged (see the compatibility requirement) -->
 
 ### Requirement: Compatibility identifiers stay unchanged across the rename
-The rename SHALL NOT change the default struct-injection tag key `do`, the `DI: ` prefix of the exported error sentinels, or the debug UI routes, which stay relative to the base path the consumer passes.
+The rename SHALL NOT change the default struct-injection tag key `do` or the debug UI routes, which stay relative to the base path the consumer passes. The exported error sentinels SHALL use the `doger: ` prefix.
 
 #### Scenario: Struct injection tag key keeps its default and override
 ```gherkin
@@ -266,11 +266,11 @@ When its message is read
 Then the message is "<message>"
 
 Examples:
-  | sentinel              | message                                          |
-  | ErrServiceNotFound    | DI: could not find service                       |
-  | ErrServiceNotMatch    | DI: could not find service satisfying interface  |
-  | ErrCircularDependency | DI: circular dependency detected                 |
-  | ErrHealthCheckTimeout | DI: health check timeout                         |
+  | sentinel              | message                                             |
+  | ErrServiceNotFound    | doger: could not find service                       |
+  | ErrServiceNotMatch    | doger: could not find service satisfying interface  |
+  | ErrCircularDependency | doger: circular dependency detected                 |
+  | ErrHealthCheckTimeout | doger: health check timeout                         |
 ```
 
 #### Scenario: Debug UI links stay relative to the consumer's base path
@@ -294,4 +294,44 @@ Examples:
 <!-- cases: N/A 7 lifecycle: unrelated -->
 <!-- cases: N/A 8 concurrency: unrelated -->
 <!-- cases: N/A 9 panics: unrelated -->
-<!-- cases: 10 backward compatibility: this requirement is the compatibility guard; its tests are added before the rename and must stay green through it -->
+<!-- cases: 10 backward compatibility: the tag key and routes are unchanged; the sentinel prefix changes from `DI: ` to `doger: ` (BREAKING, flagged; migration: match with errors.Is) -->
+
+### Requirement: Every library message carries the doger prefix exactly once
+Every error message, panic value message and error sentinel the library originates SHALL start with `doger: ` exactly once and SHALL NOT contain `DI: `, including messages that wrap another library error. As a defensive rule, a message whose lead is a consumer's error SHALL keep that text first and unprefixed, and library text inside it SHALL NOT repeat the prefix.
+
+#### Scenario: Messages that used to double the prefix
+```gherkin
+Given <setup>
+When the consumer calls <call>
+Then the error message is "<message>"
+
+Examples:
+  | setup                                                         | call                         | message                                                     |
+  | a root scope that was shut down                               | root.Start(ctx)              | doger: cannot start: container is shut down                 |
+  | a root scope with lazy "a" invoking "b" and "b" invoking "a"  | InvokeNamed[int](root, "a")  | doger: service "a" in scope "[root]": service "b" in scope "[root]": circular dependency detected: `a` -> `b` -> `a` |
+  | a root scope with "db" registered and ProvideNamedValue(root, "db", 2) | recover() of the panic | doger: service `db` has already been declared       |
+  | a root scope with child scope "tenant" and Scope("tenant") again | recover() of the panic    | doger: scope `tenant` has already been declared             |
+  | a root scope whose Starter "a" returns errors.New("boom") while root.Shutdown(ctx) cancels root.Start(ctx) | root.Start(ctx) | doger: failed to start service `a` in scope `[root]`: boom (start aborted: container is shut down) |
+  | a root scope with lazy "a" whose provider returns errors.New("boom") | InvokeNamed[int](root, "a") | doger: service "a" in scope "[root]": boom |
+```
+
+#### Scenario: No exported sentinel uses the DI prefix
+```gherkin
+Given every exported error variable of the packages doger, dogerhttp, dogergocron and dogerclockwork
+When the test reads each message
+Then each message starts with "doger: "
+And no message contains "DI: "
+And no message contains "doger: " twice
+```
+
+<!-- cases: 1 default: the prefix has no option -->
+<!-- cases: N/A 2 overrides: none -->
+<!-- cases: N/A 3 zero values: none -->
+<!-- cases: 4 boundaries: one wrapping layer and two (nested ServiceError); a consumer-led abort outcome keeps the consumer text first -->
+<!-- cases: note: no public path produces a consumer-led message today, because a failing service of a start run is reported as a library-led *StartError (the abort row) -->
+<!-- cases: 5 errors: sentinel and wrapped messages -->
+<!-- cases: 6 duplicate: duplicate service and duplicate scope panics -->
+<!-- cases: 7 lifecycle: Start after shutdown row (previously "DI: cannot start: DI: container is shut down") -->
+<!-- cases: N/A 8 concurrency: unrelated -->
+<!-- cases: 9 panics: panic value rows -->
+<!-- cases: 10 backward compatibility: BREAKING (flagged) for consumers matching message text; migration: errors.Is / errors.As -->

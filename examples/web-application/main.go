@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/subtle"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,17 +47,46 @@ func (s *Server) Start() error {
 	router.Get("/orders/{id}", s.OrderHandler.GetOrder)
 	router.Get("/health", s.HealthHandler.HealthCheck)
 
-	// Debug endpoint for DI container
-	dogerchi.Use(router, "/debug/do", s.injector)
+	// Debug UI for the DI container, behind basic auth. It reveals the DI
+	// graph, so the server only listens on the loopback interface.
+	dogerchi.Use(router.With(basicAuth(os.Getenv("DEBUG_USER"), os.Getenv("DEBUG_PASSWORD"))), "/debug/doger", s.injector)
 
-	s.Logger.Log(fmt.Sprintf("Server listening on port %d", s.Config.Port))
+	s.Logger.Log(fmt.Sprintf("Server listening on 127.0.0.1:%d", s.Config.Port))
 	s.Logger.Log("Available endpoints:")
 	s.Logger.Log("  GET /users/{id} - Get user by ID")
 	s.Logger.Log("  GET /orders/{id} - Get order by ID")
 	s.Logger.Log("  GET /health - Health check")
-	s.Logger.Log("  GET /debug/do - DI container debug UI")
+	s.Logger.Log("  GET /debug/doger - DI container debug UI (DEBUG_USER / DEBUG_PASSWORD)")
 
-	return http.ListenAndServe(fmt.Sprintf(":%d", s.Config.Port), router) //nolint:gosec
+	// a server with a read-header timeout, so slow clients cannot hold connections
+	server := &http.Server{
+		Addr:              fmt.Sprintf("127.0.0.1:%d", s.Config.Port),
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	return server.ListenAndServe()
+}
+
+// basicAuth returns a middleware that accepts only user with password. With
+// an empty user or password it rejects every request, so the debug UI stays
+// closed until both are set.
+func basicAuth(user, password string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, p, ok := r.BasicAuth()
+			if !ok || user == "" || password == "" ||
+				subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
+				subtle.ConstantTimeCompare([]byte(p), []byte(password)) != 1 {
+				w.Header().Set("WWW-Authenticate", `Basic realm="debug"`)
+				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func (s *Server) Shutdown() error {
@@ -65,9 +97,7 @@ func (s *Server) Shutdown() error {
 func main() {
 	// Create injector with options
 	injector := doger.NewWithOpts(&doger.InjectorOpts{
-		Logf: func(format string, args ...any) {
-			fmt.Printf("[DI] "+format+"\n", args...)
-		},
+		Logger:             slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		HealthCheckTimeout: 5 * time.Second,
 	})
 
@@ -92,7 +122,7 @@ func main() {
 
 	doger.Provide(injector, func(i doger.Injector) (*Cache, error) {
 		return &Cache{
-			Data: make(map[string]interface{}),
+			Data: make(map[string]any),
 		}, nil
 	})
 

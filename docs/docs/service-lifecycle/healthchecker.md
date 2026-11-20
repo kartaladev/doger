@@ -30,9 +30,20 @@ injector.HealthCheckWithContext(context.Context) map[string]error
 // returns error on failure
 doger.HealthCheck[T any](doger.Injector) error
 doger.HealthCheckWithContext[T any](context.Context, doger.Injector) error
-doger.HealthCheckNamed[T any](doger.Injector, string) error
-doger.HealthCheckNamedWithContext[T any](context.Context, doger.Injector, string) error
+doger.HealthCheckNamed(doger.Injector, string) error
+doger.HealthCheckNamedWithContext(context.Context, doger.Injector, string) error
 ```
+
+## Extension scopes {#extension-scopes}
+
+A root health check covers only the root's own services: child scopes are not walked. The private scopes of installed extensions (`doger.Extend`) are the exception: their own services are checked too, keyed `<scope name>/<service name>`, for example `ext:redis/*redis.Pool`.
+
+So that each service is checked once:
+
+- an export from an extension scope is not checked in the root: its source is checked under the extension scope's key;
+- a default registration of an extension scope that yielded to an application service (`doger.AsDefault()`) is not checked: the application service is checked under its own name.
+
+Ordinary child scopes keep the root-only behavior, and a container without extensions checks exactly what it checked before.
 
 ## Healthchecker interfaces {#healthchecker-interfaces}
 
@@ -70,8 +81,6 @@ ctx := context.WithTimeout(10 * time.Second)
 i.HealthCheckWithContext(ctx)
 ```
 
-**Play: https://go.dev/play/p/ILV7UpAJDtc**
-
 ## Health check options {#health-check-options}
 
 The root scope can be created with health check parameters, for controlling parallelism or timeouts.
@@ -84,9 +93,12 @@ doger.InjectorOpts{
     // HealthCheckParallelism==1 will trigger sequential checks.
     HealthCheckParallelism    uint
 
-    // When many services are checked at the same time.
+    // When many services are checked at the same time: <= 0 is no global bound.
     HealthCheckGlobalTimeout: time.Duration
+    // Each service's check: 0 is the 10s default, < 0 is unbounded.
     HealthCheckTimeout:       time.Duration
+    // Single-service checks only: 0 keeps HealthCheckTimeout, < 0 is unbounded.
+    HealthCheckSingleTimeout: time.Duration
 }
 ```
 
@@ -112,6 +124,88 @@ _ = doger.MustInvoke[*MyPostgreSQLConnection](i)
 
 status := i.HealthCheckWithContext(ctx)
 // {
-//     "*github.com/samber/example.MyPostgreSQLConnection": "DI: health check timeout: context deadline exceeded",
+//     "*github.com/samber/example.MyPostgreSQLConnection": "doger: health check timeout: context deadline exceeded",
 // }
 ```
+
+## Timeouts and ended contexts {#timeouts-and-ended-contexts}
+
+The result of a health check does not depend on goroutine scheduling:
+
+- When the service has a health check and its context is done (cancelled, or past a deadline set by you or by the timeout options) by the time the result is observed, the result is the timeout error, whatever the check returned. This holds for single-service checks and for `injector.HealthCheck*`.
+- The timeout error matches `doger.ErrHealthCheckTimeout` and the context error with `errors.Is`. Its message is `doger: health check timeout: context canceled` or `doger: health check timeout: context deadline exceeded`.
+- A check that returns before its context ends keeps its own result.
+- A service without a health check (a value without a `HealthCheck` method, a lazy service not invoked yet, a transient service) always reports `nil`, even on an ended context.
+- `HealthCheckTimeout`, `HealthCheckSingleTimeout` and `HealthCheckGlobalTimeout` are measured on the injector's [clock](../container/options.md#clock). A check that ends exactly when one of these timeouts elapses is a timeout. A deadline you set on your own context counts when that context is done.
+
+### Single-service checks {#single-service-checks}
+
+`doger.HealthCheck[T]`, `HealthCheckWithContext[T]`, `HealthCheckNamed` and `HealthCheckNamedWithContext` are bounded by `HealthCheckTimeout`, exactly like each check of `injector.HealthCheck()`: with its default, 0, every check is bounded at 10s (`DefaultHealthReportCheckTimeout`), and a negative value leaves checks unbounded. `HealthCheckGlobalTimeout` does not apply to them, since they check a single service.
+
+To give them a different bound, set `HealthCheckSingleTimeout`: a positive value is their own bound, and a negative value leaves them unbounded. Its default, 0, keeps `HealthCheckTimeout` for them. The checks run by `injector.HealthCheck()` always use `HealthCheckTimeout`.
+
+```go
+i := doger.NewWithOpts(&doger.InjectorOpts{
+    HealthCheckTimeout:       100 * time.Millisecond, // each check of i.HealthCheck()
+    HealthCheckSingleTimeout: 2 * time.Second,        // HealthCheck[T], HealthCheckNamed and the other single-service checks
+})
+```
+
+```go
+i := doger.NewWithOpts(&doger.InjectorOpts{HealthCheckTimeout: 100 * time.Millisecond})
+
+err := doger.HealthCheckNamed(i, "db") // a check still running after 100ms times out
+```
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+cancel()
+
+err := doger.HealthCheckNamedWithContext(ctx, i, "db")
+errors.Is(err, doger.ErrHealthCheckTimeout) // true
+errors.Is(err, context.Canceled)            // true
+```
+
+## Health report JSON {#health-report-json}
+
+`HealthReport` and `ServiceHealth` marshal to JSON for monitoring endpoints, with lower-camel keys:
+
+```json
+{
+  "state": "unhealthy",
+  "phase": "ready",
+  "monitored": true,
+  "checkedAt": "2026-01-01T00:00:02Z",
+  "services": [
+    {
+      "service": {
+        "scopeId": "<scope id>",
+        "scopeName": "[root]",
+        "service": "db"
+      },
+      "tags": ["readiness"],
+      "optional": false,
+      "state": "unhealthy",
+      "error": "down",
+      "checkedAt": "2026-01-01T00:00:02Z",
+      "duration": "2s"
+    }
+  ]
+}
+```
+
+- `state` and `phase` are the names `HealthState.String()` and `ContainerPhase.String()` return (`unknown`, `healthy`, `degraded`, `unhealthy`; `idle`, `starting`, `started`, `ready`, `failed`, `closing`, `closed`). Both types implement `MarshalText` and `UnmarshalText`.
+- `error` is the error's message, omitted when the check passed.
+- `checkedAt` and `pendingSince` are RFC 3339 times, omitted when zero (no recorded result, no check in flight).
+- `duration` is a Go duration string, such as `"2s"` or `"0s"`.
+- `services` and `tags` are `[]`, never `null`.
+
+To serve another shape, map the exported fields yourself.
+
+### Testing timeouts with a fake clock {#testing-timeouts-with-a-fake-clock}
+
+Set `InjectorOpts.Clock` to a fake clock to reach `HealthCheckTimeout` or `HealthCheckGlobalTimeout` without waiting for it. See [Clock](../container/options.md#clock).
+
+:::caution
+On a fake clock, `ctx.Err()` blocks until the context is done. In a `HealthCheck(ctx)` method, wait on `<-ctx.Done()` instead of polling `ctx.Err()`.
+:::

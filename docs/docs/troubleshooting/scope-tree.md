@@ -16,8 +16,6 @@ doger.ExplainInjector(doger.Injector) doger.ExplainInjectorOutput
 
 ## Print scope tree {#print-scope-tree}
 
-**Play: https://go.dev/play/p/mRs4Q7TJ5jj**
-
 ```go
 debug := doger.ExplainInjector(scope)
 println(debug.String())

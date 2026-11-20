@@ -99,10 +99,10 @@ func TestShutdown(t *testing.T) {
 
 	instance, err = Invoke[test](i)
 	is.Empty(instance)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 
 	err = Shutdown[test](i)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 }
 
 func TestShutdownWithContext(t *testing.T) {
@@ -118,7 +118,7 @@ func TestShutdownWithContext(t *testing.T) {
 	is.NoError(ShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i))
 	_, _ = Invoke[*lazyTestShutdownerKOCtx](i)
 
-	is.EqualError(ShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i), "DI: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available")
+	is.EqualError(ShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i), "doger: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available")
 }
 
 func TestMustShutdown(t *testing.T) {
@@ -145,7 +145,7 @@ func TestMustShutdown(t *testing.T) {
 
 	instance, err = Invoke[test](i)
 	is.Empty(instance)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 
 	is.Panics(func() {
 		MustShutdown[test](i)
@@ -167,7 +167,7 @@ func TestMustShutdownWithContext(t *testing.T) {
 	})
 	_, _ = Invoke[*lazyTestShutdownerKOCtx](i)
 
-	is.PanicsWithError("DI: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available", func() {
+	is.PanicsWithError("doger: could not find service `*github.com/kartaladev/doger.lazyTestShutdownerKOCtx`, no service available", func() {
 		MustShutdownWithContext[*lazyTestShutdownerKOCtx](ctx, i)
 	})
 }
@@ -189,10 +189,10 @@ func TestShutdownNamed(t *testing.T) {
 
 	instance, err = InvokeNamed[int](i, "foobar")
 	is.Empty(instance)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 
 	err = ShutdownNamed(i, "foobar")
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 }
 
 func TestShutdownNamedWithContext(t *testing.T) {
@@ -208,7 +208,7 @@ func TestShutdownNamedWithContext(t *testing.T) {
 	is.NoError(ShutdownNamedWithContext(ctx, i, "foobar"))
 	_, _ = Invoke[*lazyTestShutdownerKOCtx](i)
 
-	is.EqualError(ShutdownNamedWithContext(ctx, i, "foobar"), "DI: could not find service `foobar`, no service available")
+	is.EqualError(ShutdownNamedWithContext(ctx, i, "foobar"), "doger: could not find service `foobar`, no service available")
 }
 
 func TestMustShutdownNamed(t *testing.T) {
@@ -229,7 +229,7 @@ func TestMustShutdownNamed(t *testing.T) {
 
 	instance, err = InvokeNamed[int](i, "foobar")
 	is.Empty(instance)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 
 	is.Panics(func() {
 		MustShutdownNamed(i, "foobar")
@@ -251,7 +251,7 @@ func TestMustShutdownNamedWithContext(t *testing.T) {
 	})
 	_, _ = InvokeNamed[*lazyTestShutdownerKOCtx](i, "foobar")
 
-	is.PanicsWithError("DI: could not find service `foobar`, no service available", func() {
+	is.PanicsWithError("doger: could not find service `foobar`, no service available", func() {
 		MustShutdownNamedWithContext(ctx, i, "foobar")
 	})
 }
@@ -270,23 +270,49 @@ func TestDoubleInjection(t *testing.T) {
 		})
 	})
 
-	is.PanicsWithError("DI: service `*github.com/kartaladev/doger.test` has already been declared", func() {
-		Provide(i, func(i Injector) (*test, error) {
-			return &test{}, nil
+	const declared = "doger: service `*github.com/kartaladev/doger.test` has already been declared"
+
+	// the rows run in order on the same injector, each redeclaring *test
+	tests := []struct {
+		name    string
+		provide func()
+		message string
+	}{
+		{
+			name: "Provide",
+			provide: func() {
+				Provide(i, func(i Injector) (*test, error) {
+					return &test{}, nil
+				})
+			},
+			message: declared,
+		},
+		{
+			name:    "ProvideValue",
+			provide: func() { ProvideValue(i, &test{}) },
+			message: declared,
+		},
+		{
+			name: "ProvideNamed",
+			provide: func() {
+				ProvideNamed(i, "*github.com/kartaladev/doger.test", func(i Injector) (*test, error) {
+					return &test{}, nil
+				})
+			},
+			message: declared,
+		},
+		{
+			name:    "ProvideNamedValue",
+			provide: func() { ProvideNamedValue(i, "*github.com/kartaladev/doger.test", &test{}) },
+			message: declared,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := assert.New(t)
+
+			is.PanicsWithError(tt.message, tt.provide)
 		})
-	})
-
-	is.PanicsWithError("DI: service `*github.com/kartaladev/doger.test` has already been declared", func() {
-		ProvideValue(i, &test{})
-	})
-
-	is.PanicsWithError("DI: service `*github.com/kartaladev/doger.test` has already been declared", func() {
-		ProvideNamed(i, "*github.com/kartaladev/doger.test", func(i Injector) (*test, error) {
-			return &test{}, nil
-		})
-	})
-
-	is.PanicsWithError("DI: service `*github.com/kartaladev/doger.test` has already been declared", func() {
-		ProvideNamedValue(i, "*github.com/kartaladev/doger.test", &test{})
-	})
+	}
 }

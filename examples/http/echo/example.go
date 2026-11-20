@@ -7,8 +7,7 @@ import (
 /**
  * Wheel
  */
-type Wheel struct {
-}
+type Wheel struct{}
 
 func (e *Wheel) Shutdown() error {
 	return nil
@@ -17,8 +16,7 @@ func (e *Wheel) Shutdown() error {
 /**
  * Engine
  */
-type Engine struct {
-}
+type Engine struct{}
 
 func (e *Engine) HealthCheck() error {
 	return nil

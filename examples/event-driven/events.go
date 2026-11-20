@@ -4,10 +4,17 @@ import (
 	"time"
 )
 
+// The event types this example publishes and handles.
+const (
+	EventUserCreated      = "user.created"
+	EventOrderCreated     = "order.created"
+	EventPaymentProcessed = "payment.processed"
+)
+
 // Event represents a generic event.
 type Event struct {
 	Type      string
-	Data      interface{}
+	Data      any
 	Timestamp time.Time
 }
 

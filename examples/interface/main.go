@@ -20,8 +20,8 @@ func main() {
 	doger.Provide(injector, NewEngine)
 
 	// magic happens here
-	_ = doger.As[*carImplem, Car](injector)
-	_ = doger.As[*engineImplem, Engine](injector)
+	_ = doger.Alias[*carImplem, Car](injector)
+	_ = doger.Alias[*engineImplem, Engine](injector)
 
 	// start car
 	car := doger.MustInvoke[Car](injector)
