@@ -556,10 +556,6 @@ func compareServiceDescriptions(a, b ServiceDescription) int {
 	)
 }
 
-// mergeShutdownReports merges multiple ShutdownReport values into a single report.
-// Services and ServiceShutdownTime are merged, and Errors are combined.
-// Succeed is true only if all reports succeeded and no errors are present.
-// ShutdownTime is the sum of individual report times.
 // appendShutdownReport adds r to dst in place, as mergeShutdownReports(dst,
 // r) would, without copying what dst already holds.
 func appendShutdownReport(dst, r *ShutdownReport) {
@@ -574,6 +570,10 @@ func appendShutdownReport(dst, r *ShutdownReport) {
 	dst.Succeed = len(dst.Errors) == 0
 }
 
+// mergeShutdownReports merges multiple ShutdownReport values into a single report.
+// Services and ServiceShutdownTime are merged, and Errors are combined.
+// Succeed is true only if all reports succeeded and no errors are present.
+// ShutdownTime is the sum of individual report times.
 func mergeShutdownReports(reports ...*ShutdownReport) *ShutdownReport {
 	out := ShutdownReport{
 		Succeed:             true,
