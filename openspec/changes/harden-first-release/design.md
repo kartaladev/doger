@@ -396,7 +396,7 @@ Hot paths and the tests that cover them:
 | Root health check reports the exported service | export_test.go: TestExport_RootHealthCheck (existing) | unit |
 | A health check from the source scope checks the exported service once | export_test.go: TestExport_SourceScopeHealthCheck (existing) | table |
 | Collection membership of an export | export_test.go: TestExport_CollectionMembership (existing) | table |
-| InvokeAs in the parent finds the export | export_test.go: TestExport_InvokeAsFindsExport | unit |
+| InvokeAs in the parent finds the export | export_test.go: TestExport_InvokeAs | unit |
 | A provider does not select its own export by type | export_test.go: TestExport_InvokeAsSkipsOwnExport (existing) | table |
 | Concurrent resolution of a cycle returns ErrCircularDependency | concurrent_resolution_test.go: TestConcurrentResolution_CycleReturnsError | race, goleak, table |
 | A cycle through a declared dependency is detected concurrently | concurrent_resolution_test.go: TestConcurrentResolution_DeclaredDependencyCycle | race |
