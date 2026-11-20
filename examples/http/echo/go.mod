@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
 	github.com/kartaladev/doger/http/echo v0.0.0-00010101000000-000000000000
-	github.com/labstack/echo/v4 v4.16.2
+	github.com/labstack/echo/v4 v4.16.5
 )
 
 require (
