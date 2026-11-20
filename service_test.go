@@ -99,9 +99,11 @@ func TestInferServiceInfo(t *testing.T) {
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
-	// Test with lazy service
-	i := New()
+	// Test with lazy service; its build takes 1ms on the container clock
+	clock := newFakeClock()
+	i := NewWithOpts(&InjectorOpts{Clock: clock})
 	Provide(i, func(i Injector) (*lazyTestHeathcheckerOK, error) {
+		clock.Advance(time.Millisecond)
 		return &lazyTestHeathcheckerOK{foobar: "foobar"}, nil
 	})
 
@@ -120,9 +122,9 @@ func TestInferServiceInfo(t *testing.T) {
 	is.True(ok2)
 	is.Equal("*github.com/kartaladev/doger.lazyTestHeathcheckerOK", info2.name)
 	is.Equal(ServiceTypeLazy, info2.serviceType)
-	is.Positive(info2.serviceBuildTime) // Should have build time now
-	is.True(info2.healthchecker)        // Should be healthchecker now
-	is.False(info2.shutdowner)          // Not a shutdowner
+	is.Equal(time.Millisecond, info2.serviceBuildTime) // Should have build time now
+	is.True(info2.healthchecker)                       // Should be healthchecker now
+	is.False(info2.shutdowner)                         // Not a shutdowner
 
 	// Test with eager service
 	i2 := New()

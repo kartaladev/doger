@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // stuckShutdowner blocks in Shutdown until release is closed, ignoring its
@@ -563,5 +564,172 @@ func TestShutdownContext_EagerDependsOnAfterShutdown(t *testing.T) {
 		is.Nil(got.pool, "a shut-down eager value is not handed out")
 		is.ErrorIs(got.err, ErrShutdown)
 		root.Shutdown()
+	})
+}
+
+// namedConn counts its Shutdown calls.
+type namedConn struct{ calls *atomic.Int32 }
+
+func (c *namedConn) Shutdown() error { c.calls.Add(1); return nil }
+
+func TestShutdownContext_ShutdownNamedBoundedInFlight(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		self bool // the provider shuts its own service down
+	}{
+		{name: "other_goroutine"},
+		{name: "provider_shuts_itself_down", self: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				root := New()
+				release := make(chan struct{})
+				var calls atomic.Int32
+				type shutdownResult struct {
+					err  error
+					took time.Duration
+				}
+				done := make(chan shutdownResult, 1)
+				ProvideNamed(root, "conn", func(i Injector) (*namedConn, error) {
+					if tt.self {
+						ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+						defer cancel()
+						start := time.Now()
+						err := ShutdownNamedWithContext(ctx, i, "conn")
+						done <- shutdownResult{err, time.Since(start)}
+						return &namedConn{calls: &calls}, nil
+					}
+					<-release
+					return &namedConn{calls: &calls}, nil
+				})
+				g := make(chan error, 1)
+				go func() { _, err := InvokeNamed[*namedConn](root, "conn"); g <- err }()
+
+				if !tt.self {
+					synctest.Wait() // G is blocked in the provider
+					ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+					defer cancel()
+					go func() {
+						start := time.Now()
+						err := ShutdownNamedWithContext(ctx, root, "conn")
+						done <- shutdownResult{err, time.Since(start)}
+					}()
+				}
+
+				var got shutdownResult
+				select {
+				case got = <-done:
+				case <-time.After(10 * time.Second):
+					got.took = -1
+				}
+				close(release)
+				if got.took < 0 {
+					got = <-done
+					got.took = -1
+				}
+				gErr := <-g
+				synctest.Wait()
+
+				is.Equal(50*time.Millisecond, got.took, "returned at its deadline")
+				is.ErrorIs(got.err, context.DeadlineExceeded)
+				is.ErrorIs(gErr, ErrShutdown)
+				is.Equal(int32(1), calls.Load(), "the late instance is shut down once")
+				root.Shutdown()
+			})
+		})
+	}
+}
+
+// sickCheck always reports unhealthy.
+type sickCheck struct{}
+
+func (sickCheck) HealthCheck() error { return errors.New("sick") }
+
+func TestShutdownContext_HealthHookDuringBoundedShutdown(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		release := make(chan struct{})
+		var calls atomic.Int32
+		scheduler := &manualScheduler{}
+		root := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler, HookContainerHealthChanged: []func(*RootScope, HealthState, HealthState){
+			func(*RootScope, HealthState, HealthState) {
+				if calls.Add(1) > 1 {
+					<-release // the change the tenant's removal causes
+				}
+			},
+		}})
+		tenant := root.Scope("tenant")
+		ProvideNamedValue(tenant, "h", sickCheck{})
+		require.NoError(t, root.Start())
+		scheduler.runRound()
+		synctest.Wait()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		start := time.Now()
+		done := make(chan *ShutdownReport, 1)
+		go func() { done <- tenant.ShutdownWithContext(ctx) }()
+		took := time.Duration(-1)
+		select {
+		case <-done:
+			took = time.Since(start)
+		case <-time.After(10 * time.Second):
+		}
+		close(release)
+		if took < 0 {
+			<-done
+		}
+		synctest.Wait()
+
+		is.GreaterOrEqual(took, time.Duration(0), "the shutdown returned before the hook was released")
+		is.LessOrEqual(took, 50*time.Millisecond)
+		root.Shutdown()
+	})
+}
+
+// boomShutdowner panics in Shutdown.
+type boomShutdowner struct{}
+
+func (boomShutdowner) Shutdown() error { panic("fallback-boom") }
+
+func TestShutdownContext_FallbackLatePanicLogged(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		recorder := newLogRecorder(slog.LevelDebug)
+		root := NewWithOpts(&InjectorOpts{Logger: recorder.logger()})
+		release := make(chan struct{})
+		ProvideNamed(root, "conn", func(Injector) (boomShutdowner, error) { <-release; return boomShutdowner{}, nil })
+		g := make(chan error, 1)
+		go func() { _, err := InvokeNamed[boomShutdowner](root, "conn"); g <- err }()
+		synctest.Wait()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // the shutdown reaches "conn" after its context ended
+
+		root.ShutdownWithContext(ctx)
+		close(release)
+		gErr := <-g
+		synctest.Wait()
+
+		is.ErrorIs(gErr, ErrShutdown)
+		recovered := recorder.withMessage("panic recovered")
+		if is.Len(recovered, 1, "records: %v", recorder.all()) {
+			is.Equal("service-shutdown", recovered[0].attrs["point"])
+			is.Equal("conn", recovered[0].attrs["service"])
+		}
+		is.Len(recorder.containing("fallback-boom"), 1, "the value, at Debug only")
 	})
 }

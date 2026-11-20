@@ -1760,7 +1760,7 @@ func TestHealthCheck_GoexitDoesNotWedge(t *testing.T) {
 
 				first := tt.entry(t, i)
 				is.ErrorIs(first, ErrHealthCheckPanic)
-				if is.Error(first) {
+				if is.ErrorIs(first, ErrHealthCheckPanic) {
 					is.True(strings.HasSuffix(first.Error(), healthRunTestGoexitSuffix), "first: %v", first)
 				}
 				is.NoError(tt.entry(t, i), "second call")
@@ -1799,7 +1799,7 @@ func TestHealthCheck_GoexitAllWaiters(t *testing.T) {
 		for range waiters {
 			err := <-results
 			is.ErrorIs(err, ErrHealthCheckPanic)
-			if is.Error(err) {
+			if is.ErrorIs(err, ErrHealthCheckPanic) {
 				is.True(strings.HasSuffix(err.Error(), healthRunTestGoexitSuffix), "got %v", err)
 			}
 		}

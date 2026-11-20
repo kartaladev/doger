@@ -716,7 +716,7 @@ func TestLogging_HealthCheckStarted(t *testing.T) {
 				ProvideNamedValue(root, "db", check)
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				assert.Error(t, HealthCheckNamedWithContext(ctx, root, "db"))
+				assert.ErrorIs(t, HealthCheckNamedWithContext(ctx, root, "db"), ErrHealthCheckTimeout)
 				return "[root]", "db", ""
 			},
 			count: 0,

@@ -1215,7 +1215,8 @@ func (s *Scope) shutdownServiceOf(ctx context.Context, name string, panics *shut
 }
 
 // takeService removes the service name from s for its shutdown, or returns
-// an error matching ErrServiceNotFound.
+// an error matching ErrServiceNotFound. It runs no user code: forgetting
+// the service, which may run health hooks, is shutdownTaken's.
 func (s *Scope) takeService(name string) (any, error) {
 	s.mu.Lock()
 	serviceAny, ok := s.removeLocked(name)
@@ -1224,14 +1225,15 @@ func (s *Scope) takeService(name string) (any, error) {
 	if !ok {
 		return nil, serviceNotFound(s, ErrServiceNotFound, []string{name})
 	}
-	s.RootScope().forget(serviceAny)
 
 	return serviceAny, nil
 }
 
-// shutdownTaken shuts down serviceAny, the service name takeService removed
-// from s, with its hooks.
+// shutdownTaken forgets serviceAny, the service name takeService removed
+// from s, then shuts it down with its hooks.
 func (s *Scope) shutdownTaken(ctx context.Context, name string, serviceAny any, panics *shutdownPanics) error {
+	s.RootScope().forget(serviceAny)
+
 	service, ok := serviceAny.(serviceWrapperShutdown)
 	if !ok {
 		// Should never happen.

@@ -38,15 +38,15 @@ There is no `Stop` counterpart: a started service is stopped by its [`Shutdown` 
 
 With zero configuration, `Start` starts **only the services registered with `doger.AsStarter()`**, whatever methods their types have. A type with a familiar `Start` method, such as `*exec.Cmd` or `*httptest.Server`, is never started by surprise.
 
-| Registration                                        | Started                                           |
-| --------------------------------------------------- | ------------------------------------------------- |
-| Lazy or eager, with `AsStarter()`                   | yes                                               |
-| Lazy or eager, without `AsStarter()`                | no, unless auto-detection is on (below)           |
-| Under an interface type without `Start`, with `AsStarter()` | yes; the instance is checked when `Start` runs |
-| Transient                                           | never (a factory has no single instance to start) |
-| Alias (`Alias`, `Bind`)                             | no; the target is started once                    |
-| Default (`AsDefault()`) that yields                 | no; the service it yields to is started once      |
-| Default (`AsDefault()`) that does not yield         | as the same registration without `AsDefault()`    |
+| Registration                                                | Started                                           |
+| ----------------------------------------------------------- | ------------------------------------------------- |
+| Lazy or eager, with `AsStarter()`                           | yes                                               |
+| Lazy or eager, without `AsStarter()`                        | no, unless auto-detection is on (below)           |
+| Under an interface type without `Start`, with `AsStarter()` | yes; the instance is checked when `Start` runs    |
+| Transient                                                   | never (a factory has no single instance to start) |
+| Alias (`Alias`, `Bind`)                                     | no; the target is started once                    |
+| Default (`AsDefault()`) that yields                         | no; the service it yields to is started once      |
+| Default (`AsDefault()`) that does not yield                 | as the same registration without `AsDefault()`    |
 
 ```go
 // The interface has no Start method: the instance is checked at Start.

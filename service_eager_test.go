@@ -358,8 +358,8 @@ func TestServiceEager_healthcheck(t *testing.T) {
 	// healthcheck ko
 	service3 := newServiceEager("foobar", &eagerTestHeathcheckerKO{foobar: "foobar"})
 	err3 := service3.healthcheck(ctx)
-	is.Error(err3)
-	is.Error(err3)
+	is.ErrorIs(err3, assert.AnError)
+	is.ErrorIs(err3, assert.AnError)
 	is.Equal(err3, assert.AnError)
 
 	// Test with canceled context
@@ -402,7 +402,7 @@ func TestServiceEager_healthcheck(t *testing.T) {
 				is.NoError(err)
 				return
 			}
-			is.Error(err)
+			is.ErrorIs(err, tt.wantErr)
 			is.Equal(tt.wantErr, err)
 		})
 	}
@@ -439,8 +439,8 @@ func TestServiceEager_shutdown(t *testing.T) {
 	// shutdown ko
 	service3 := newServiceEager("foobar", &eagerTestShutdownerKO{foobar: "foobar"})
 	err3 := service3.shutdown(ctx)
-	is.Error(err3)
-	is.Error(err3)
+	is.ErrorIs(err3, assert.AnError)
+	is.ErrorIs(err3, assert.AnError)
 	is.Equal(err3, assert.AnError)
 
 	// Test with canceled context
@@ -492,7 +492,7 @@ func TestServiceEager_shutdown(t *testing.T) {
 				is.NoError(err)
 				return
 			}
-			is.Error(err)
+			is.ErrorIs(err, tt.wantErr)
 			is.Equal(tt.wantErr, err)
 		})
 	}

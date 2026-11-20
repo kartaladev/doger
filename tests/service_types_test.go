@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -32,13 +33,15 @@ func TestMixedServiceTypesComplexDependencies(t *testing.T) {
 		return "lazy-" + eagerVal, nil
 	})
 
-	// Transient service that depends on lazy service
+	// Transient service that depends on lazy service; each build is numbered
+	// (a timestamp can repeat on a coarse clock, as on Windows)
+	var builds atomic.Int64
 	doger.ProvideNamedTransient(root, "transient-dependent", func(i doger.Injector) (string, error) {
 		lazyVal, err := doger.InvokeNamed[string](i, "lazy-dependent")
 		if err != nil {
 			return "", err
 		}
-		return "transient-" + lazyVal + "-" + fmt.Sprintf("%d", time.Now().UnixNano()), nil
+		return "transient-" + lazyVal + "-" + fmt.Sprintf("%d", builds.Add(1)), nil
 	})
 
 	// Alias service that points to transient service
@@ -54,7 +57,7 @@ func TestMixedServiceTypesComplexDependencies(t *testing.T) {
 	is.NoError(err)
 	is.Contains(result2, "transient-lazy-eager-base-value")
 
-	// Transient services should return different values (due to timestamp)
+	// Transient services return a new value on every invocation
 	is.NotEqual(result1, result2)
 }
 

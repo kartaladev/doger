@@ -51,8 +51,8 @@ An alias of a default (`Alias`, `Bind`) resolves through the default's decision.
 | ------------------- | ------------------------------------ | ------------------------------------------------------------------------ |
 | a default           | an explicit registration of the name | the explicit one replaces the default, keeping its registration position |
 | an explicit service | a default of the name                | the default is skipped, silently                                         |
-| a default, resolved | an explicit registration of the name | panics: ``doger: service `...` has already been declared``                      |
-| a default           | a second default of the name         | panics: ``doger: service `...` has already been declared``                      |
+| a default, resolved | an explicit registration of the name | panics: ``doger: service `...` has already been declared``               |
+| a default           | a second default of the name         | panics: ``doger: service `...` has already been declared``               |
 
 An instance a default built is never silently dropped: once resolved, it can only be replaced with `Override*`.
 

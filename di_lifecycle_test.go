@@ -99,10 +99,10 @@ func TestShutdown(t *testing.T) {
 
 	instance, err = Invoke[test](i)
 	is.Empty(instance)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 
 	err = Shutdown[test](i)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 }
 
 func TestShutdownWithContext(t *testing.T) {
@@ -145,7 +145,7 @@ func TestMustShutdown(t *testing.T) {
 
 	instance, err = Invoke[test](i)
 	is.Empty(instance)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 
 	is.Panics(func() {
 		MustShutdown[test](i)
@@ -189,10 +189,10 @@ func TestShutdownNamed(t *testing.T) {
 
 	instance, err = InvokeNamed[int](i, "foobar")
 	is.Empty(instance)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 
 	err = ShutdownNamed(i, "foobar")
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 }
 
 func TestShutdownNamedWithContext(t *testing.T) {
@@ -229,7 +229,7 @@ func TestMustShutdownNamed(t *testing.T) {
 
 	instance, err = InvokeNamed[int](i, "foobar")
 	is.Empty(instance)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 
 	is.Panics(func() {
 		MustShutdownNamed(i, "foobar")

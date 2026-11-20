@@ -30,7 +30,7 @@ func TestInvokeAnyByName(t *testing.T) {
 
 	// service not found
 	svc, err = invokeAnyByName(i, "not_found")
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.Empty(svc)
 	is.Contains(err.Error(), "doger: could not find service `not_found`, available services: ")
 
@@ -60,7 +60,7 @@ func TestInvokeAnyByName(t *testing.T) {
 	vs := newVirtualScope(i, []string{"foo", "bar"})
 
 	svc, err = invokeAnyByName(vs, "foo")
-	is.Error(err)
+	is.ErrorIs(err, ErrCircularDependency)
 
 	is.Empty(svc)
 	is.ErrorIs(err, ErrCircularDependency)
@@ -80,7 +80,7 @@ func TestInvokeAnyByName(t *testing.T) {
 		return "", assert.AnError
 	})
 	svc, err = invokeAnyByName(i, "provider-error")
-	is.Error(err)
+	is.ErrorAs(err, new(*ServiceError))
 	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-error", Err: assert.AnError}, err)
 	is.Empty(svc)
 
@@ -89,7 +89,7 @@ func TestInvokeAnyByName(t *testing.T) {
 		panic("test panic")
 	})
 	svc, err = invokeAnyByName(i, "provider-panic-string")
-	is.Error(err)
+	is.ErrorIs(err, ErrProviderPanic)
 	is.EqualError(err, `doger: service "provider-panic-string" in scope "[root]": provider panicked: test panic`)
 	is.Empty(svc)
 
@@ -98,7 +98,7 @@ func TestInvokeAnyByName(t *testing.T) {
 		panic(assert.AnError)
 	})
 	svc, err = invokeAnyByName(i, "provider-panic-error")
-	is.Error(err)
+	is.ErrorIs(err, ErrProviderPanic)
 	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-panic-error", Err: libErrorf("%w: %w", ErrProviderPanic, assert.AnError)}, err)
 	is.Empty(svc)
 
@@ -158,7 +158,7 @@ func TestInvokeByName(t *testing.T) {
 
 	// service not found
 	svc, err = invokeByName[string](i, "not_found")
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.Empty(svc)
 	is.Contains(err.Error(), "doger: could not find service `not_found`, available services: ")
 
@@ -188,7 +188,7 @@ func TestInvokeByName(t *testing.T) {
 	vs := newVirtualScope(i, []string{"foo", "bar"})
 
 	svc, err = invokeByName[string](vs, "foo")
-	is.Error(err)
+	is.ErrorIs(err, ErrCircularDependency)
 
 	is.Empty(svc)
 	is.ErrorIs(err, ErrCircularDependency)
@@ -200,7 +200,7 @@ func TestInvokeByName(t *testing.T) {
 	})
 	// Try to invoke as string when it's actually int
 	svc, err = invokeByName[string](i, "type-mismatch")
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceTypeMismatch)
 	is.EqualError(err, "doger: service found, but type mismatch: invoking `string` but registered `int`")
 	is.Empty(svc)
 
@@ -209,7 +209,7 @@ func TestInvokeByName(t *testing.T) {
 		return "", assert.AnError
 	})
 	svc, err = invokeByName[string](i, "provider-error")
-	is.Error(err)
+	is.ErrorAs(err, new(*ServiceError))
 	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-error", Err: assert.AnError}, err)
 	is.Empty(svc)
 
@@ -218,7 +218,7 @@ func TestInvokeByName(t *testing.T) {
 		panic("test panic")
 	})
 	svc, err = invokeByName[string](i, "provider-panic-string")
-	is.Error(err)
+	is.ErrorIs(err, ErrProviderPanic)
 	is.EqualError(err, `doger: service "provider-panic-string" in scope "[root]": provider panicked: test panic`)
 	is.Empty(svc)
 
@@ -227,7 +227,7 @@ func TestInvokeByName(t *testing.T) {
 		panic(assert.AnError)
 	})
 	svc, err = invokeByName[string](i, "provider-panic-error")
-	is.Error(err)
+	is.ErrorIs(err, ErrProviderPanic)
 	is.Equal(&ServiceError{Scope: "[root]", Service: "provider-panic-error", Err: libErrorf("%w: %w", ErrProviderPanic, assert.AnError)}, err)
 	is.Empty(svc)
 
@@ -293,7 +293,7 @@ func TestInvokeByGenericType(t *testing.T) {
 	// service not found
 	svcX, err := invokeByGenericType[string](i)
 	is.Empty(svcX)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotMatch)
 	is.Contains(err.Error(), "doger: could not find service satisfying interface `string`, available services: `*github.com/kartaladev/doger.lazyTest`")
 
 	// test virtual scope wrapper
@@ -322,7 +322,7 @@ func TestInvokeByGenericType(t *testing.T) {
 	vs := newVirtualScope(i, []string{"*github.com/kartaladev/doger.eagerTest", "bar"})
 	var svc1 *eagerTest
 	svc1, err = invokeByGenericType[*eagerTest](vs)
-	is.Error(err)
+	is.ErrorIs(err, ErrCircularDependency)
 
 	is.Empty(svc1)
 	is.ErrorIs(err, ErrCircularDependency)
@@ -332,7 +332,7 @@ func TestInvokeByGenericType(t *testing.T) {
 	// Test service not found for interface
 	svc4, err := invokeByGenericType[Healthchecker](i)
 	is.Empty(svc4)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotMatch)
 	is.Contains(err.Error(), "doger: could not find service satisfying interface `github.com/kartaladev/doger.Healthchecker`")
 
 	// Test provider error with different service type
@@ -564,7 +564,7 @@ func TestInvokeByTags_ImplicitAliasing_FallbackOnNotFound(t *testing.T) {
 
 	s := foobar{}
 	err := invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.Equal("doger: could not find service `github.com/kartaladev/doger.Healthchecker`, no service available", err.Error())
 	is.Nil(s.Dep)
 
@@ -612,7 +612,7 @@ func TestInvokeByTags_ImplicitAliasing_NoFallbackOnOtherErrors(t *testing.T) {
 
 	s := foobar{}
 	err := invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.Equal("doger: could not find service `bad`, available services: `*github.com/kartaladev/doger.lazyTestHeathcheckerOK`", err.Error())
 	is.Nil(s.Dep)
 
@@ -624,7 +624,7 @@ func TestInvokeByTags_ImplicitAliasing_NoFallbackOnOtherErrors(t *testing.T) {
 
 	s = foobar{}
 	err = invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
-	is.Error(err)
+	is.ErrorIs(err, ErrStructInjection)
 	is.Equal("doger: `bad` is not assignable to field `*foobar.Dep`", err.Error())
 	is.Nil(s.Dep)
 
@@ -636,7 +636,7 @@ func TestInvokeByTags_ImplicitAliasing_NoFallbackOnOtherErrors(t *testing.T) {
 
 	s = foobar{}
 	err = invokeByTags(i, "*foobar", reflect.ValueOf(&s), true)
-	is.Error(err)
+	is.ErrorAs(err, new(*ServiceError))
 	is.Equal(`doger: service "bad" in scope "[root]": boom`, err.Error())
 	is.Nil(s.Dep)
 }
@@ -655,12 +655,12 @@ func TestServiceNotFound(t *testing.T) {
 	child3 := child2a.Scope("child3")
 
 	err := serviceNotFound(child1, ErrServiceNotFound, []string{"not-found"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorIs(err, ErrServiceNotFound)
 	is.EqualError(err, "doger: could not find service `not-found`, no service available")
 
 	err = serviceNotFound(child1, ErrServiceNotFound, []string{"not-found1", "not-found2"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorIs(err, ErrServiceNotFound)
 	is.EqualError(err, "doger: could not find service `not-found2`, no service available, path: `not-found1` -> `not-found2`")
 
@@ -672,12 +672,12 @@ func TestServiceNotFound(t *testing.T) {
 	child3.serviceSet("child3-a", newServiceLazy("child3-a", func(i Injector) (int, error) { return 5, nil }))
 
 	err = serviceNotFound(child1, ErrServiceNotFound, []string{"not-found"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorIs(err, ErrServiceNotFound)
 	is.EqualError(err, "doger: could not find service `not-found`, available services: `child1-a`, `root-a`")
 
 	err = serviceNotFound(child1, ErrServiceNotFound, []string{"not-found1", "not-found2"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorIs(err, ErrServiceNotFound)
 	is.EqualError(err, "doger: could not find service `not-found2`, available services: `child1-a`, `root-a`, path: `not-found1` -> `not-found2`")
 
@@ -688,7 +688,7 @@ func TestServiceNotFound(t *testing.T) {
 	rootScope.serviceSet("m-service", newServiceLazy("m-service", func(i Injector) (int, error) { return 12, nil }))
 
 	err = serviceNotFound(rootScope, ErrServiceNotFound, []string{"not-found"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorIs(err, ErrServiceNotFound)
 	// Services should be sorted alphabetically
 	is.Contains(err.Error(), "available services: `a-service`, `m-service`, `root-a`, `z-service`")
@@ -698,7 +698,7 @@ func TestServiceNotFound(t *testing.T) {
 	child1.serviceSet("b-service", newServiceLazy("b-service", func(i Injector) (int, error) { return 14, nil }))
 
 	err = serviceNotFound(child1, ErrServiceNotFound, []string{"not-found"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorIs(err, ErrServiceNotFound)
 	// Services should be listed (order may vary due to sorting)
 	errorMsg := err.Error()
@@ -716,7 +716,7 @@ func TestServiceNotFound(t *testing.T) {
 	rootScope.serviceSet("Service3", newServiceLazy("Service3", func(i Injector) (int, error) { return 17, nil }))
 
 	err = serviceNotFound(rootScope, ErrServiceNotFound, []string{"not-found"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorIs(err, ErrServiceNotFound)
 	// Services should be sorted with numbers, underscores, hyphens, and case sensitivity
 	is.Contains(err.Error(), "available services: `Service3`, `a-service`, `m-service`, `root-a`, `service-1`, `service_2`, `z-service`")
@@ -724,13 +724,13 @@ func TestServiceNotFound(t *testing.T) {
 	// Test empty injector
 	emptyInjector := New()
 	err = serviceNotFound(emptyInjector, ErrServiceNotFound, []string{"not-found"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.ErrorIs(err, ErrServiceNotFound)
 	is.EqualError(err, "doger: could not find service `not-found`, no service available")
 
 	// Test with different error types
 	err = serviceNotFound(child1, ErrServiceNotMatch, []string{"not-found"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotMatch)
 	is.ErrorIs(err, ErrServiceNotMatch)
 	is.Contains(err.Error(), "doger: could not find service satisfying interface `not-found`")
 
@@ -738,14 +738,14 @@ func TestServiceNotFound(t *testing.T) {
 	longName := "very-long-service-name-that-exceeds-normal-length-limits-for-testing-purposes"
 	rootScope.serviceSet(longName, newServiceLazy(longName, func(i Injector) (int, error) { return 18, nil }))
 	err = serviceNotFound(rootScope, ErrServiceNotFound, []string{"not-found"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.Contains(err.Error(), longName)
 
 	// Test with unicode service names
 	unicodeName := "service-测试-unicode"
 	rootScope.serviceSet(unicodeName, newServiceLazy(unicodeName, func(i Injector) (int, error) { return 19, nil }))
 	err = serviceNotFound(rootScope, ErrServiceNotFound, []string{"not-found"})
-	is.Error(err)
+	is.ErrorIs(err, ErrServiceNotFound)
 	is.Contains(err.Error(), unicodeName)
 }
 

@@ -178,7 +178,11 @@ errors.Is(err, context.Canceled)            // true
   "checkedAt": "2026-01-01T00:00:02Z",
   "services": [
     {
-      "service": {"scopeId": "<scope id>", "scopeName": "[root]", "service": "db"},
+      "service": {
+        "scopeId": "<scope id>",
+        "scopeName": "[root]",
+        "service": "db"
+      },
       "tags": ["readiness"],
       "optional": false,
       "state": "unhealthy",

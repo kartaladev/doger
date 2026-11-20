@@ -60,12 +60,16 @@ func TestExplain_ConcurrentWithLazyBuild(t *testing.T) {
 			is := assert.New(t)
 			must := require.New(t)
 
-			root := New()
+			// the build takes 1ms on the container clock: a fast build on a
+			// coarse real clock (Windows) can measure 0
+			clock := newFakeClock()
+			root := NewWithOpts(&InjectorOpts{Clock: clock})
 			started := make(chan struct{})
 			release := make(chan struct{})
 			ProvideNamed(root, "slow", func(Injector) (string, error) {
 				close(started)
 				<-release
+				clock.Advance(time.Millisecond)
 				return "slow-instance", nil
 			})
 
@@ -229,7 +233,7 @@ func TestExplain_RetryRecordsEdgeOnce(t *testing.T) {
 	})
 
 	_, err := InvokeNamed[*explainEdgeA](root, "a")
-	must.Error(err)
+	must.ErrorAs(err, new(*ServiceError))
 	for range 2 {
 		_, err = InvokeNamed[*explainEdgeA](root, "a")
 		must.NoError(err)

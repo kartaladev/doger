@@ -382,7 +382,7 @@ func TestServiceLazy_getInstanceAny(t *testing.T) {
 
 			is.NotPanics(func() {
 				instance, err := tt.service.getInstanceAny(i)
-				is.Error(err)
+				is.ErrorAs(err, new(*ServiceError))
 				is.Empty(instance)
 				is.Equal(tt.wantErr, err)
 			})
@@ -447,7 +447,7 @@ func TestServiceLazy_getInstance(t *testing.T) {
 
 			is.NotPanics(func() {
 				instance, err := tt.service.getInstance(i)
-				is.Error(err)
+				is.ErrorAs(err, new(*ServiceError))
 				is.Empty(instance)
 				is.Equal(tt.wantErr, err)
 			})
@@ -468,10 +468,15 @@ func TestServiceLazy_build(t *testing.T) {
 
 	test := lazyTest{foobar: "foobar"}
 
+	// each successful provider takes 1ms on the container clock: a fast
+	// build on a coarse real clock (Windows) can measure 0
+	clock := newFakeClock()
 	provider1 := func(i Injector) (int, error) {
+		clock.Advance(time.Millisecond)
 		return 42, nil
 	}
 	provider2 := func(i Injector) (lazyTest, error) {
+		clock.Advance(time.Millisecond)
 		return test, nil
 	}
 	provider3 := func(i Injector) (int, error) {
@@ -484,7 +489,7 @@ func TestServiceLazy_build(t *testing.T) {
 		return 42, fmt.Errorf("error")
 	}
 
-	i := New()
+	i := NewWithOpts(&InjectorOpts{Clock: clock})
 
 	tests := []struct {
 		name    string
@@ -507,7 +512,7 @@ func TestServiceLazy_build(t *testing.T) {
 				is.Empty(tt.service.buildTime())
 				err := tt.service.build(i)
 				is.True(tt.service.built())
-				is.NotEmpty(tt.service.buildTime())
+				is.Equal(time.Millisecond, tt.service.buildTime())
 				is.NoError(err)
 				return
 			}
@@ -518,7 +523,7 @@ func TestServiceLazy_build(t *testing.T) {
 				err := tt.service.build(i)
 				is.False(tt.service.built())
 				is.Empty(tt.service.buildTime())
-				is.Error(err)
+				is.ErrorAs(err, new(*ServiceError))
 				is.Equal(tt.wantErr, err)
 			})
 		})
@@ -632,7 +637,7 @@ func TestServiceLazy_healthcheck(t *testing.T) {
 	})
 	_, _ = service4.getInstance(nil)
 	err := service4.healthcheck(canceledCtx)
-	is.Error(err)
+	is.ErrorIs(err, context.Canceled)
 	is.ErrorContains(err, "context canceled")
 
 	// Test with timeout context
@@ -640,7 +645,7 @@ func TestServiceLazy_healthcheck(t *testing.T) {
 	defer cancel2()
 	time.Sleep(2 * time.Millisecond)
 	err2 := service4.healthcheck(timeoutCtx)
-	is.Error(err2)
+	is.ErrorIs(err2, context.DeadlineExceeded)
 	is.ErrorContains(err2, "context deadline exceeded")
 
 	// Test with value context - verify context value is received
@@ -903,7 +908,7 @@ func TestServiceLazy_shutdown(t *testing.T) {
 	})
 	_, _ = service4.getInstance(nil)
 	err := service4.shutdown(canceledCtx)
-	is.Error(err)
+	is.ErrorIs(err, context.Canceled)
 	is.ErrorContains(err, "context canceled")
 
 	// Test with timeout context
@@ -915,7 +920,7 @@ func TestServiceLazy_shutdown(t *testing.T) {
 	})
 	_, _ = service5.getInstance(nil)
 	err2 := service5.shutdown(timeoutCtx)
-	is.Error(err2)
+	is.ErrorIs(err2, context.DeadlineExceeded)
 	is.ErrorContains(err2, "context deadline exceeded")
 
 	// Test with value context - verify context value is received
@@ -951,7 +956,7 @@ func TestServiceLazy_shutdown(t *testing.T) {
 	})
 	_, _ = errorService.getInstance(nil)
 	err5 := errorService.shutdown(canceledCtx)
-	is.Error(err5)
+	is.ErrorIs(err5, context.Canceled)
 	is.ErrorContains(err5, "context canceled") // Should return context error when context is canceled
 }
 
@@ -1127,7 +1132,7 @@ func TestServiceLazy_source(t *testing.T) {
 	// After attempting to get instance (which fails), should still have invocation frames
 	// because the frame is collected before the error occurs
 	_, err = errorService.getInstance(nil)
-	is.Error(err, "Should get error from error provider")
+	is.ErrorIs(err, assert.AnError, "Should get error from error provider")
 
 	_, invocationFrames11 := errorService.source()
 	is.NotEmpty(invocationFrames11, "Should have invocation frames even after error (frame collected before error)")
