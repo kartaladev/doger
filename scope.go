@@ -1228,8 +1228,6 @@ func (s *Scope) takeService(name string) (any, error) {
 // shutdownTaken forgets serviceAny, the service name takeService removed
 // from s, then shuts it down with its hooks.
 func (s *Scope) shutdownTaken(ctx context.Context, name string, serviceAny any, panics *shutdownPanics) error {
-	s.RootScope().forget(serviceAny)
-
 	service, ok := serviceAny.(serviceWrapperShutdown)
 	if !ok {
 		// Should never happen.
@@ -1251,6 +1249,10 @@ func (s *Scope) shutdownTaken(ctx context.Context, name string, serviceAny any, 
 		errs = append(errs, err)
 		return err
 	}
+
+	// forgetting it runs the health hooks: recovered like any step, so a
+	// panic there is recorded under the service, never ends the process
+	_ = run(func() error { s.RootScope().forget(serviceAny); return nil })
 
 	hooks := &s.RootScope().hooks
 	for _, hook := range hooks.beforeShutdown.load() {
