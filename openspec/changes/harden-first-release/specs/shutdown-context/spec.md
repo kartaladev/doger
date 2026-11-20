@@ -188,7 +188,7 @@ Examples:
 <!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - the call used to block until every Shutdown returned, past its deadline -->
 
 ### Requirement: Shutdown does not wait past its context for a build in progress
-When a scope or a single service (`ShutdownNamedWithContext`) shuts down while a provider of one of its services is still running, the call SHALL stop waiting for that build once its context ends and report the service with an error matching `ctx.Err()`. When the provider returns later, its instance is late: it SHALL NOT be handed out, the invoker SHALL get an error matching `ErrShutdown` at once, never waiting for the instance's `Shutdown`, and a Shutdowner instance SHALL be shut down exactly once, on a goroutine of its own, with the original context of the shutdown that made the service Terminal, even when that context has ended. Exactly one party SHALL own a late instance: the shutdown that is still waiting for the build, which then reports the instance's error or panic (matching `ErrShutdownPanic`) under the service before the services it depends on shut down; otherwise the build, whose goroutine logs that error or panic once. A provider that shuts its own service down SHALL NOT wait for its own build: the call returns nil at once, and the build owns the late instance.
+When a scope or a single service (`ShutdownNamedWithContext`) shuts down while a provider of one of its services is still running, the call SHALL stop waiting for that build once its context ends and report the service with an error matching `ctx.Err()`. When the provider returns later, its instance is late: it SHALL NOT be handed out, the invoker SHALL get an error matching `ErrShutdown` at once, never waiting for the instance's `Shutdown`, and a Shutdowner instance SHALL be shut down exactly once, on a goroutine of its own, with the original context of the shutdown that made the service Terminal, even when that context has ended. Exactly one party SHALL own a late instance: the shutdown that is still waiting for the build, which then reports the instance's error or panic (matching `ErrShutdownPanic`) under the service before the services it depends on shut down; otherwise the build, whose goroutine logs that error or panic once. A provider that calls `ShutdownNamed*` for its own service on its own goroutine SHALL NOT wait for its own build: the call returns nil at once, and the build owns the late instance. Non-goals, documented: a provider that shuts down a scope or root containing its own service (`Shutdown()`, `ShutdownWithContext` with a context that never ends), or that waits on another goroutine shutting its service down, waits for its own build and blocks, as it did before this change.
 
 #### Scenario: A stuck provider does not hold a bounded shutdown
 ```gherkin
@@ -216,7 +216,7 @@ And goroutine G invokes "conn" and is blocked in the provider
 When the consumer calls root.ShutdownWithContext(context.Background())
 Then the call returns after 1s
 And the report succeeds
-And G receives either the instance or an error matching ErrShutdown
+And G receives an error matching ErrShutdown
 And the instance had its Shutdown called 1 time, before the call returned
 ```
 

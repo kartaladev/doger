@@ -325,6 +325,10 @@ func TestServiceHooks_CancelledShutdownContext(t *testing.T) {
 
 	root.ShutdownWithContext(ctx)
 
+	// the Shutdown cancels the shutdown's own context, so the call may
+	// abandon "svc" before its after-hook ran: the hook still runs, on the
+	// service's goroutine
+	require.Eventually(t, func() bool { return len(r.of("svc")) == 1 }, time.Second, time.Millisecond)
 	calls := r.of("svc")
 	if is.Len(calls, 1) {
 		is.ErrorIs(calls[0].ctx.Err(), context.Canceled)

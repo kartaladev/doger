@@ -783,7 +783,8 @@ func TestShutdownContext_HandoverThenCtxEnds(t *testing.T) { //nolint:parallelte
 		<-g
 		<-done
 		assert.Eventually(t, func() bool { return calls.Load() >= 1 }, time.Second, time.Millisecond)
-		if calls.Load() != 1 {
+		// a second Shutdown call, if any, has a window to appear
+		if !assert.Never(t, func() bool { return calls.Load() > 1 }, 20*time.Millisecond, time.Millisecond) || calls.Load() != 1 {
 			leaked++
 		}
 		root.Shutdown()
@@ -792,11 +793,16 @@ func TestShutdownContext_HandoverThenCtxEnds(t *testing.T) { //nolint:parallelte
 	assert.Zero(t, leaked, "late instances not shut down exactly once, out of %d", n)
 }
 
-// drainingConn drains until its context ends, or for at most 1h.
-type drainingConn struct{ calls *atomic.Int32 }
+// drainingConn drains until its context ends, or for at most 1h,
+// recording the context its Shutdown receives.
+type drainingConn struct {
+	calls *atomic.Int32
+	ctx   *atomic.Pointer[context.Context]
+}
 
 func (c *drainingConn) Shutdown(ctx context.Context) error {
 	c.calls.Add(1)
+	c.ctx.Store(&ctx)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -817,10 +823,11 @@ func TestShutdownContext_InvokerNotHeldByLateShutdown(t *testing.T) {
 
 				root := New()
 				var calls atomic.Int32
+				var received atomic.Pointer[context.Context]
 				release := make(chan struct{})
 				ProvideNamed(root, "conn", func(Injector) (*drainingConn, error) {
 					<-release
-					return &drainingConn{calls: &calls}, nil
+					return &drainingConn{calls: &calls, ctx: &received}, nil
 				})
 				invoked := make(chan time.Time, 1)
 				go func() { _, _ = InvokeNamed[*drainingConn](root, "conn"); invoked <- time.Now() }()
@@ -840,7 +847,15 @@ func TestShutdownContext_InvokerNotHeldByLateShutdown(t *testing.T) {
 				close(release)
 				is.Zero((<-invoked).Sub(released), "the invoker returns at once")
 				synctest.Wait()
-				is.Equal(int32(1), calls.Load(), "the late instance was shut down, with its ended context")
+				is.Equal(int32(1), calls.Load(), "the late instance was shut down")
+				// with the shutdown's own context, ended, not a fresh one
+				if got := received.Load(); is.NotNil(got) {
+					want, _ := ctx.Deadline()
+					deadline, ok := (*got).Deadline()
+					is.True(ok, "the Shutdown context has the shutdown's deadline")
+					is.Equal(want, deadline)
+					is.ErrorIs((*got).Err(), context.DeadlineExceeded)
+				}
 			})
 		})
 	}
@@ -930,6 +945,8 @@ func TestShutdownContext_HealthHookRepanicDuringShutdown(t *testing.T) {
 	if os.Getenv(healthChildEnv) == "1" {
 		scheduler := &manualScheduler{}
 		var armed atomic.Bool
+		firstChange := make(chan struct{})
+		var once sync.Once
 		root := NewWithOpts(&InjectorOpts{
 			HealthScheduler:    scheduler,
 			HookContainerPanic: func(_ *RootScope, _ string, v any) { panic(v) },
@@ -938,6 +955,7 @@ func TestShutdownContext_HealthHookRepanicDuringShutdown(t *testing.T) {
 					if armed.Load() {
 						panic("health-hook-boom")
 					}
+					once.Do(func() { close(firstChange) })
 				},
 			},
 		})
@@ -947,10 +965,10 @@ func TestShutdownContext_HealthHookRepanicDuringShutdown(t *testing.T) {
 			panic(err)
 		}
 		scheduler.runRound()
-		time.Sleep(50 * time.Millisecond)
+		<-firstChange // the round's change was delivered
 		armed.Store(true)
 		func() {
-			defer func() { _ = recover() }() // HookContainerPanic re-panics on the caller
+			defer func() { fmt.Printf("RECOVERED:%v\n", recover()) }() // HookContainerPanic re-panics on the caller
 			tenant.ShutdownWithContext(context.Background())
 		}()
 		fmt.Println("RETURNED")
@@ -964,5 +982,6 @@ func TestShutdownContext_HealthHookRepanicDuringShutdown(t *testing.T) {
 	output, err := cmd.CombinedOutput()
 
 	require.NoError(t, err, "the child process crashed:\n%s", output)
+	assert.Contains(t, string(output), "RECOVERED:health-hook-boom", "the panic value reaches the caller")
 	assert.Contains(t, string(output), "RETURNED")
 }

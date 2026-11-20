@@ -381,6 +381,14 @@ func ShutdownNamed(i Injector, name string) error {
 //
 // Returns an error if the shutdown fails, or nil if the shutdown was successful.
 //
+// With a build of the service in flight, the call waits for it, bounded by
+// ctx; the late instance is never handed out and is shut down once (see
+// Scope.ShutdownWithContext). Called by a provider for its own service, on
+// the provider's goroutine, it returns nil at once instead of waiting for
+// itself. Not detected: a provider that shuts down a scope or root holding
+// its own service, or that waits on another goroutine shutting its service
+// down, waits for its own build and blocks.
+//
 // Example:
 //
 //	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
