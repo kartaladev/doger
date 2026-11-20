@@ -398,8 +398,8 @@ version_ge() {
 check_floors() {
 	local row mod dep min have
 	for row in \
-		"http/fiber github.com/andybalholm/brotli v1.2.7" \
-		"examples/http/fiber github.com/andybalholm/brotli v1.2.7" \
+		"http/fiber github.com/valyala/fasthttp v1.79.0" \
+		"examples/http/fiber github.com/valyala/fasthttp v1.79.0" \
 		"http/echo golang.org/x/net v0.62.0" \
 		"http/gin golang.org/x/net v0.62.0"; do
 		read -r mod dep min <<<"$row"
@@ -441,14 +441,19 @@ check_policy() {
 	if [ ! -f "$f" ]; then
 		fail "CHANGELOG.md is missing"
 	else
-		local unreleased
-		unreleased="$(awk '/^## /{ if (on) exit; if ($0 ~ /Unreleased/) on = 1 } on' "$f")"
-		if [ -z "$unreleased" ]; then
-			fail "CHANGELOG.md has no 'Unreleased' section"
-		else
-			grep -q 'BREAKING' <<<"$unreleased" || fail "CHANGELOG.md: the 'Unreleased' section lists no BREAKING entry"
-			grep -qi 'migration' <<<"$unreleased" || fail "CHANGELOG.md: the 'Unreleased' section gives no migration"
-		fi
+		grep -q '^## Unreleased' "$f" || fail "CHANGELOG.md has no 'Unreleased' section"
+		# every section (Unreleased or a release) that lists BREAKING
+		# changes gives their migration
+		local title
+		while IFS= read -r title; do
+			[ -n "$title" ] || continue
+			fail "CHANGELOG.md: the '$title' section lists BREAKING changes without a migration"
+		done < <(awk '
+			function done_section() { if (title != "" && breaking && !migration) print title }
+			/^## / { done_section(); title = substr($0, 4); breaking = 0; migration = 0; next }
+			/BREAKING/ { breaking = 1 }
+			tolower($0) ~ /migration/ { migration = 1 }
+			END { done_section() }' "$f")
 	fi
 
 	f="$root/.github/CODEOWNERS"
@@ -676,8 +681,8 @@ updates:
 	# floors: a vulnerable version below the floor
 	fixture
 	put http/fiber/go.mod 'module m
-require github.com/andybalholm/brotli v1.1.0'
-	expect "$fx" floors fail 'http/fiber/go\.mod requires github\.com/andybalholm/brotli v1\.1\.0, below the floor v1\.2\.7'
+require github.com/valyala/fasthttp v1.51.0'
+	expect "$fx" floors fail 'http/fiber/go\.mod requires github\.com/valyala/fasthttp v1\.51\.0, below the floor v1\.79\.0'
 
 	# policy: an advisory accepted for another module only, and CRLF
 	fixture
@@ -691,6 +696,26 @@ require github.com/andybalholm/brotli v1.1.0'
 	expect "$fx" policy fail 'does not list GO-2026-6875 for \./http/echo'
 	expect "$fx" policy fail "\.gitattributes does not set 'eol=lf' for Makefile"
 	expect "$fx" policy fail 'CRLF line endings in: .*scripts/x\.sh'
+
+	# policy: a release section with BREAKING entries and no migration
+	fixture
+	put CHANGELOG.md '# Changelog
+## Unreleased
+- A fix.
+## v0.3.0 - 2027-01-01
+### BREAKING
+- Removed Foo.
+## v0.2.0 - 2026-11-20
+### BREAKING
+| Before | After | Migration |'
+	expect "$fx" policy fail "CHANGELOG\.md: the 'v0\.3\.0 - 2027-01-01' section lists BREAKING changes without a migration"
+
+	# policy: no Unreleased section
+	fixture
+	put CHANGELOG.md '# Changelog
+## v0.2.0 - 2026-11-20
+- A fix.'
+	expect "$fx" policy fail "CHANGELOG\.md has no 'Unreleased' section"
 
 	if [ "$self_failures" -gt 0 ]; then
 		echo "$self_failures self-test check(s) failed"

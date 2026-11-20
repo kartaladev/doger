@@ -179,16 +179,18 @@ check_vuln_isolation() {
 	(
 		cd "$copy/http/fiber"
 		export GOWORK=off
-		go mod edit -require=github.com/andybalholm/brotli@v1.1.0
-		go mod download github.com/andybalholm/brotli@v1.1.0
+		# fasthttp v1.51.0 brings back brotli v1.1.0 (GO-2026-6888); v1.79.0
+		# dropped brotli
+		go mod edit -require=github.com/valyala/fasthttp@v1.51.0
+		go mod download github.com/valyala/fasthttp@v1.51.0
 		go mod tidy
 	) >"$work/downgrade.log" 2>&1 || {
-		fail "cannot plant brotli v1.1.0 in http/fiber: $(tail -3 "$work/downgrade.log")"
+		fail "cannot plant fasthttp v1.51.0 in http/fiber: $(tail -3 "$work/downgrade.log")"
 		return
 	}
 	if ! grep -q 'andybalholm/brotli v1.1.0' "$copy/http/fiber/go.mod" ||
-		! grep -q 'andybalholm/brotli v1.2.7' "$copy/examples/http/fiber/go.mod"; then
-		fail "the planted downgrade did not apply (http/fiber v1.1.0, examples/http/fiber v1.2.7)"
+		grep -q 'andybalholm/brotli' "$copy/examples/http/fiber/go.mod"; then
+		fail "the planted downgrade did not apply (http/fiber brotli v1.1.0, examples/http/fiber no brotli)"
 		return
 	fi
 	out="$work/vuln.log"
@@ -196,14 +198,14 @@ check_vuln_isolation() {
 	(cd "$copy" && make vuln) >"$out" 2>&1 || status=$?
 	if [ "$status" -ne 0 ] && grep -qxF 'FAIL module ./http/fiber' "$out" &&
 		grep -q 'VULNERABLE  GO-2026-6888 .* from \./http/fiber' "$out"; then
-		pass "make vuln fails on brotli v1.1.0 in ./http/fiber despite v1.2.7 elsewhere"
+		pass "make vuln fails on brotli v1.1.0 in ./http/fiber while examples/http/fiber has none"
 	else
 		fail "make vuln exits $status and does not fail ./http/fiber on GO-2026-6888"
 	fi
 	if grep -qxF 'FAIL module ./examples/http/fiber' "$out"; then
-		fail "make vuln fails ./examples/http/fiber, which still requires brotli v1.2.7"
+		fail "make vuln fails ./examples/http/fiber, which does not require brotli"
 	else
-		pass "make vuln passes ./examples/http/fiber (brotli v1.2.7)"
+		pass "make vuln passes ./examples/http/fiber (no brotli)"
 	fi
 }
 

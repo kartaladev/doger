@@ -113,8 +113,8 @@ And its output <names>
 
 Examples:
   | module       | dependency                          | status   | names                         |
-  | ./http/fiber | github.com/andybalholm/brotli v1.1.0 | non-zero | names "GO-2026-6888"          |
-  | ./http/fiber | github.com/andybalholm/brotli v1.2.7 | 0        | reports no reachable vulnerability |
+  | ./http/fiber | github.com/valyala/fasthttp v1.51.0 (brotli v1.1.0) | non-zero | names "GO-2026-6888" |
+  | ./http/fiber | github.com/valyala/fasthttp v1.79.0 (no brotli)     | 0        | reports no reachable vulnerability |
   | ./http/echo  | golang.org/x/net v0.61.0            | 0 unless a reachable finding is reported | lists imported-only findings without failing |
   | .            | the root module's current requirements | 0     | reports no reachable vulnerability |
 ```
@@ -127,7 +127,7 @@ Then it requires "<dependency>" at version "<minimum>" or later
 
 Examples:
   | module       | dependency                   | minimum |
-  | ./http/fiber | github.com/andybalholm/brotli | v1.2.7 |
+  | ./http/fiber | github.com/valyala/fasthttp  | v1.79.0 |
   | ./http/echo  | golang.org/x/net             | v0.62.0 |
   | ./http/gin   | golang.org/x/net             | v0.62.0 |
 ```
@@ -354,7 +354,7 @@ Then "<path>" <state>
 Examples:
   | path                 | state                                                                        |
   | SECURITY.md          | exists and contains "Reporting a vulnerability" and "Accepted advisories"     |
-  | CHANGELOG.md         | exists and has an "Unreleased" section listing "BREAKING" entries with migrations |
+  | CHANGELOG.md         | exists, has an "Unreleased" section, and every section listing "BREAKING" entries gives their migrations |
   | .github/CODEOWNERS   | exists and assigns "*" to at least one owner                                 |
   | vercel.json          | does not exist                                                               |
 ```
