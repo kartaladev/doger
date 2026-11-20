@@ -423,10 +423,20 @@ func collectionCandidatesFor(source collectionSource, target reflect.Type) []col
 	// so the cost follows the matching services, not every visible one; a
 	// name registered in a nearer scope, matching or not, hides farther ones
 	candidates := []collectionCandidate{}
-	var nearer []*Scope
+	var nearer []scopeRead
 	for scope, depth := from, scopeDepth(from); scope != nil; scope, depth = scope.parentScope, depth-1 {
-		for _, match := range scope.matchesFor(target) {
-			if _, ok := excluded[match.name]; ok || shadowedByNearer(nearer, match.name) {
+		matches, version := scope.matchesForVersion(target)
+		for _, match := range matches {
+			if _, ok := excluded[match.name]; ok {
+				continue
+			}
+			shadowed, changed := shadowedByNearer(nearer, match.name)
+			if changed {
+				// a nearer scope changed since it was read: its services
+				// now may not be the ones its matches came from
+				return collectionCandidatesBySnapshot(source, target)
+			}
+			if shadowed {
 				continue
 			}
 			service := match.service.(serviceWrapperAny) //nolint:errcheck,forcetypeassert // matchesFor lists service wrappers only
@@ -442,7 +452,7 @@ func collectionCandidatesFor(source collectionSource, target reflect.Type) []col
 				service:  match.service,
 			})
 		}
-		nearer = append(nearer, scope)
+		nearer = append(nearer, scopeRead{scope: scope, version: version})
 	}
 
 	slices.SortFunc(candidates, func(a, b collectionCandidate) int { return a.compare(b.placement) })
@@ -450,15 +460,69 @@ func collectionCandidatesFor(source collectionSource, target reflect.Type) []col
 	return candidates
 }
 
-// shadowedByNearer reports whether one of the nearer scopes registers name.
-func shadowedByNearer(nearer []*Scope, name string) bool {
-	for _, scope := range nearer {
-		if scope.serviceExist(name) {
-			return true
+// scopeRead is a scope with the version of its services when it was read.
+type scopeRead struct {
+	scope   *Scope
+	version uint64
+}
+
+// shadowedByNearer reports whether one of the nearer scopes registers name,
+// or, as changed, that one of them changed since it was read, which leaves
+// the answer unknown.
+func shadowedByNearer(nearer []scopeRead, name string) (shadowed, changed bool) {
+	for _, read := range nearer {
+		read.scope.mu.RLock()
+		_, ok := read.scope.services[name]
+		version := read.scope.version
+		read.scope.mu.RUnlock()
+		if version != read.version {
+			return false, true
+		}
+		if ok {
+			return true, false
 		}
 	}
 
-	return false
+	return false, false
+}
+
+// collectionCandidatesBySnapshot is collectionCandidatesFor by a walk of
+// every visible service, each scope read once under its lock. It is used
+// when a nearer scope changes while the type-match path runs.
+func collectionCandidatesBySnapshot(source collectionSource, target reflect.Type) []collectionCandidate {
+	candidates := []collectionCandidate{}
+	seen := excludedNames(source)
+	// the reading scope, only when it sees exports: a single captured
+	// pointer keeps the closure in its allocation size class
+	var reader *Scope
+	if from := injectorScope(source.from); chainHasExports(from) {
+		reader = from
+	}
+
+	source.from.serviceForEachRec(func(name string, scope *Scope, s any) bool {
+		if _, ok := seen[name]; ok {
+			return true
+		}
+		seen[name] = struct{}{}
+
+		service, ok := s.(serviceWrapperAny)
+		if !ok || (service.getServiceType() == ServiceTypeAlias && excludedAlias(s, reader)) || !serviceCanCastToType(s, target) {
+			return true
+		}
+
+		candidates = append(candidates, collectionCandidate{
+			name:     name,
+			depth:    scopeDepth(scope),
+			regIndex: service.getRegistrationIndex(),
+			scope:    scope,
+			service:  s,
+		})
+		return true
+	})
+
+	slices.SortFunc(candidates, func(a, b collectionCandidate) int { return a.compare(b.placement) })
+
+	return candidates
 }
 
 // collectionCandidatesWithDefaults is collectionCandidatesFor with the rules

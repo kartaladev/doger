@@ -1066,3 +1066,38 @@ func TestInvokeAllMap_DefaultKeepsOneEntry(t *testing.T) {
 		})
 	}
 }
+
+// TestInvokeAll_ConcurrentShadowingRegistration pins that a name registered
+// in a nearer scope while InvokeAll runs yields exactly one member of that
+// name: the farther one or the nearer one, never none.
+func TestInvokeAll_ConcurrentShadowingRegistration(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 60*time.Second)
+
+	const rounds = 20000
+	missing := 0
+	for range rounds {
+		root := New()
+		provideHandler(root, "x", newConsole)
+		child := root.Scope("child")
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Go(func() { <-start; provideHandler(child, "x", newAudit) })
+		var names []string
+		wg.Go(func() {
+			<-start
+			handlers, err := InvokeAll[EventHandler](child)
+			if err == nil {
+				names = handlerNames(handlers)
+			}
+		})
+		close(start)
+		wg.Wait()
+		if len(names) != 1 {
+			missing++
+		}
+		root.Shutdown()
+	}
+
+	assert.Zero(t, missing, "rounds without exactly one member named x, out of %d", rounds)
+}

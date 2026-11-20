@@ -67,6 +67,10 @@ type Scope struct {
 	// registered type is assignable to it; reset whenever services change.
 	// Guarded by mu.
 	typeMatches map[reflect.Type][]typeMatch
+	// version counts the changes of services: a reader that saw version v
+	// knows the services are still as it saw them while version is v.
+	// Guarded by mu.
+	version uint64
 
 	// Storing the invocation order is not needed anymore, but we keep it
 	// for improved observability in unit tests.
@@ -243,6 +247,7 @@ func (s *Scope) removeLocked(name string) (service any, ok bool) {
 	s.countDefault(service, -1)
 	s.countExport(service, -1)
 	s.typeMatches = nil
+	s.version++
 	delete(s.orderedInvocation, name)
 	s.invokedNames.Delete(name)
 	s.RootScope().dag.removeService(s.id, s.name, name)
@@ -1192,6 +1197,7 @@ func (s *Scope) storeLocked(name string, replaced, service any) {
 	s.countExport(service, 1)
 	s.services[name] = service
 	s.typeMatches = nil
+	s.version++
 }
 
 // countDefault adds delta to the count of default registrations when service
@@ -1263,18 +1269,26 @@ type typeMatch struct {
 // assignable to target, in no particular order. The result is cached until
 // the scope's services change; callers must not modify it.
 func (s *Scope) matchesFor(target reflect.Type) []typeMatch {
+	matches, _ := s.matchesForVersion(target)
+	return matches
+}
+
+// matchesForVersion is matchesFor, with the version of the services the
+// matches were read from.
+func (s *Scope) matchesForVersion(target reflect.Type) ([]typeMatch, uint64) {
 	s.mu.RLock()
 	matches, ok := s.typeMatches[target]
+	version := s.version
 	s.mu.RUnlock()
 	if ok {
-		return matches
+		return matches, version
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if matches, ok := s.typeMatches[target]; ok {
-		return matches
+		return matches, s.version
 	}
 	matches = []typeMatch{}
 	for name, serviceAny := range s.services {
@@ -1289,7 +1303,7 @@ func (s *Scope) matchesFor(target reflect.Type) []typeMatch {
 	}
 	s.typeMatches[target] = matches
 
-	return matches
+	return matches, s.version
 }
 
 // serviceForEachRec iterates over all services in the current scope and all ancestor scopes,

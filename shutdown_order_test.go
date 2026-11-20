@@ -126,8 +126,10 @@ func TestShutdownOrder_ServiceRemovedDuringShutdown(t *testing.T) {
 				return nil, err
 			}
 			return &removingLink{
-				chainLink: chainLink{name: "h", hold: time.Second, rec: rec},
-				remove:    func() { _ = ShutdownNamed(root, "d") },
+				name:   "h",
+				hold:   time.Second,
+				rec:    rec,
+				remove: func() { _ = ShutdownNamed(root, "d") },
 			}, nil
 		})
 		provideLink("c1", "")
