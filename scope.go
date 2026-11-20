@@ -768,6 +768,7 @@ func (s *Scope) shutdownServicesInParallel(ctx context.Context, panics *shutdown
 		r := s.shutdownServicesWithoutDependenciesInParallel(ctx, layer, panics)
 		appendShutdownReport(report, r)
 		plan.done(layer)
+		plan.done(plan.departed(s))
 	}
 
 	return report
@@ -784,6 +785,7 @@ type shutdownPlan struct {
 	dependents   map[string]int
 	candidates   []string
 	blocked      map[string]struct{}
+	pending      map[string]struct{} // not yet counted as gone from the scope
 }
 
 // newShutdownPlan returns the plan of the shutdown of services, the
@@ -795,7 +797,10 @@ func newShutdownPlan(s *Scope, services []string) *shutdownPlan {
 		set[newServiceDescription(s.id, s.name, name)] = struct{}{}
 	}
 
-	plan := &shutdownPlan{}
+	plan := &shutdownPlan{pending: make(map[string]struct{}, len(services))}
+	for _, name := range services {
+		plan.pending[name] = struct{}{}
+	}
 	snapshot := s.rootScope.dag.snapshotDependents(set)
 	if len(snapshot) > 0 {
 		plan.dependencies, plan.dependents = map[string][]string{}, make(map[string]int, len(snapshot))
@@ -866,11 +871,38 @@ func (p *shutdownPlan) nextLayer(s *Scope, listServices func() []string) []strin
 	return services
 }
 
-// done records that layer was shut down: each of its dependencies within
-// the scope that has no dependent left there is a candidate of the next
-// layer.
+// departed returns the pending services that left s other than through a
+// layer of the plan, such as a service shut down by ShutdownNamed from the
+// Shutdown of another one. Their dependencies may have become free, as the
+// live graph shows; without counting them, those would wait for the
+// fallback that checks every service. It scans the pending services only
+// when s holds fewer of them than the plan expects.
+func (p *shutdownPlan) departed(s *Scope) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.services) >= len(p.pending) {
+		return nil
+	}
+
+	var gone []string
+	for name := range p.pending {
+		if _, ok := s.services[name]; !ok {
+			gone = append(gone, name)
+		}
+	}
+
+	return gone
+}
+
+// done records that services left the scope, in a layer or otherwise: each
+// of their dependencies within the scope that has no dependent left there
+// is a candidate of the next layer.
 func (p *shutdownPlan) done(layer []string) {
 	for _, name := range layer {
+		if _, ok := p.pending[name]; !ok {
+			continue
+		}
+		delete(p.pending, name)
 		delete(p.blocked, name)
 		for _, dependency := range p.dependencies[name] {
 			if p.dependents[dependency]--; p.dependents[dependency] == 0 {
