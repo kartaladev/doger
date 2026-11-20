@@ -2,7 +2,6 @@ package doger
 
 import (
 	"context"
-	"log/slog"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -35,13 +34,13 @@ type serviceLazy[T any] struct {
 	// and other callers wait for the build instead of a lock, so a cycle is
 	// reported instead of deadlocking
 	state buildState
-	// late receives the instance of a build that completed once the service
-	// was shut down, for the shutdown that waits for it; nil when none waits
-	late chan T
-	// lateCtx is the context of the shutdown that found the build in
-	// flight; a late instance nobody waits for is shut down with it, without
-	// its cancellation
-	lateCtx context.Context
+	// claim is the claim of the shutdown waiting for the late instance of
+	// the build in flight, nil when none waits (see lateClaim)
+	claim *lateClaim
+	// terminalCtx is the context of the shutdown that made the service
+	// Terminal while a build was in flight; the build shuts its late
+	// instance down with it when no shutdown claims it
+	terminalCtx context.Context
 	// published holds the instance once built, nil otherwise; health
 	// checks read it without s.mu, which a build holds for the whole
 	// provider call.
@@ -188,22 +187,21 @@ func (s *serviceLazy[T]) runBuild(i Injector, run *buildRun) (instance T, err er
 
 // finishBuild records the outcome of run, and returns the error of the
 // build: a successful build publishes the instance, a failed one leaves the
-// service buildable again. A build that completes once a bounded shutdown
-// gave up on it finds the service Terminal: its instance is shut down once,
-// never handed out, and the build fails with ErrShutdown. Waiters are then
-// released with that error.
+// service buildable again. A build that completes once a shutdown made the
+// service Terminal is late: its instance is never handed out, the build
+// fails with ErrShutdown at once, and the instance is shut down once on its
+// own goroutine, its outcome going to the claiming shutdown or, without
+// one, to the log (see lateClaim). Waiters are released with the build's
+// error.
 func (s *serviceLazy[T]) finishBuild(i Injector, run *buildRun, instance T, elapsed time.Duration, err error) error {
 	s.mu.Lock()
 	late := err == nil && s.terminal
-	handedOver := false
-	lateCtx := s.lateCtx
+	// exactly one owner: the claiming shutdown, or this build
+	claim, ctx := s.claim, s.terminalCtx
+	s.claim = nil
 	switch {
 	case late:
 		err = shutDownServiceError(s.name)
-		if s.late != nil {
-			s.late <- instance // the shutdown waiting for it shuts it down
-			s.late, handedOver = nil, true
-		}
 	case err == nil:
 		s.instance = instance
 		s.built = true
@@ -214,33 +212,15 @@ func (s *serviceLazy[T]) finishBuild(i Injector, run *buildRun, instance T, elap
 	s.mu.Unlock()
 
 	run.release()
-	if late && !handedOver {
-		// no shutdown waits for it (its context ended): shut it down here
-		s.shutdownLate(injectorScope(i), lateCtx, instance)
+	switch {
+	case late:
+		// never on the invoker's goroutine: the invoker returns at once
+		go shutdownLateInstance(injectorScope(i), s.name, ctx, instance, claim)
+	case claim != nil:
+		claim.deliver(nil, false, nil) // the build failed: nothing to shut down
 	}
 
 	return err
-}
-
-// shutdownLate shuts a late instance down that no shutdown waits for any
-// more, with ctx (the context of the shutdown that found its build in
-// flight) without its cancellation. Its error and its panic, with the value
-// at Debug level only, are logged on scope.
-func (s *serviceLazy[T]) shutdownLate(scope *Scope, ctx context.Context, instance T) { //nolint:revive // the scope logs, ctx is the shutdown's
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	var err error
-	recovered, panicked := callHookSafely(func() { err = shutdownValue(context.WithoutCancel(ctx), instance) })
-	if scope == nil {
-		return
-	}
-	switch {
-	case panicked:
-		scope.logRecoveredPanic("service-shutdown", s.name, recovered)
-	case err != nil:
-		scope.log(slog.LevelError, "service shutdown failed", slog.String("service", s.name), slog.Any("error", err))
-	}
 }
 
 // build calls the provider after the declared dependencies, and returns the
@@ -380,45 +360,28 @@ func (s *serviceLazy[T]) isShutdowner() bool {
 func (s *serviceLazy[T]) shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	// a build in flight finds the service Terminal when it completes: its
-	// late instance is never published (D4), but handed to this shutdown,
-	// which shuts it down with the shutdown's context, reporting its error
-	// and panic as for any service. A bounded shutdown stops waiting when
-	// its context ends (the layer abandons this goroutine), but this
-	// goroutine still shuts the late instance down once.
+	// late instance is never published (D4); it is shut down on its own
+	// goroutine, owned by this shutdown, which waits for the outcome bounded
+	// by ctx, or by the build when nothing waits (see lateClaim)
 	if run := s.state.inFlight(); run != nil {
 		s.terminal = true
-		s.lateCtx = ctx
-		if ctx.Err() != nil {
-			// reached after ctx ended: nothing waits here, so the build shuts
-			// its late instance down itself
+		s.terminalCtx = ctx
+		if run.owner != 0 && run.owner == goroutineID() {
+			// the provider shuts its own service down: waiting would wait for
+			// itself, so the build owns its late instance
 			s.mu.Unlock()
-			return ctx.Err()
+			return nil
 		}
-		late := make(chan T, 1)
-		s.late = late
+		if err := ctx.Err(); err != nil {
+			// reached after ctx ended: the build owns its late instance
+			s.mu.Unlock()
+			return err
+		}
+		claim := newLateClaim(ctx)
+		s.claim = claim
 		s.mu.Unlock()
 
-		select {
-		case <-run.done:
-			select {
-			case instance := <-late:
-				return shutdownValue(ctx, instance)
-			default:
-				return nil // the build failed: nothing to shut down
-			}
-		case <-ctx.Done():
-			s.mu.Lock()
-			if s.late == late {
-				// not handed over yet: the build shuts it down itself
-				s.late = nil
-				s.mu.Unlock()
-				return ctx.Err()
-			}
-			s.mu.Unlock()
-			// handed over just as ctx ended: this shutdown owns it, so it shuts
-			// it down, reporting its error and panic as for any service
-			return shutdownValue(context.WithoutCancel(ctx), <-late)
-		}
+		return claim.await(ctx)
 	}
 
 	defer func() {

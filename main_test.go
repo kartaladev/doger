@@ -32,6 +32,12 @@ const minTestTimeout = 5 * time.Second
 // parallel load is not reported as hung. Tests assert timing themselves, on
 // a fake clock or in a synctest bubble.
 //
+// Call it in the test that does the work. A parent whose subtests call
+// t.Parallel() waits for them, and they first wait for a free slot (-p,
+// GOMAXPROCS), so a guard started in the parent also counts that queueing,
+// which alone can exceed the timeout on a loaded runner: start the guard
+// in each parallel subtest instead, after its t.Parallel().
+//
 // https://github.com/stretchr/testify/issues/1101
 func testWithTimeout(t *testing.T, timeout time.Duration) {
 	t.Helper()

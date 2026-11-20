@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"os/exec"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -576,10 +579,14 @@ func TestShutdownContext_ShutdownNamedBoundedInFlight(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		self bool // the provider shuts its own service down
+		name     string
+		self     bool // the provider shuts its own service down
+		wantTook time.Duration
+		wantErr  error
 	}{
-		{name: "other_goroutine"},
+		{name: "other_goroutine", wantTook: 50 * time.Millisecond, wantErr: context.DeadlineExceeded},
+		// waiting would wait for itself: it returns at once, and the build
+		// shuts its late instance down
 		{name: "provider_shuts_itself_down", self: true},
 	}
 
@@ -638,8 +645,12 @@ func TestShutdownContext_ShutdownNamedBoundedInFlight(t *testing.T) {
 				gErr := <-g
 				synctest.Wait()
 
-				is.Equal(50*time.Millisecond, got.took, "returned at its deadline")
-				is.ErrorIs(got.err, context.DeadlineExceeded)
+				is.Equal(tt.wantTook, got.took, "returned at its deadline, or at once")
+				if tt.wantErr == nil {
+					is.NoError(got.err)
+				} else {
+					is.ErrorIs(got.err, tt.wantErr)
+				}
 				is.ErrorIs(gErr, ErrShutdown)
 				is.Equal(int32(1), calls.Load(), "the late instance is shut down once")
 				root.Shutdown()
@@ -732,4 +743,245 @@ func TestShutdownContext_FallbackLatePanicLogged(t *testing.T) {
 		}
 		is.Len(recorder.containing("fallback-boom"), 1, "the value, at Debug only")
 	})
+}
+
+// lateCounted counts its Shutdown calls.
+type lateCounted struct{ calls *atomic.Int32 }
+
+func (c *lateCounted) Shutdown() error { c.calls.Add(1); return nil }
+
+// TestShutdownContext_HandoverThenCtxEnds changes GOMAXPROCS, so it is not
+// parallel: the context ends right after the build hands its instance over.
+func TestShutdownContext_HandoverThenCtxEnds(t *testing.T) { //nolint:paralleltest // changes GOMAXPROCS
+	testWithTimeout(t, 60*time.Second)
+	prev := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(prev)
+
+	leaked := 0
+	const n = 200
+	for range n {
+		root := New()
+		var calls atomic.Int32
+		ctx, cancel := context.WithCancel(context.Background())
+		entered, release := make(chan struct{}), make(chan struct{})
+		ProvideNamed(root, "conn", func(Injector) (*lateCounted, error) {
+			close(entered)
+			<-release
+			return &lateCounted{calls: &calls}, nil
+		})
+		g := make(chan error, 1)
+		go func() {
+			_, err := InvokeNamed[*lateCounted](root, "conn")
+			cancel() // the deadline passes right after the handover
+			g <- err
+		}()
+		<-entered
+		done := make(chan struct{})
+		go func() { defer close(done); _ = ShutdownNamedWithContext(ctx, root, "conn") }()
+		time.Sleep(time.Millisecond) // the shutdown waits for the build
+		close(release)
+		<-g
+		<-done
+		assert.Eventually(t, func() bool { return calls.Load() >= 1 }, time.Second, time.Millisecond)
+		// a second Shutdown call, if any, has a window to appear
+		if !assert.Never(t, func() bool { return calls.Load() > 1 }, 20*time.Millisecond, time.Millisecond) || calls.Load() != 1 {
+			leaked++
+		}
+		root.Shutdown()
+	}
+
+	assert.Zero(t, leaked, "late instances not shut down exactly once, out of %d", n)
+}
+
+// drainingConn drains until its context ends, or for at most 1h,
+// recording the context its Shutdown receives.
+type drainingConn struct {
+	calls *atomic.Int32
+	ctx   *atomic.Pointer[context.Context]
+}
+
+func (c *drainingConn) Shutdown(ctx context.Context) error {
+	c.calls.Add(1)
+	c.ctx.Store(&ctx)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Hour):
+		return nil
+	}
+}
+
+func TestShutdownContext_InvokerNotHeldByLateShutdown(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"root", "named", "ended"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				root := New()
+				var calls atomic.Int32
+				var received atomic.Pointer[context.Context]
+				release := make(chan struct{})
+				ProvideNamed(root, "conn", func(Injector) (*drainingConn, error) {
+					<-release
+					return &drainingConn{calls: &calls, ctx: &received}, nil
+				})
+				invoked := make(chan time.Time, 1)
+				go func() { _, _ = InvokeNamed[*drainingConn](root, "conn"); invoked <- time.Now() }()
+				synctest.Wait()
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				defer cancel()
+				if mode == "ended" {
+					time.Sleep(60 * time.Millisecond)
+				}
+				if mode == "named" {
+					_ = ShutdownNamedWithContext(ctx, root, "conn")
+				} else {
+					_ = root.ShutdownWithContext(ctx)
+				}
+
+				released := time.Now()
+				close(release)
+				is.Zero((<-invoked).Sub(released), "the invoker returns at once")
+				synctest.Wait()
+				is.Equal(int32(1), calls.Load(), "the late instance was shut down")
+				// with the shutdown's own context, ended, not a fresh one
+				if got := received.Load(); is.NotNil(got) {
+					want, _ := ctx.Deadline()
+					deadline, ok := (*got).Deadline()
+					is.True(ok, "the Shutdown context has the shutdown's deadline")
+					is.Equal(want, deadline)
+					is.ErrorIs((*got).Err(), context.DeadlineExceeded)
+				}
+			})
+		})
+	}
+}
+
+// ctxDrainingConn drains until its context ends.
+type ctxDrainingConn struct{ calls *atomic.Int32 }
+
+func (c *ctxDrainingConn) Shutdown(ctx context.Context) error {
+	c.calls.Add(1)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestShutdownContext_HandoverCtxBranchBounded changes GOMAXPROCS, so it is
+// not parallel: a late instance handed over as the context ends must not
+// hold ShutdownNamedWithContext or the invoker.
+func TestShutdownContext_HandoverCtxBranchBounded(t *testing.T) { //nolint:paralleltest // changes GOMAXPROCS
+	testWithTimeout(t, 120*time.Second)
+	prev := runtime.GOMAXPROCS(4)
+	defer runtime.GOMAXPROCS(prev)
+
+	hung := 0
+	const n = 200
+	for range n {
+		root := New()
+		var calls atomic.Int32
+		ctx, cancel := context.WithCancel(context.Background())
+		entered, release := make(chan struct{}), make(chan struct{})
+		ProvideNamed(root, "conn", func(Injector) (*ctxDrainingConn, error) {
+			close(entered)
+			<-release
+			cancel()
+			return &ctxDrainingConn{calls: &calls}, nil
+		})
+		g := make(chan error, 1)
+		go func() { _, err := InvokeNamed[*ctxDrainingConn](root, "conn"); g <- err }()
+		<-entered
+		done := make(chan struct{})
+		go func() { defer close(done); _ = ShutdownNamedWithContext(ctx, root, "conn") }()
+		time.Sleep(time.Millisecond)
+		close(release)
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			hung++
+		}
+		select {
+		case <-g:
+		case <-time.After(2 * time.Second):
+			hung++
+		}
+		root.Shutdown()
+	}
+
+	assert.Zero(t, hung, "calls held past their bound, out of %d", n)
+}
+
+func TestShutdownContext_SelfShutdownUnbounded(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+
+		root := New()
+		var calls atomic.Int32
+		res := make(chan error, 1)
+		ProvideNamed(root, "conn", func(i Injector) (*lateCounted, error) {
+			res <- ShutdownNamed(i, "conn") // unbounded self-shutdown
+			return &lateCounted{calls: &calls}, nil
+		})
+
+		_, err := InvokeNamed[*lateCounted](root, "conn")
+		synctest.Wait()
+
+		is.ErrorIs(err, ErrShutdown)
+		is.NoError(<-res)
+		is.Equal(int32(1), calls.Load(), "the build shut its late instance down")
+	})
+}
+
+// healthChildEnv makes the test binary run the child side of
+// TestShutdownContext_HealthHookRepanicDuringShutdown.
+const healthChildEnv = "DOGER_HEALTH_REPANIC_CHILD"
+
+func TestShutdownContext_HealthHookRepanicDuringShutdown(t *testing.T) {
+	if os.Getenv(healthChildEnv) == "1" {
+		scheduler := &manualScheduler{}
+		var armed atomic.Bool
+		firstChange := make(chan struct{})
+		var once sync.Once
+		root := NewWithOpts(&InjectorOpts{
+			HealthScheduler:    scheduler,
+			HookContainerPanic: func(_ *RootScope, _ string, v any) { panic(v) },
+			HookContainerHealthChanged: []func(*RootScope, HealthState, HealthState){
+				func(*RootScope, HealthState, HealthState) {
+					if armed.Load() {
+						panic("health-hook-boom")
+					}
+					once.Do(func() { close(firstChange) })
+				},
+			},
+		})
+		tenant := root.Scope("tenant")
+		ProvideNamedValue(tenant, "h", sickCheck{})
+		if err := root.Start(); err != nil {
+			panic(err)
+		}
+		scheduler.runRound()
+		<-firstChange // the round's change was delivered
+		armed.Store(true)
+		func() {
+			defer func() { fmt.Printf("RECOVERED:%v\n", recover()) }() // HookContainerPanic re-panics on the caller
+			tenant.ShutdownWithContext(context.Background())
+		}()
+		fmt.Println("RETURNED")
+		return
+	}
+
+	t.Parallel()
+
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestShutdownContext_HealthHookRepanicDuringShutdown$") //nolint:gosec // G204: re-runs this test binary with a fixed flag
+	cmd.Env = append(os.Environ(), healthChildEnv+"=1")
+	output, err := cmd.CombinedOutput()
+
+	require.NoError(t, err, "the child process crashed:\n%s", output)
+	assert.Contains(t, string(output), "RECOVERED:health-hook-boom", "the panic value reaches the caller")
+	assert.Contains(t, string(output), "RETURNED")
 }

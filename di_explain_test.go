@@ -52,7 +52,6 @@ func fakeProvider6(i Injector) (int, error) {
 
 func TestFromTemplate(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
 
 	tests := []struct {
 		name     string
@@ -69,6 +68,7 @@ func TestFromTemplate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
 			is := assert.New(t)
 
 			output := fromTemplate(tt.template, tt.data)
@@ -83,7 +83,6 @@ func TestFromTemplate(t *testing.T) {
 
 func TestExplainService_String(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
 
 	tests := []struct {
 		name     string
@@ -179,6 +178,7 @@ Dependents:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
 			is := assert.New(t)
 
 			is.Equal(tt.expected, tt.output.String())
@@ -188,7 +188,6 @@ Dependents:
 
 func TestExplainServiceDependency_String(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
 
 	a1 := ExplainServiceDependencyOutput{
 		ScopeID:   "1234",
@@ -249,6 +248,7 @@ func TestExplainServiceDependency_String(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
 			is := assert.New(t)
 
 			is.Equal(tt.expected, tt.dependency.String())
@@ -821,7 +821,6 @@ DAG:
 
 func TestExplainInjector_String(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
 
 	tests := []struct {
 		name     string
@@ -898,6 +897,7 @@ DAG:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
 			is := assert.New(t)
 
 			is.Equal(tt.expected, tt.output.String())
@@ -907,7 +907,6 @@ DAG:
 
 func TestExplainInjectorScope_String(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
 
 	tests := []struct {
 		name     string
@@ -972,6 +971,7 @@ func TestExplainInjectorScope_String(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
 			is := assert.New(t)
 
 			is.Equal(tt.expected, tt.output.String())
@@ -981,7 +981,6 @@ func TestExplainInjectorScope_String(t *testing.T) {
 
 func TestExplainInjectorService_String(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 100*time.Millisecond)
 
 	tests := []struct {
 		name     string
@@ -1008,6 +1007,7 @@ func TestExplainInjectorService_String(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			testWithTimeout(t, 100*time.Millisecond)
 			is := assert.New(t)
 
 			is.Equal(tt.expected, tt.svc.String())
