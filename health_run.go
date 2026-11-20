@@ -295,9 +295,8 @@ func (m *healthMonitor) recordLocked(target healthTarget, record healthRecord) {
 		return
 	}
 
-	_, optional := healthClassification(wrapperOptions(target.wrapper))
 	record.target = target
-	record.state = stateOf(record.err, optional)
+	record.state = stateOf(record.err, optionalHealth(wrapperOptions(target.wrapper)))
 
 	previous, recorded := m.records[target.wrapper]
 	if _, member := m.members[target.wrapper]; member {
@@ -626,6 +625,9 @@ func (s *RootScope) joinOrStart(spec waitSpec, target healthTarget, check func(c
 	default:
 		waiter := newCallWaiter(spec, target, s.opts.Clock, false)
 		waiter.askedAt = s.opts.Clock.Now()
+		if call.next == nil {
+			call.next = map[*callWaiter]struct{}{}
+		}
 		call.next[waiter] = struct{}{}
 		waiter.call = call
 		m.mu.Unlock()
@@ -673,7 +675,6 @@ func (m *healthMonitor) newCallLocked(target healthTarget, check func(context.Co
 		releaseBound: func() {},
 		claimed:      make(chan struct{}),
 		waiters:      map[*callWaiter]struct{}{starter: {}},
-		next:         map[*callWaiter]struct{}{},
 	}
 	if call.pooled {
 		call.base, call.cancel, call.stop = newHealthCheckContext(spec.ctx)
