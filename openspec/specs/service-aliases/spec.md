@@ -12,7 +12,7 @@ Shutting down an alias (through scope shutdown or `Shutdown`/`ShutdownNamed` on 
 #### Scenario: Target is shut down once
 ```gherkin
 Given a root scope with <registration> "*Svc" implementing Shutdown() error that counts its calls
-And the alias As[*Svc, SvcIface] registered in <alias-scope>
+And the alias Alias[*Svc, SvcIface] registered in <alias-scope>
 And the alias was invoked from <alias-scope>
 When the consumer calls <operation>
 Then the target's Shutdown was called <calls> times
@@ -37,7 +37,7 @@ Then the target's Shutdown was called exactly 1 time in every run
 
 #### Scenario: Invoking the alias after its target is shut down
 ```gherkin
-Given a root scope with lazy "*Svc" and the alias As[*Svc, SvcIface]
+Given a root scope with lazy "*Svc" and the alias Alias[*Svc, SvcIface]
 And the consumer called ShutdownNamed(root, "*Svc")
 When the consumer invokes "SvcIface"
 Then the error matches ErrServiceNotFound
@@ -45,14 +45,14 @@ Then the error matches ErrServiceNotFound
 
 <!-- cases: 1 default: rows 1 and 2 are the zero-configuration path -->
 <!-- cases: N/A 2 overrides: shutting a target through an alias is never correct; a consumer shuts the target by its own name -->
-<!-- cases: N/A 3 zero values: an alias without a target cannot be registered (As fails) -->
+<!-- cases: N/A 3 zero values: an alias without a target cannot be registered (Alias fails) -->
 <!-- cases: 4 boundaries: alias in the same scope and in a child scope -->
 <!-- cases: 5 errors: shutting the alias returns nil; invoking it after the target is gone is ErrServiceNotFound, unchanged -->
 <!-- cases: 6 duplicates: the double-shutdown defect is the subject; 200 runs pin it -->
 <!-- cases: 7 lifecycle: child-scope shutdown keeps a parent-scope target running until the parent shuts down -->
 <!-- cases: N/A 8 concurrency: scope shutdown is already parallel; the repeated-runs scenario runs under -race -->
 <!-- cases: N/A 9 panics: no new panic path -->
-<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - row 3: shutting down a child scope no longer shuts down a parent-scope target through an alias registered in the child; row 5: ShutdownNamed on an alias no longer shuts its target -->
+<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - row 3: shutting down a child scope no longer shuts down a parent-scope target through an alias registered in the child; row 5: ShutdownNamed on an alias no longer shuts its target. BREAKING (flagged) - As is renamed Alias ("Alias functions replace As") -->
 
 ### Requirement: An export never shuts its target down
 Shutting down an export, through a scope shutdown or `ShutdownNamed` on the published name, SHALL remove the export without calling the exported service's `Shutdown` method. The exported service SHALL be shut down only through the scope that owns it, exactly once.
@@ -61,7 +61,7 @@ Shutting down an export, through a scope shutdown or `ShutdownNamed` on the publ
 ```gherkin
 Given a root scope with child scope "redis"
 And a lazy "*app.Pool" in scope "redis" implementing Shutdown() error that counts its calls, invoked once
-And the consumer called doger.Export[*app.Pool](redis, doger.ExportAs("pool"))
+And the consumer called doger.Export[*app.Pool](redis, doger.WithExportName("pool"))
 When the consumer calls <operation>
 Then the pool's Shutdown was called <calls> times
 
@@ -78,4 +78,53 @@ Examples:
 <!-- cases: 7 lifecycle: root, published name and owning scope rows -->
 <!-- cases: N/A 8 concurrency: covered by the existing repeated-runs scenario pattern; the test runs under -race -->
 <!-- cases: N/A 9 panics: no new panic path -->
-<!-- cases: 10 compatibility: aliases created with As/Bind are unchanged -->
+<!-- cases: 10 compatibility: aliases created with Alias/Bind are unchanged; ExportAs is renamed WithExportName (scope-export) -->
+
+### Requirement: Alias functions replace As
+The alias registration functions SHALL be named `Alias[Initial, Alias](i)`, `AliasNamed[Initial, Alias](i, initial, alias)`, `MustAlias[Initial, Alias](i)` and `MustAliasNamed[Initial, Alias](i, initial, alias)`, with the behavior `As`, `AsNamed`, `MustAs` and `MustAsNamed` had. Those four `As*` identifiers SHALL no longer exist, so the `As` prefix only names registration options such as `AsDefault`.
+
+#### Scenario: Alias functions register an alias
+```gherkin
+Given a root scope with a lazy "*app.Pg" implementing app.DB, producing "pg-1"
+And <setup>
+When the consumer calls <call>
+Then <outcome>
+
+Examples:
+  | setup                    | call                                                                   | outcome                                                                                  |
+  | nothing else             | doger.Alias[*app.Pg, app.DB](root)                                     | it returns nil, and doger.Invoke[app.DB](root) returns "pg-1"                            |
+  | nothing else             | doger.AliasNamed[*app.Pg, app.DB](root, "*app.Pg", "db")               | it returns nil, and doger.InvokeNamed[app.DB](root, "db") returns "pg-1"                 |
+  | nothing else             | doger.MustAlias[*app.Pg, app.DB](root)                                 | it does not panic, and doger.Invoke[app.DB](root) returns "pg-1"                         |
+  | nothing else             | doger.MustAliasNamed[*app.Pg, app.DB](root, "*app.Pg", "db")           | it does not panic, and doger.InvokeNamed[app.DB](root, "db") returns "pg-1"              |
+  | nothing else             | doger.Alias[*app.Missing, app.DB](root)                                | it returns an error matching ErrServiceNotFound, and nothing is registered               |
+  | nothing else             | doger.AliasNamed[*app.Pg, io.Reader](root, "*app.Pg", "r")             | it returns an error naming "*app.Pg" and "io.Reader", and nothing is registered          |
+  | nothing else             | doger.MustAlias[*app.Missing, app.DB](root)                            | it panics with an error matching ErrServiceNotFound                                      |
+  | "app.DB" already aliased | doger.Alias[*app.Pg, app.DB](root)                                     | it returns an error matching ErrServiceAlreadyDeclared                                   |
+  | nothing else             | doger.Alias[*app.Pg, app.DB](nil)                                      | it returns an error matching ErrNilInjector                                              |
+```
+
+#### Scenario: Bind keeps working
+```gherkin
+Given a root scope built with doger.New(doger.Lazy(newPg), doger.Bind[*app.Pg, app.DB]())
+When the consumer invokes doger.Invoke[app.DB](root)
+Then the result is the "*app.Pg" instance
+```
+
+#### Scenario: The As identifiers are gone
+```gherkin
+Given the exported API of package doger, listed with go doc -short
+When the test reads the listing
+Then it contains "func Alias[", "func AliasNamed[", "func MustAlias[" and "func MustAliasNamed["
+And it contains no line starting with "func As[", "func AsNamed[", "func MustAs[" or "func MustAsNamed["
+```
+
+<!-- cases: 1 default: the four happy-path rows -->
+<!-- cases: N/A 2 overrides: no option -->
+<!-- cases: 3 zero values: nil injector row (ErrNilInjector, resolution-errors) -->
+<!-- cases: 4 boundaries: by type name and by explicit names -->
+<!-- cases: 5 errors: missing target (ErrServiceNotFound), type not implemented (error naming both types, unchanged), nil injector -->
+<!-- cases: 6 duplicates: an alias name already taken matches ErrServiceAlreadyDeclared -->
+<!-- cases: N/A 7 lifecycle: alias shutdown is covered by "An alias never shuts its target down"; a closed scope is container-shutdown's -->
+<!-- cases: N/A 8 concurrency: registration concurrency is unchanged -->
+<!-- cases: 9 panics: Must variants panic with the error -->
+<!-- cases: 10 compatibility: BREAKING (flagged) - As, AsNamed, MustAs and MustAsNamed are removed; migration: rename the calls to Alias, AliasNamed, MustAlias and MustAliasNamed (gofmt -r 'As -> Alias' per call site); Bind and BindNamed are unchanged -->

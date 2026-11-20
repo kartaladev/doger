@@ -113,7 +113,7 @@ Then the result is "base"
 
 #### Scenario: The alias skip compares names
 ```gherkin
-Given a root scope with lazy "svc" implementing "Greeter" and alias "g" of "svc" registered with AsNamed
+Given a root scope with lazy "svc" implementing "Greeter" and alias "g" of "svc" registered with AliasNamed
 And child scope "child" with lazy "svc" implementing "Greeter", whose provider calls InvokeAs[Greeter](i)
 When the consumer invokes "svc" from "child"
 Then the error matches ErrServiceNotMatch, not ErrCircularDependency, because "g" targets the name "svc" of the invoking service
@@ -127,7 +127,7 @@ Then the error matches ErrServiceNotMatch, not ErrCircularDependency, because "g
 <!-- cases: 6 duplicates: registration order no longer matters for self-selection; aliases of the invoking service, direct or chained, are skipped too, by target name, even when the target name resolves to a shadowed ancestor service -->
 <!-- cases: 7 lifecycle: a provider's injector stored and used after the provider returned still skips its service -->
 <!-- cases: N/A 8 concurrency, 9 panics: unchanged -->
-<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - a decorator calling InvokeAs for its own interface no longer fails with ErrCircularDependency; a lone self-match fails with ErrServiceNotMatch. BEHAVIOR CHANGE (flagged) - an alias of the invoking service is skipped too -->
+<!-- cases: 10 compatibility: AliasNamed replaces AsNamed (BREAKING rename, see service-aliases). BEHAVIOR CHANGE (flagged) - a decorator calling InvokeAs for its own interface no longer fails with ErrCircularDependency; a lone self-match fails with ErrServiceNotMatch. BEHAVIOR CHANGE (flagged) - an alias of the invoking service is skipped too -->
 
 ### Requirement: Implicit-aliasing struct injection uses the same selection
 When `InvokeStruct` falls back to type-based resolution for an empty tag (`do:""`), it SHALL select the candidate by the same rule as `InvokeAs`, including skipping the service whose provider calls it. It SHALL fall back only when no visible service has the field type's name, or when the only one is the service whose provider calls it. A service with that name that fails to build SHALL return its error, even one matching `ErrServiceNotFound`.
@@ -171,33 +171,6 @@ Examples:
 <!-- cases: 8 concurrency: 100 repetitions -->
 <!-- cases: N/A 9 panics: unchanged -->
 <!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged), same as InvokeAs; the fallback deciding by name is BREAKING for a type-named service failing with ErrServiceNotFound (flagged) -->
-
-### Requirement: An alias registered with a nil injector uses DefaultRootScope
-`As` and `AsNamed` with a nil injector SHALL register the alias in `DefaultRootScope` and resolve its target from it, so selection by type and the alias's health check work as for an alias registered with `DefaultRootScope` itself.
-
-#### Scenario: Using an alias registered with nil
-```gherkin
-Given DefaultRootScope is a new container, restored after the test
-And lazy "nil-alias-base" implementing "Greeter" registered with a nil injector, and AsNamed[*greeterImpl, Greeter](nil, "nil-alias-base", "nil-alias")
-When the consumer <action>
-Then <result>
-
-Examples:
-  | action                                                                                       | result                                     |
-  | invokes "nil-alias-decor", whose provider calls InvokeAs[Greeter] and decorates the result    | the decorator wraps "nil-alias-base"       |
-  | invokes "nil-alias", then calls HealthCheckNamed(nil, "nil-alias")                             | the check returns nil and does not panic   |
-```
-
-<!-- cases: 1 default: the nil injector convention of every registration helper -->
-<!-- cases: N/A 2 overrides: pass an injector -->
-<!-- cases: 3 zero values: the nil injector is the subject -->
-<!-- cases: N/A 4 boundaries: one alias -->
-<!-- cases: 5 errors: no nil-pointer error -->
-<!-- cases: N/A 6 duplicates: none -->
-<!-- cases: N/A 7 lifecycle: none -->
-<!-- cases: N/A 8 concurrency: the test is not parallel, as every DefaultRootScope test (design V50) -->
-<!-- cases: 9 panics: the health-check row -->
-<!-- cases: 10 compatibility: fixes a nil-pointer error; InvokeAs following alias targets made it reachable from a provider -->
 
 ### Requirement: InvokeAs prefers non-default services over defaults
 By-type selection (`InvokeAs[T]` and implicit-aliasing struct injection) SHALL consider unresolved defaults only if no other visible candidate is assignable to `T`. A default that already chose its own provider SHALL rank, and shadow, as a non-default; a yielded default SHALL NOT be a candidate. An unresolved or yielded default SHALL NOT hide a same-name non-default in an ancestor.
@@ -264,3 +237,38 @@ Then field Src holds the "mySource" instance
 <!-- cases: N/A 8 concurrency: selection runs under the existing locks; decide() is covered in default-registrations -->
 <!-- cases: N/A 9 panics: selection does not panic -->
 <!-- cases: 10 compatibility: without defaults, selection is unchanged -->
+
+### Requirement: InvokeAs returns a nil-interface instance without panicking
+When the service selected by `InvokeAs[T]` or `MustInvokeAs[T]` resolves to a nil interface value, the call SHALL return the zero value of `T` and a nil error instead of panicking.
+
+#### Scenario: Selecting a service whose value is a nil interface
+```gherkin
+Given a root scope with ProvideNamedValue[io.Reader](root, "reader", nil)
+When the consumer calls <call>
+Then the result is a nil io.Reader
+And <outcome>
+
+Examples:
+  | call                        | outcome                 |
+  | InvokeAs[io.Reader](root)   | the error is nil        |
+  | MustInvokeAs[io.Reader](root) | the call does not panic |
+```
+
+#### Scenario: A non-nil selection is unchanged
+```gherkin
+Given a root scope with ProvideNamedValue[io.Reader](root, "reader", strings.NewReader("x"))
+When the consumer calls InvokeAs[io.Reader](root)
+Then the result reads "x"
+And the error is nil
+```
+
+<!-- cases: 1 default: no configuration -->
+<!-- cases: N/A 2 overrides: none -->
+<!-- cases: 3 zero values: the nil interface is the subject -->
+<!-- cases: N/A 4 boundaries: one candidate -->
+<!-- cases: N/A 5 errors: success path; ErrServiceNotMatch paths are unchanged -->
+<!-- cases: N/A 6 duplicates: selection order is the existing requirement -->
+<!-- cases: N/A 7 lifecycle: unrelated -->
+<!-- cases: N/A 8 concurrency: no shared state written -->
+<!-- cases: 9 panics: previously an interface-conversion panic -->
+<!-- cases: 10 backward compatibility: non-nil selections are unchanged (second scenario) -->

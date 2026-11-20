@@ -163,7 +163,7 @@ Examples:
   | state                          | error                 |
   | started                        | ErrAlreadyStarted     |
   | failed (after a Starting veto) | ErrAlreadyStarted     |
-  | shut down                      | ErrStartAfterShutdown |
+  | shut down                      | ErrShutdown |
 ```
 
 <!-- cases: N/A 2 overrides: firing points are fixed -->
@@ -251,7 +251,7 @@ Examples:
 <!-- cases: N/A 10 compatibility: new API -->
 
 ### Requirement: Starting and Closing hooks must not call Shutdown synchronously
-A `HookContainerStarting` or `HookContainerClosing` hook MUST NOT call root `Shutdown` without a deadline: that call waits for the running Start or Shutdown (start-lifecycle D6). `ShutdownWithContext` called from such a hook with a deadline SHALL return when the deadline expires with a failed report. A Start whose Starting hook did so SHALL fail with an error wrapping `ErrStartAfterShutdown`.
+A `HookContainerStarting` or `HookContainerClosing` hook MUST NOT call root `Shutdown` without a deadline: that call waits for the running Start or Shutdown (start-lifecycle D6). `ShutdownWithContext` called from such a hook with a deadline SHALL return when the deadline expires with a failed report. A Start whose Starting hook did so SHALL fail with an error wrapping `ErrShutdown`.
 
 #### Scenario: Starting or Closing hook calls Shutdown with a deadline
 ```gherkin
@@ -265,8 +265,8 @@ And the counting Closed hook ran exactly 1 time
 
 Examples:
   | hook     | returns | operation | outcome                                                                                              |
-  | Starting | nil     | Start     | Start returns an error matching ErrStartAfterShutdown and the Failed hook ran 1 time                 |
-  | Starting | errVeto | Start     | Start returns an error matching both ErrStartAfterShutdown and errVeto and the Failed hook ran 1 time |
+  | Starting | nil     | Start     | Start returns an error matching ErrShutdown and the Failed hook ran 1 time                 |
+  | Starting | errVeto | Start     | Start returns an error matching both ErrShutdown and errVeto and the Failed hook ran 1 time |
   | Closing  | nil     | Shutdown  | Shutdown returns a report with Succeed true and the Failed hook ran 0 times                          |
 ```
 
@@ -322,7 +322,7 @@ And the Closed hook ran once
 <!-- cases: N/A 10 compatibility: covered by "No hooks registered leaves behavior unchanged" -->
 
 ### Requirement: Shutdown during an in-flight Start
-If root `Shutdown` begins while the start pipeline runs, it SHALL cancel the running Start with cause `ErrStartAfterShutdown` and fire Closing only after the pipeline returned or its own context ended (start-lifecycle D6). `Start` SHALL then skip Started and Ready and run Failed with an error wrapping `ErrStartAfterShutdown`, even if the pipeline returned nil. Once the pipeline has returned, Closing and Closed MAY run before or while Started, Ready or Failed hooks run.
+If root `Shutdown` begins while the start pipeline runs, it SHALL cancel the running Start with cause `ErrShutdown` and fire Closing only after the pipeline returned or its own context ended (start-lifecycle D6). `Start` SHALL then skip Started and Ready and run Failed with an error wrapping `ErrShutdown`, even if the pipeline returned nil. Once the pipeline has returned, Closing and Closed MAY run before or while Started, Ready or Failed hooks run.
 
 #### Scenario: Shutdown races a running Start
 ```gherkin
@@ -336,8 +336,8 @@ And <ordering>
 Examples:
   | shutdown_point            | setup                                                                                                   | start_result                                                     | started | ready | failed | ordering                                                                    |
   | Start finishes first      | a Started hook that blocks until Shutdown has returned                                                  | nil                                                              | 1       | 1     | 0      | the recorded order is "started-hook, closing-hook, closed-hook, ready-hook" |
-  | Shutdown cancels Start    | a Starter "a" whose Start(ctx) blocks until ctx.Done() and returns ctx.Err()                            | an error for which errors.Is(err, ErrStartAfterShutdown) is true | 0       | 0     | 1      | the Closing hook ran after "a".Start returned                               |
-  | Shutdown in the last step | a StageAfterStart kind handler that starts Shutdown in a goroutine, waits until synctest.Wait shows it blocked, and returns nil | an error for which errors.Is(err, ErrStartAfterShutdown) is true | 0       | 0     | 1      | the Closing hook ran after the handler returned                             |
+  | Shutdown cancels Start    | a Starter "a" whose Start(ctx) blocks until ctx.Done() and returns ctx.Err()                            | an error for which errors.Is(err, ErrShutdown) is true | 0       | 0     | 1      | the Closing hook ran after "a".Start returned                               |
+  | Shutdown in the last step | a StageAfterStart kind handler that starts Shutdown in a goroutine, waits until synctest.Wait shows it blocked, and returns nil | an error for which errors.Is(err, ErrShutdown) is true | 0       | 0     | 1      | the Closing hook ran after the handler returned                             |
 ```
 
 #### Scenario: Shutdown interrupts a Starting hook or a late pipeline step
@@ -345,7 +345,7 @@ Examples:
 Given a root container inside synctest.Test with a Failed hook recording its error
 And <setup>
 When the consumer calls Start
-Then Start returns an error for which errors.Is(err, ErrStartAfterShutdown) is true
+Then Start returns an error for which errors.Is(err, ErrShutdown) is true
 And the Failed hook received that same error
 
 Examples:
@@ -362,7 +362,7 @@ And a HookAfterStart hook that panics with errBoom for "a"
 And lazy Starter "a" whose Start(ctx) blocks until ctx.Done() and returns nil, <others>
 When the consumer calls Start, and Shutdown() is called in another goroutine once "a" has entered Start
 Then Start panics with errBoom
-And the Failed hook received an error matching both errBoom and ErrStartAfterShutdown
+And the Failed hook received an error matching both errBoom and ErrShutdown
 
 Examples:
   | n | others                                  |
@@ -374,7 +374,7 @@ Examples:
 ```gherkin
 Given 20000 fresh root containers, each with a StageAfterStart handler of kind "k" for lazy "j" that signals another goroutine to call Shutdown() and then returns nil
 When the consumer calls <operation> on each and waits for its Shutdown
-Then every call returns nil or an error for which errors.Is(err, ErrStartAfterShutdown) is true
+Then every call returns nil or an error for which errors.Is(err, ErrShutdown) is true
 
 Examples:
   | operation                                                   |
@@ -453,7 +453,7 @@ Examples:
 <!-- cases: 10 compatibility: CloneWithOpts keeps its existing rule of using only the given options -->
 
 ### Requirement: Observer hook panics are recovered and re-raised
-A panic in a Started, Ready, Failed, Closing or Closed hook SHALL be recovered. The remaining hooks of that list and the rest of `Start` or `Shutdown`, including its phase transitions, SHALL still run. Once the operation is complete, the first recovered panic SHALL be passed on the calling goroutine to `InjectorOpts.HookContainerPanic` with the hook point name; later ones SHALL be logged via `Logf`. When `HookContainerPanic` is nil, the default SHALL re-panic with the recovered value.
+A panic in a Started, Ready, Failed, Closing or Closed hook SHALL be recovered. The remaining hooks of that list and the rest of `Start` or `Shutdown`, including its phase transitions, SHALL still run. Once the operation is complete, the first recovered panic SHALL be passed on the calling goroutine to `InjectorOpts.HookContainerPanic` with the hook point name; later ones SHALL be logged through `InjectorOpts.Logger` as an Error record `panic recovered` with attribute `point`, the value itself only in a Debug record `panic value`. When `HookContainerPanic` is nil, the default SHALL re-panic with the recovered value.
 
 #### Scenario: Default re-panics after the operation completes
 ```gherkin
@@ -470,19 +470,19 @@ Examples:
   | Started | a Ready hook that records its call                  | Start     | the following Started hook and the Ready hook ran      | ErrAlreadyStarted     |
   | Ready   | no other hooks                                      | Start     | the following Ready hook ran                           | ErrAlreadyStarted     |
   | Failed  | a Starter service "server" whose Start returns boom | Start     | the following Failed hook ran                          | ErrAlreadyStarted     |
-  | Closing | a Closed hook that records its call                 | Shutdown  | "db" was shut down and the following Closing and the Closed hook ran | ErrStartAfterShutdown |
-  | Closed  | no other hooks                                      | Shutdown  | the following Closed hook ran                          | ErrStartAfterShutdown |
+  | Closing | a Closed hook that records its call                 | Shutdown  | "db" was shut down and the following Closing and the Closed hook ran | ErrShutdown |
+  | Closed  | no other hooks                                      | Shutdown  | the following Closed hook ran                          | ErrShutdown |
 ```
 
 #### Scenario: HookContainerPanic overrides the default
 ```gherkin
 Given a root container whose HookContainerPanic records the hook point and the recovered value
 And a <hook> hook that panics with "kaboom", followed by a <hook> hook that panics with "boom"
-And a Logf recorder
+And a Logger whose handler records every record at Debug level
 When the consumer calls <operation>
 Then <operation> returns <result> without panicking
 And HookContainerPanic was called exactly 1 time with hook "<point>" and value "kaboom"
-And Logf received a message containing "boom"
+And the handler recorded one "panic recovered" record at Error level with point "<point>" and one "panic value" record at Debug level containing "boom"
 
 Examples:
   | hook    | operation | result                     | point   |

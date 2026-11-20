@@ -119,7 +119,7 @@ Examples:
   | a lazy Healthchecker root/"db" that was never invoked                  | the RootScope       | no service              |
   | a lazy Healthchecker root/"db" that was invoked                        | the RootScope       | root/"db"               |
   | a transient Healthchecker root/"tmp" that was invoked                  | the RootScope       | no service              |
-  | a Healthchecker value root/"db" and an alias "hc" to it (AsNamed)      | the RootScope       | root/"db" only          |
+  | a Healthchecker value root/"db" and an alias "hc" to it (AliasNamed)      | the RootScope       | root/"db" only          |
   | an alias "hc" to a lazy Healthchecker root/"db" that was never invoked | the RootScope       | no service              |
   | a Healthchecker value "child"/"db" exported to the root                | the RootScope       | "child"/"db" only       |
   | a Healthchecker value "child"/"db" exported to the root                | the root's own *Scope | "child"/"db"          |
@@ -343,7 +343,7 @@ Examples:
 <!-- cases: 10 backward compatibility: forced paths still check such a service; rounds skip it like reads (verification 3, W5) -->
 
 ### Requirement: A monitored container's report runs only first checks
-While a `HealthScheduler` is scheduling the container's rounds, a report SHALL have `Monitored` true. A read SHALL return the recorded results, and SHALL check on demand only covered services that have no recorded result and no check in flight. A covered service whose first check is in flight SHALL be `HealthUnknown` with `PendingSince` set.
+While a `HealthScheduler` is scheduling the container's rounds, a report SHALL have `Monitored` true. A read SHALL return the recorded results, and SHALL check on demand only covered services that have no recorded result. A covered service whose first check is in flight, started by a round or by another read, SHALL be joined: the read SHALL wait for it within its own context and report bound, and report an unfinished one as the report bound requirement says.
 
 #### Scenario: Reads on a monitored container cost nothing
 ```gherkin
@@ -361,23 +361,52 @@ And a Healthchecker "db" whose check <behavior>
 When the consumer calls HealthReport() on the root scope
 Then the report has Monitored true
 And "db" is <entry>
+And the health check of "db" was called <calls> time in total
 
 Examples:
-  | behavior                                                         | entry                                                          |
-  | returns nil                                                      | HealthHealthy                                                  |
-  | is already in flight from another reader, blocking until released | HealthUnknown with PendingSince 2026-01-01T00:00:00Z, once the reader's 20ms context ends |
+  | behavior                                                                                      | entry                                                                                      | calls |
+  | returns nil                                                                                   | HealthHealthy                                                                              | 1     |
+  | is already in flight from another reader, and is released 5ms after this read began          | HealthHealthy, the read having waited for that check                                       | 1     |
+  | is already in flight from another reader, blocking until released, with the read's ctx at 20ms | HealthUnhealthy with an error matching ErrHealthCheckTimeout and context.DeadlineExceeded | 1     |
+```
+
+#### Scenario: A read right after Ready joins the first scheduled check
+```gherkin
+Given an injector with a fake clock, HealthCheckTimeout <timeout>, and a HealthScheduler whose ScheduleHealthRounds starts round(ctx) on its own goroutine at once
+And a Healthchecker "db" whose check blocks until released, then returns <result>, counting its calls
+And the consumer called Start, and the scheduled round's check of "db" is in flight
+When the consumer calls HealthReport() on the root scope, and <event>
+Then the report has Monitored true
+And "db" is <entry>
+And the health check of "db" was called 1 time in total
+
+Examples:
+  | timeout | result             | event                                          | entry                                                                    |
+  | 0       | nil                | the check is released                          | HealthHealthy                                                            |
+  | 0       | errors.New("down") | the check is released                          | HealthUnhealthy with the same "down" error                               |
+  | 0       | nil                | the fake clock advances by 10s                 | HealthUnhealthy with an error matching ErrHealthCheckTimeout and context.DeadlineExceeded |
+  | 50ms    | nil                | the fake clock advances by 50ms                | HealthUnhealthy with an error matching ErrHealthCheckTimeout and context.DeadlineExceeded |
+```
+
+#### Scenario: Concurrent first reads of a monitored container share the round's check
+```gherkin
+Given a started injector with a manual HealthScheduler and a Healthchecker "db" that blocks until released, counting its calls
+And the test started the round on its own goroutine, so the first check of "db" is in flight
+When 50 goroutines call HealthReport() on the root scope, and the check is released once all 50 wait
+Then all 50 reports have Monitored true and "db" in HealthHealthy
+And the health check of "db" was called 1 time in total
 ```
 
 <!-- cases: N/A 1 default: monitoring needs a scheduler -->
-<!-- cases: 2 overrides: the scheduler is in health-check-scheduling -->
-<!-- cases: 3 zero values: no result yet -->
-<!-- cases: 4 boundaries: 1 and 1000 readers; first check in flight -->
-<!-- cases: N/A 5 errors: none -->
+<!-- cases: 2 overrides: HealthCheckTimeout 0 (10s report bound) and 50ms; the reader's own context -->
+<!-- cases: 3 zero values: no result yet; HealthCheckTimeout 0 -->
+<!-- cases: 4 boundaries: 1, 50 and 1000 readers; first check in flight; the bound reached exactly (advance equal to the bound) -->
+<!-- cases: 5 errors: the check's own error is returned unchanged; an unfinished check matches ErrHealthCheckTimeout and the cause -->
 <!-- cases: N/A 6 not found/duplicate: not applicable -->
-<!-- cases: 7 lifecycle: Ready before and after a round; a service appearing while monitored is checked by the next read -->
-<!-- cases: 8 concurrency: 1000 concurrent readers -->
-<!-- cases: N/A 9 panics: not applicable -->
-<!-- cases: N/A 10 backward compatibility: new API -->
+<!-- cases: 7 lifecycle: Ready before and after a round; a read issued right after Start while the first round runs; a service appearing while monitored is checked by the next read -->
+<!-- cases: 8 concurrency: 50 readers joining one in-flight check; 1000 concurrent readers of recorded results -->
+<!-- cases: N/A 9 panics: a panicking check is specified in health-check-execution -->
+<!-- cases: 10 backward compatibility: BEHAVIOR CHANGE (flagged) - a read that met a first check in flight returned HealthUnknown at once; it now waits for that check within its bound, as the HealthReportWithContext godoc already promised -->
 
 ### Requirement: An unmonitored container's report runs stale checks on demand
 When no scheduler is scheduling and the container is in `PhaseIdle`, `PhaseFailed` or `PhaseReady`, a read SHALL check each covered service whose last result is missing or at least `HealthReportCacheTTL` old, and return the fresh results with `Monitored` false. A TTL of 0 means 1s, and a negative TTL means always stale. Concurrent reads SHALL share each in-flight check. In `PhaseStarting`, `PhaseStarted` and `PhaseClosing` a read SHALL run no check.
@@ -460,11 +489,11 @@ And the entry for "db" is <entry>
 
 Examples:
   | timeout | context                       | advance | returns                    | entry                                                                  |
-  | 0       | never cancelled               | 10s     | after the advance          | HealthUnhealthy, "DI: health check timeout: context deadline exceeded" |
+  | 0       | never cancelled               | 10s     | after the advance          | HealthUnhealthy, "doger: health check timeout: context deadline exceeded" |
   | 0       | never cancelled               | 9.999s  | not yet                    | (still waiting)                                                        |
-  | 20ms    | never cancelled               | 20ms    | after the advance          | HealthUnhealthy, "DI: health check timeout: context deadline exceeded" |
+  | 20ms    | never cancelled               | 20ms    | after the advance          | HealthUnhealthy, "doger: health check timeout: context deadline exceeded" |
   | -1ns    | never cancelled               | 10m     | not yet                    | (still waiting)                                                        |
-  | 0       | cancelled before the call     | 0s      | at once                    | HealthUnhealthy, "DI: health check timeout: context canceled"          |
+  | 0       | cancelled before the call     | 0s      | at once                    | HealthUnhealthy, "doger: health check timeout: context canceled"          |
 ```
 
 #### Scenario: A reader leaving does not affect other readers
@@ -583,7 +612,7 @@ Examples:
   | check                                                                        | entry                                                                  |
   | blocks until released, ignoring its context, then returns nil                | HealthHealthy                                                          |
   | blocks until released, ignoring its context, then returns errors.New("down") | HealthUnhealthy, "down"                                                |
-  | blocks until released or its context is done, then returns ctx.Err()         | HealthUnhealthy, "DI: health check timeout: context deadline exceeded" |
+  | blocks until released or its context is done, then returns ctx.Err()         | HealthUnhealthy, "doger: health check timeout: context deadline exceeded" |
 ```
 
 <!-- cases: N/A 1 default: no option -->
@@ -641,7 +670,7 @@ Examples:
 #### Scenario: A service that leaves before its check starts is not recorded
 ```gherkin
 Given an injector with a Healthchecker root/"a" returning nil and a Healthchecker "b" in child scope "child" returning errors.New("down"), and <mode>
-And a Logf that shuts scope "child" down when the read or round starts the check of "a", after "b" was listed
+And a Logger whose handler shuts scope "child" down when it handles the "health check started" record for service=a, after "b" was listed
 When <reader> runs
 Then the injector holds no health record and no member for "b"
 And the overall state the container hooks track is HealthHealthy
@@ -655,7 +684,7 @@ Examples:
 #### Scenario: A timeout of a check started after its service left is not recorded
 ```gherkin
 Given an injector with HealthCheckTimeout 20ms, a Healthchecker root/"a" returning nil and a Healthchecker "b" in child scope "child" that blocks until released, ignoring its context, and <mode>
-And a Logf that shuts scope "child" down when the read or round starts the check of "a", after "b" was listed
+And a Logger whose handler shuts scope "child" down when it handles the "health check started" record for service=a, after "b" was listed
 When <reader> runs and reaches the 20ms bound of "b"
 Then the injector holds no health record and no member for "b"
 And the overall state the container hooks track is HealthHealthy
@@ -677,7 +706,7 @@ A report read or round SHALL NOT start the check of a covered service that left 
 #### Scenario: A service that left before the read reached it is not checked
 ```gherkin
 Given an injector with a Healthchecker root/"a" returning nil and a Healthchecker "b" in child scope "child" that counts its calls, and <mode>
-And a Logf that shuts scope "child" down when the read or round starts the check of "a", after "b" was listed
+And a Logger whose handler shuts scope "child" down when it handles the "health check started" record for service=a, after "b" was listed
 When <reader> runs
 Then the health check of "b" was never called
 
@@ -697,3 +726,113 @@ Examples:
 <!-- cases: 8 concurrency: a service leaving between the read's registration check and the start of its check is not recorded (previous requirement) -->
 <!-- cases: N/A 9 panics: not applicable -->
 <!-- cases: 10 backward compatibility: forced paths and single-service functions keep running a listed service's check, as today -->
+
+### Requirement: Health and phase enums have a text form
+`HealthState` and `ContainerPhase` SHALL implement `encoding.TextMarshaler` and `encoding.TextUnmarshaler` with the lower-case names their `String()` returns. Marshalling a value outside the declared constants SHALL fail, and unmarshalling an unknown name SHALL fail without changing the receiver.
+
+#### Scenario: HealthState and ContainerPhase text round trip
+```gherkin
+Given the value <value>
+When the consumer calls MarshalText on it and UnmarshalText on the result into a new variable
+Then MarshalText returns <text> and error <marshal error>
+And the new variable equals <value> when MarshalText succeeded
+
+Examples:
+  | value              | text        | marshal error |
+  | HealthUnknown      | "unknown"   | nil           |
+  | HealthHealthy      | "healthy"   | nil           |
+  | HealthDegraded     | "degraded"  | nil           |
+  | HealthUnhealthy    | "unhealthy" | nil           |
+  | HealthState(42)    | nil         | non-nil       |
+  | PhaseIdle          | "idle"      | nil           |
+  | PhaseStarting      | "starting"  | nil           |
+  | PhaseStarted       | "started"   | nil           |
+  | PhaseReady         | "ready"     | nil           |
+  | PhaseFailed        | "failed"    | nil           |
+  | PhaseClosing       | "closing"   | nil           |
+  | PhaseClosed        | "closed"    | nil           |
+  | ContainerPhase(-1) | nil         | non-nil       |
+```
+
+#### Scenario: Unknown text is rejected
+```gherkin
+Given a HealthState variable s holding HealthHealthy and a ContainerPhase variable p holding PhaseReady
+When the consumer calls s.UnmarshalText(<text>) and p.UnmarshalText(<text>)
+Then both calls return a non-nil error
+And s is still HealthHealthy and p is still PhaseReady
+
+Examples:
+  | text        |
+  | ""          |
+  | "Healthy"   |
+  | "bogus"     |
+```
+
+<!-- cases: 1 default: the zero values HealthUnknown and PhaseIdle marshal to "unknown" and "idle" -->
+<!-- cases: N/A 2 overrides: no option -->
+<!-- cases: 3 zero values: zero enum values and empty text -->
+<!-- cases: 4 boundaries: first and last constants; one past the last (42, -1) -->
+<!-- cases: 5 errors: out-of-range values and unknown names fail -->
+<!-- cases: N/A 6 not found/duplicate: not applicable -->
+<!-- cases: N/A 7 lifecycle: pure value methods -->
+<!-- cases: N/A 8 concurrency: pure value methods -->
+<!-- cases: N/A 9 panics: no input panics -->
+<!-- cases: 10 backward compatibility: String() output is unchanged; text methods are additive -->
+
+### Requirement: A health report marshals to JSON for monitoring
+`json.Marshal` of a `HealthReport` the library returns SHALL succeed and SHALL emit lower-camel keys: `state` and `phase` as their text form, `monitored`, `checkedAt`, and `services`. Each service SHALL emit `service` (`scopeId`, `scopeName`, `service`), `tags`, `optional`, `state`, `error` (the error's message, also when it is empty; omitted only when the error is nil), `checkedAt` and `pendingSince` (RFC 3339, omitted when zero), and `duration` (a Go duration string).
+
+#### Scenario: Report JSON
+```gherkin
+Given an injector that is never started, whose Clock is a fake clock set to 2026-01-01T00:00:00Z
+And a Healthchecker "db" registered in the root scope with WithHealthTags(HealthTagReadiness), whose check advances the fake clock by 2s and returns <result>
+And the consumer read report r := HealthReport()
+When the consumer calls json.Marshal(r)
+Then the error is nil
+And the JSON equals <json>
+
+Examples:
+  | result             | json |
+  | nil                | {"state":"healthy","phase":"idle","monitored":false,"checkedAt":"2026-01-01T00:00:02Z","services":[{"service":{"scopeId":"<root id>","scopeName":"[root]","service":"db"},"tags":["readiness"],"optional":false,"state":"healthy","checkedAt":"2026-01-01T00:00:02Z","duration":"2s"}]} |
+  | errors.New("down") | {"state":"unhealthy","phase":"idle","monitored":false,"checkedAt":"2026-01-01T00:00:02Z","services":[{"service":{"scopeId":"<root id>","scopeName":"[root]","service":"db"},"tags":["readiness"],"optional":false,"state":"unhealthy","error":"down","checkedAt":"2026-01-01T00:00:02Z","duration":"2s"}]} |
+```
+
+#### Scenario: Empty and in-flight entries
+```gherkin
+Given <report>
+When the consumer calls json.Marshal on it
+Then the error is nil
+And the JSON <expectation>
+
+Examples:
+  | report                                                                                                          | expectation                                                                                     |
+  | the zero HealthReport{}                                                                                         | equals {"state":"unknown","phase":"idle","monitored":false,"services":[]}                       |
+  | a report whose "db" entry has a check in flight since 2026-01-01T00:00:00Z and no recorded result               | has for "db" "state":"unknown", "pendingSince":"2026-01-01T00:00:00Z", "duration":"0s", and no "error" or "checkedAt" key |
+  | a report whose "db" entry has Err set to a wrapped error fmt.Errorf("ping: %w", context.DeadlineExceeded)        | has for "db" "error":"ping: context deadline exceeded"                                          |
+  | a report whose "db" entry has Err set to errors.New("")                                                         | has for "db" "error":""                                                                         |
+  | a report whose "db" entry has nil Tags                                                                          | has for "db" "tags":[]                                                                          |
+```
+
+#### Scenario: A hand-built report with an out-of-range enum does not marshal
+```gherkin
+Given a HealthReport built by the consumer with <field>
+When the consumer calls json.Marshal on it
+Then the error is not nil
+
+Examples:
+  | field                                                  |
+  | State HealthState(42)                                  |
+  | Phase ContainerPhase(-1)                               |
+  | one entry for "db" with State HealthState(9)           |
+```
+
+<!-- cases: 1 default: a zero-config report marshals with no option -->
+<!-- cases: N/A 2 overrides: consumers needing another shape map the exported fields themselves -->
+<!-- cases: 3 zero values: the zero HealthReport (services as [] not null; zero times omitted); a nil Err omitted -->
+<!-- cases: 4 boundaries: zero, one service; zero and positive durations -->
+<!-- cases: 5 errors: wrapped errors are emitted as their full message; an error with an empty message keeps the "error" key; json.Marshal never fails on a report the library returns, while a hand-built report with an out-of-range State or Phase fails, as the strict enum text methods do -->
+<!-- cases: N/A 6 not found/duplicate: not applicable -->
+<!-- cases: 7 lifecycle: an entry with a check in flight (pendingSince) -->
+<!-- cases: N/A 8 concurrency: a report is the caller's own copy (existing requirement) -->
+<!-- cases: N/A 9 panics: marshalling never panics, including for a nil Err -->
+<!-- cases: 10 backward compatibility: previously json.Marshal emitted Go field names, numeric enums and "Err":{}; consumers relying on that shape must switch to the documented keys (BREAKING for that output, flagged) -->

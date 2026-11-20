@@ -319,7 +319,7 @@ Then both hooks recorded the name of type "EventHandler" and not "audit"
 <!-- cases: N/A 2 overrides, 3 zero values, 4 boundaries, 5 errors, 6 duplicates, 7 lifecycle, 8 concurrency, 9 panics: existing InvokeAs tests cover these unchanged; this requirement pins the hook name the shared helper could change -->
 
 ### Requirement: Transient members and snapshot semantics
-A transient member SHALL contribute a new instance on every call. The returned collection SHALL be a snapshot: services registered after the call are not added to it, and mutating the returned slice or map SHALL NOT affect later calls.
+A transient member SHALL contribute a new instance on every call. The returned collection SHALL be a snapshot: services registered after the call are not added to it, and mutating the returned slice or map SHALL NOT affect later calls. Once the shutdown of the invoking scope has begun, a call SHALL return nil and an error matching `ErrShutdown` (container-shutdown, "A closed scope stays closed").
 
 #### Scenario: Transient and singleton members across calls
 ```gherkin
@@ -352,13 +352,19 @@ Then no element of the new result is nil
 ```gherkin
 Given a root scope with a lazy service "console" implementing "EventHandler" that has been invoked
 And the root scope has been shut down
-When the consumer calls InvokeAll for type "EventHandler"
-Then the result is empty
-And the error is nil
+When the consumer calls <call>
+Then the result is nil
+And the error matches ErrShutdown
+
+Examples:
+  | call                                  |
+  | InvokeAll for type "EventHandler"     |
+  | InvokeAllMap for type "EventHandler"  |
 ```
 
 <!-- cases: N/A 2 overrides: InvokeAll is a snapshot by definition; the live alternative is capability live-collections -->
 <!-- cases: N/A 9 panics: no panicking path -->
+<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - a collection read after shutdown used to return an empty result and a nil error; it now matches ErrShutdown -->
 
 ### Requirement: Concurrent collection callers
 Concurrent calls to `InvokeAll`/`InvokeAllMap`, including calls concurrent with registrations or with a root shutdown, SHALL be free of data races and leaked goroutines. Each lazy member SHALL be built exactly once while no shutdown runs.

@@ -43,9 +43,9 @@ Then the error message is "<message>"
 
 Examples:
   | field                                        | message                                                                    |
-  | `H EventHandler \`do:"*"\``                   | DI: tag `*` requires a slice or map[string] field, got `S.H`               |
-  | `M map[int]EventHandler \`do:"*"\``           | DI: tag `*` requires a slice or map[string] field, got `S.M`               |
-  | `K map[handlerKey]EventHandler \`do:"*"\`` (type handlerKey string) | DI: tag `*` requires a slice or map[string] field, got `S.K` |
+  | `H EventHandler \`do:"*"\``                   | doger: tag `*` requires a slice or map[string] field, got `S.H`               |
+  | `M map[int]EventHandler \`do:"*"\``           | doger: tag `*` requires a slice or map[string] field, got `S.M`               |
+  | `K map[handlerKey]EventHandler \`do:"*"\`` (type handlerKey string) | doger: tag `*` requires a slice or map[string] field, got `S.K` |
 ```
 
 #### Scenario: A failing member fails the struct

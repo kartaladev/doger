@@ -104,8 +104,8 @@ Examples:
   | DependsOnNamed("a"), DependsOnNamed("b")                         | depends-on ["a", "b"]                                         |
   | DependsOnNamed("a"), DependsOnNamed("a")                         | depends-on ["a"]                                              |
   | AsStarter(), AsStarter()                                         | starter                                                       |
-  | AsRunnable(), AsRunnable()                                       | panic "DI: kind `runnable` applied twice to service `worker`" |
-  | scheduled.With(Spec{Every: 1m}), scheduled.With(Spec{Every: 2m}) | panic "DI: kind `scheduled` applied twice to service `worker`" |
+  | AsRunnable(), AsRunnable()                                       | panic "doger: kind `runnable` applied twice to service `worker`" |
+  | scheduled.With(Spec{Every: 1m}), scheduled.With(Spec{Every: 2m}) | panic "doger: kind `scheduled` applied twice to service `worker`" |
 ```
 
 <!-- cases: N/A 2 overrides: no option changes this combination rule -->
@@ -125,12 +125,12 @@ And "<service>" is registered afterwards: <registered>
 
 Examples:
   | service | type                                | helper                | option                  | result                                                                                         | registered |
-  | cfg     | *app.Config (no Start)              | ProvideNamed          | AsStarter()             | panics "DI: service `cfg` does not implement any Starter interface"                            | false      |
-  | srv     | *app.Server (Start() error)         | ProvideNamedTransient | AsStarter()             | panics "DI: transient service `srv` cannot be started"                                         | false      |
-  | tjob    | *app.Job (Run(ctx) error)           | ProvideNamedTransient | scheduled.With(Spec{})  | panics "DI: transient service `tjob` cannot be handled by kind `scheduled`"                    | false      |
-  | plain   | *app.Config (no Run)                | ProvideNamed          | scheduled.With(Spec{})  | panics "DI: service `plain` is not assignable to `doger.Job` required by kind `scheduled`"     | false      |
-  | job     | *app.Job (Run(ctx) error)           | ProvideNamedTransient | AsRunnable()            | panics "DI: transient service `job` cannot be handled by kind `runnable`"                      | false      |
-  | cfg     | *app.Config (no Run)                | ProvideNamed          | AsRunnable()            | panics "DI: service `cfg` is not assignable to `doger.Runner` required by kind `runnable`"     | false      |
+  | cfg     | *app.Config (no Start)              | ProvideNamed          | AsStarter()             | panics "doger: service `cfg` does not implement any Starter interface"                            | false      |
+  | srv     | *app.Server (Start() error)         | ProvideNamedTransient | AsStarter()             | panics "doger: transient service `srv` cannot be started"                                         | false      |
+  | tjob    | *app.Job (Run(ctx) error)           | ProvideNamedTransient | scheduled.With(Spec{})  | panics "doger: transient service `tjob` cannot be handled by kind `scheduled`"                    | false      |
+  | plain   | *app.Config (no Run)                | ProvideNamed          | scheduled.With(Spec{})  | panics "doger: service `plain` is not assignable to `doger.Job` required by kind `scheduled`"     | false      |
+  | job     | *app.Job (Run(ctx) error)           | ProvideNamedTransient | AsRunnable()            | panics "doger: transient service `job` cannot be handled by kind `runnable`"                      | false      |
+  | cfg     | *app.Config (no Run)                | ProvideNamed          | AsRunnable()            | panics "doger: service `cfg` is not assignable to `doger.Runner` required by kind `runnable`"     | false      |
   | life    | app.Lifecycle (interface, no Start) | ProvideNamed          | AsStarter()             | succeeds (checked on the instance at Start)                                                    | true       |
   | life    | app.Lifecycle (interface, no Run)   | ProvideNamed          | scheduled.With(Spec{})  | succeeds (checked on the instance at Start)                                                    | true       |
   | req     | *app.Request                        | ProvideNamedTransient | DependsOnNamed("db")    | succeeds                                                                                       | true       |
@@ -144,7 +144,7 @@ Examples:
 <!-- cases: N/A 10 compatibility: new API; registrations without options never panic for these reasons -->
 
 ### Requirement: Metadata follows clone and override, and is not inherited by aliases
-`RootScope.Clone`/`CloneWithOpts` SHALL copy each registration's options. `Override*` SHALL replace the previous registration's options with the new call's options; no options means none. An alias (`As`, `AsNamed`, `Bind`, `BindNamed`) SHALL carry no opt-ins of its own, and SHALL NOT inherit the target's opt-ins.
+`RootScope.Clone`/`CloneWithOpts` SHALL copy each registration's options. `Override*` SHALL replace the previous registration's options with the new call's options; no options means none. An alias (`Alias`, `AliasNamed`, `Bind`, `BindNamed`) SHALL carry no opt-ins of its own, and SHALL NOT inherit the target's opt-ins.
 
 #### Scenario: Clone, override and alias
 ```gherkin
@@ -157,8 +157,8 @@ Examples:
   | Clone()                                                      | clone     | *app.Server   | starter, depends-on "db" |
   | Override[*app.Server](i, newServer)                          | original  | *app.Server   | none                     |
   | Override[*app.Server](i, newServer, DependsOnNamed("cache")) | original  | *app.Server   | depends-on "cache"       |
-  | As[*app.Server, app.Lifecycle](i)                            | original  | app.Lifecycle | none                     |
-  | As[*app.Server, app.Lifecycle](i)                            | original  | *app.Server   | starter, depends-on "db" |
+  | Alias[*app.Server, app.Lifecycle](i)                         | original  | app.Lifecycle | none                     |
+  | Alias[*app.Server, app.Lifecycle](i)                         | original  | *app.Server   | starter, depends-on "db" |
 ```
 
 <!-- cases: N/A 2 overrides: this requirement is itself the override behavior -->
@@ -166,7 +166,7 @@ Examples:
 <!-- cases: N/A 4 boundaries: no numeric limits -->
 <!-- cases: N/A 8 concurrency: Clone and Override keep the existing scope locking -->
 <!-- cases: N/A 9 panics: no new panic paths -->
-<!-- cases: 10 compatibility: Clone/Override/As behave as before for registrations without options -->
+<!-- cases: 10 compatibility: Clone/Override/Alias behave as before for registrations without options; BREAKING (flagged): As/AsNamed are renamed Alias/AliasNamed (see service-aliases) -->
 
 ### Requirement: Registration order is kept by override and clone
 Wherever this change orders services by registration (ties in discovery, start and kind handling), a service SHALL keep the position of its first registration in its own scope when it is overridden there. A clone SHALL keep its source's positions, and services registered later in the clone SHALL come after them. Positions SHALL stay distinct within a container, including in a clone made while services are being registered on its source.
@@ -228,14 +228,14 @@ Examples:
   | doger.ProvideTransient         | doger.AsDefault()                     | does not panic                                                           |
   | doger.ProvideNamed "dialer"    | doger.AsDefault()                     | does not panic                                                           |
   | doger.Package(doger.Lazy(...)) | doger.AsDefault()                     | does not panic                                                           |
-  | doger.ProvideTransient         | doger.AsDefault(), doger.AsStarter()  | panics with "DI: transient service `*app.Dialer` cannot be started"      |
+  | doger.ProvideTransient         | doger.AsDefault(), doger.AsStarter()  | panics with "doger: transient service `*app.Dialer` cannot be started"      |
 ```
 
 #### Scenario: An invalid option panics even when the default would be skipped
 ```gherkin
 Given a root scope with an explicit lazy "*app.Dialer" in the root
 When the consumer registers a transient "*app.Dialer" in the root with doger.AsDefault() and doger.AsStarter()
-Then the registration panics with "DI: transient service `*app.Dialer` cannot be started"
+Then the registration panics with "doger: transient service `*app.Dialer` cannot be started"
 ```
 
 <!-- cases: N/A 3 zero values: a nil option next to AsDefault is ignored as today -->

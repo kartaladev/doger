@@ -114,10 +114,10 @@ And the service is registered: <registered>
 
 Examples:
   | name  | registration          | option                       | outcome                                                     | registered |
-  | db    | ProvideNamedValue     | WithHealthTags("")           | panics "DI: service `db` has an empty health tag"           | false      |
-  | db    | ProvideNamedValue     | WithHealthTags("ok", "")     | panics "DI: service `db` has an empty health tag"           | false      |
-  | tmp   | ProvideNamedTransient | WithHealthTags("readiness")  | panics "DI: transient service `tmp` cannot be health-checked" | false    |
-  | tmp   | ProvideNamedTransient | AsOptionalHealth()           | panics "DI: transient service `tmp` cannot be health-checked" | false    |
+  | db    | ProvideNamedValue     | WithHealthTags("")           | panics "doger: service `db` has an empty health tag"           | false      |
+  | db    | ProvideNamedValue     | WithHealthTags("ok", "")     | panics "doger: service `db` has an empty health tag"           | false      |
+  | tmp   | ProvideNamedTransient | WithHealthTags("readiness")  | panics "doger: transient service `tmp` cannot be health-checked" | false    |
+  | tmp   | ProvideNamedTransient | AsOptionalHealth()           | panics "doger: transient service `tmp` cannot be health-checked" | false    |
   | cfg   | ProvideNamedValue (no health check) | AsOptionalHealth() | returns; HealthReport() does not list "cfg"              | true       |
 ```
 
@@ -146,7 +146,7 @@ Examples:
   | clones the injector                                             | the clone      | db    | ["liveness"]  | true     |
   | overrides "db" with OverrideNamedValue and no options           | the injector   | db    | ["readiness"] | false    |
   | overrides "db" with OverrideNamedValue and WithHealthTags("x")  | the injector   | db    | ["x"]         | false    |
-  | adds an alias "hc" to "db" with AsNamed                         | the injector   | db    | ["liveness"]  | true     |
+  | adds an alias "hc" to "db" with AliasNamed                         | the injector   | db    | ["liveness"]  | true     |
   | registers, in child scope "child", a Healthchecker value "db" with AsDefault() and WithHealthTags("x") | scope "child" | db | ["liveness"] | true |
 ```
 
@@ -162,7 +162,7 @@ Examples:
 <!-- cases: 10 backward compatibility: follows the existing option rules of registration-options -->
 
 ### Requirement: A report can be filtered by tag
-`HealthReport(opts...)` and `HealthReportWithContext(ctx, opts...)` SHALL accept `HealthReportOption` values. `MatchHealthTags(tags...)` SHALL limit the report, its overall state and any on-demand checks to covered services carrying at least one of the tags; repeated options accumulate. With no tag given, or no option, the report SHALL cover every health checker.
+`HealthReport(opts...)` and `HealthReportWithContext(ctx, opts...)` SHALL accept `HealthReportOption` values, a functional option type: a nil option SHALL be ignored. `MatchHealthTags(tags...)` SHALL limit the report, its overall state and any on-demand checks to covered services carrying at least one of the tags; repeated options accumulate. With no tag given, or no option, the report SHALL cover every health checker.
 
 #### Scenario: Filtered reports
 ```gherkin
@@ -191,16 +191,33 @@ Then the health check of "proc" was called 1 time
 And the health check of "db" was not called
 ```
 
+#### Scenario: Report options are functions a consumer can compose
+```gherkin
+Given an injector that is never started, with Healthchecker values "db" (no options) and "proc" (WithHealthTags(HealthTagLiveness))
+And a consumer helper `func liveness() HealthReportOption { return MatchHealthTags(HealthTagLiveness) }`
+And a slice opts of type []HealthReportOption holding <opts>
+When the consumer calls HealthReport(opts...) on the root scope
+Then the report lists <listed>
+
+Examples:
+  | opts                                              | listed        |
+  | liveness()                                        | "proc"        |
+  | liveness(), IgnoreContainerPhase()                | "proc"        |
+  | nil, liveness()                                   | "proc"        |
+  | (empty slice)                                     | "db", "proc"  |
+  | HealthReportOption(nil)                           | "db", "proc"  |
+```
+
 <!-- cases: 1 default: no option covers every checker -->
-<!-- cases: 2 overrides: single, repeated and custom tags -->
-<!-- cases: 3 zero values: MatchHealthTags() and a nil option -->
+<!-- cases: 2 overrides: single, repeated and custom tags; options combined with IgnoreContainerPhase -->
+<!-- cases: 3 zero values: MatchHealthTags(), a nil option, a typed-nil HealthReportOption and an empty slice; the former zero-value struct option no longer exists (BREAKING, compile-time only for code that declared HealthReportOption{} literals) -->
 <!-- cases: 4 boundaries: a filter matching 0, 1 and several services -->
 <!-- cases: N/A 5 errors: an unknown tag matches nothing, which is not an error -->
 <!-- cases: N/A 6 not found/duplicate: a service matching two tags is listed once (the repeated-option row) -->
 <!-- cases: 7 lifecycle: on-demand reads of an idle container -->
 <!-- cases: N/A 8 concurrency: filtering is a pure selection over the shared checks of health-reports -->
-<!-- cases: N/A 9 panics: not applicable -->
-<!-- cases: 10 backward compatibility: HealthReport() without options is unchanged -->
+<!-- cases: N/A 9 panics: a nil option is ignored, never called -->
+<!-- cases: 10 backward compatibility: calls of HealthReport with MatchHealthTags/IgnoreContainerPhase compile and behave unchanged; only code naming the struct literal HealthReportOption{} breaks -->
 
 ### Requirement: A failing optional service is degraded, not unhealthy
 A failing check of an optional service SHALL give its entry `State` `HealthDegraded`, with the check's error in `Err`. A passing check SHALL give `HealthHealthy` as for a critical service. Service and container health hooks SHALL report the `HealthDegraded` state like any other state change.

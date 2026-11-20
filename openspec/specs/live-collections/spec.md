@@ -7,7 +7,7 @@ Lets a component hold a collection that re-resolves its members on every read, s
 ## Requirements
 
 ### Requirement: A live collection re-resolves on every read
-`InvokeCollection[T](i) Collection[T]` SHALL return a value whose `All(r Injector) ([]T, error)` and `Map(r Injector) (map[string]T, error)` resolve the members on each call, from the scope of `i`, with the membership, order, error and hook rules of `InvokeAll[T]`/`InvokeAllMap[T]`. `InvokeCollection` SHALL build nothing itself.
+`InvokeCollection[T](i) Collection[T]` SHALL return a value whose `All(r Injector) ([]T, error)` and `Map(r Injector) (map[string]T, error)` resolve the members on each call, from the scope of `i`, with the membership, order, error and hook rules of `InvokeAll[T]`/`InvokeAllMap[T]`. `InvokeCollection` SHALL build nothing itself. Once the shutdown of that scope has begun, `All` and `Map` SHALL return nil and an error matching `ErrShutdown`, as `InvokeAll` does.
 
 #### Scenario: Later registrations are visible
 ```gherkin
@@ -39,9 +39,21 @@ Then the result is <result>
 
 Examples:
   | setup                                                        | result                                                    |
-  | lazy "console", and the root scope has been shut down        | an empty, non-nil slice and a nil error                   |
+  | lazy "console", and the root scope has been shut down        | nil and an error matching ErrShutdown                     |
   | lazy "console" whose provider returns errBuild               | nil and an error matching errBuild naming "console"       |
   | no service implementing EventHandler                         | an empty, non-nil slice and a nil error                   |
+```
+
+#### Scenario: A zero Collection is bound to no container
+```gherkin
+Given var c doger.Collection[EventHandler], never returned by InvokeCollection
+When the consumer calls <read>
+Then the result is nil and an error matching doger.ErrNilInjector
+
+Examples:
+  | read         |
+  | c.All(nil)   |
+  | c.Map(nil)   |
 ```
 
 #### Scenario: Concurrent reads are race-free
@@ -54,7 +66,7 @@ And the "console" provider was called exactly 1 time
 
 <!-- cases: 1 default: re-resolution on read -->
 <!-- cases: 2 overrides: ordering overrides apply as for InvokeAll; a snapshot is InvokeAll -->
-<!-- cases: 3 zero values: no member yields an empty non-nil slice; a nil i means DefaultRootScope, as for InvokeAll -->
+<!-- cases: 3 zero values: no member yields an empty non-nil slice; a nil i panics with a value matching ErrNilInjector, as InvokeCollection does (resolution-errors); a zero Collection's All and Map return an error matching ErrNilInjector -->
 <!-- cases: N/A 4 boundaries: covered by collection-invocation -->
 <!-- cases: 5 errors: member failure row -->
 <!-- cases: 6 duplicates: alias exclusion as for InvokeAll; the holder has its own requirement -->

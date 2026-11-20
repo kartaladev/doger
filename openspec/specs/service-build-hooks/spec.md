@@ -23,7 +23,7 @@ Examples:
   | cfg     | eager value &Cfg{}                     | twice | 1 record ([root], cfg, that *Cfg)         |
   | bad     | lazy, provider returns errBuild        | once  | nothing                                   |
   | boom    | lazy, provider panics with "kaboom"    | once  | nothing                                   |
-  | iface   | alias As[*DB, DBIface] of lazy db      | once  | 1 record for db, none for the alias name  |
+  | iface   | alias Alias[*DB, DBIface] of lazy db      | once  | 1 record for db, none for the alias name  |
 ```
 
 #### Scenario: Build hook order relative to invocation hooks

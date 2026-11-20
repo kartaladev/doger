@@ -46,7 +46,7 @@ Examples:
   | behavior                     | result                                                   | starts | recorded |
   | returns nil                  | nil                                                      | 1      | tenant   |
   | returns errVeto              | an error matching errVeto, containing "scope `tenant`"   | 0      | nothing  |
-  | panics with "veto-boom"      | an error containing "scope `tenant` start aborted: DI: scope starting hook panicked: veto-boom" | 0 | nothing |
+  | panics with "veto-boom"      | an error containing "doger: scope `tenant` start aborted: scope starting hook panicked: veto-boom" | 0 | nothing |
   | panics with errVeto          | an error matching errVeto, containing "scope starting hook panicked" | 0 | nothing  |
 ```
 
@@ -169,7 +169,7 @@ Examples:
   | tenant.Shutdown() | closing jobs, shutdown jobs, closed jobs, closing tenant, shutdown tenant, closed tenant               |
   | root.Shutdown()   | closing jobs, shutdown jobs, closed jobs, closing tenant, shutdown tenant, closed tenant                |
   | jobs.Shutdown()   | closing jobs, shutdown jobs, closed jobs                                                               |
-  | tenant.Shutdown() then root.Shutdown() | closing jobs, shutdown jobs, closed jobs, closing tenant, shutdown tenant, closed tenant, closing tenant, closed tenant |
+  | tenant.Shutdown() then root.Shutdown() | closing jobs, shutdown jobs, closed jobs, closing tenant, shutdown tenant, closed tenant (root.Shutdown() no longer reaches the detached "tenant") |
 ```
 
 #### Scenario: Overlapping shutdowns of a child scope join
@@ -185,7 +185,7 @@ Examples:
   | tenant.Shutdown()                                                         | both reports succeed; each hook ran once; each service shut down once                                    |
   | root.Shutdown()                                                           | both reports succeed; each hook ran once; each service shut down once                                    |
   | tenant.ShutdownWithContext(ctx), ctx with a 1s timeout, before the release | it returns a failed report keyed by "tenant" with an empty service name, matching context.DeadlineExceeded; the first report then succeeds |
-  | tenant.Shutdown(), where a custom Logf panics in the first call after its services shut down | the first call panics with that value; the second gets a failed report containing "DI: scope shutdown did not complete" |
+  | tenant.Shutdown(), where a custom Logger handler panics on the first record it handles after its services shut down | the first call panics with that value; the second gets a failed report containing "doger: scope shutdown did not complete" |
 ```
 
 #### Scenario: Root scope fires no scope hook
@@ -235,7 +235,7 @@ Examples:
   | containers | running | second | outcome |
   | child "redis" with a value "*app.Pool" exported with doger.Export[*app.Pool](redis), and a root service "app" invoking "*app.Pool" whose first Shutdown blocks | root.Shutdown(), blocked in the Shutdown of "app" | redis.Shutdown() | both reports succeed; each hook ran once; "app" and the pool were shut down once, the pool after "app" |
   | child "redis" with a value "*app.Pool" exported with doger.Export[*app.Pool](redis), and a HookScopeClosing that blocks its first call | redis.Shutdown(), blocked in that hook | root.Shutdown() | both reports succeed; each hook ran once; the pool was shut down once |
-  | child "tenant" with grandchild "jobs", a value "*app.Pool" in "jobs" exported into "tenant", a "worker" in "tenant" invoking "*app.Pool" whose first Shutdown blocks, every HookScopeClosing panicking, and a custom Logf that panics when it logs a hook panic | tenant.Shutdown(), blocked in the Shutdown of "worker" | jobs.Shutdown() | the first call panics with the Logf value; jobs.Shutdown() returns a failed report containing "DI: scope shutdown did not complete" |
+  | child "tenant" with grandchild "jobs", a value "*app.Pool" in "jobs" exported into "tenant", a "worker" in "tenant" invoking "*app.Pool" whose first Shutdown blocks, every HookScopeClosing panicking, and a custom Logger handler that panics when it handles a "panic recovered" record | tenant.Shutdown(), blocked in the Shutdown of "worker" | jobs.Shutdown() | the first call panics with the handler's value; jobs.Shutdown() returns a failed report containing "doger: scope shutdown did not complete" |
 ```
 
 <!-- cases: 1 default: no hooks registered keeps shutdown unchanged (existing scope tests) -->
@@ -250,7 +250,7 @@ Examples:
 <!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - the exception applies only to scopes that export into their parent; every other scope keeps children-first order -->
 
 ### Requirement: Scope hook panics follow the container panic policy
-A panic in a `HookScopeStarted`, `HookScopeClosing` or `HookScopeClosed` hook SHALL be recovered so the operation completes, and then passed to `HookContainerPanic` with the point name `scope-started`, `scope-closing` or `scope-closed`; when `HookContainerPanic` is nil it SHALL re-panic with the original value after the operation completed. Later panics of the same operation SHALL be logged via `Logf` with their point name, as `scope-closing hook panicked`, without calling them container hooks.
+A panic in a `HookScopeStarted`, `HookScopeClosing` or `HookScopeClosed` hook SHALL be recovered so the operation completes, and then passed to `HookContainerPanic` with the point name `scope-started`, `scope-closing` or `scope-closed`; when `HookContainerPanic` is nil it SHALL re-panic with the original value after the operation completed. Later panics of the same operation SHALL be logged through `InjectorOpts.Logger` as an Error record `panic recovered` whose `point` attribute is their point name, such as `scope-closing`, without calling them container hooks; the value appears only in a Debug record `panic value`.
 
 #### Scenario: Observer scope hook panics
 ```gherkin
@@ -272,12 +272,12 @@ Examples:
 
 #### Scenario: Later scope hook panics are logged with their point
 ```gherkin
-Given a started root container with a child scope "tenant", a Logf recorder and a recording HookContainerPanic
+Given a started root container with a child scope "tenant", a Logger whose handler records every record at Debug level, and a recording HookContainerPanic
 And two HookScopeClosing hooks that panic with "first" and "second"
 When the consumer calls tenant.Shutdown()
 Then the recorder saw "scope-closing", "first"
-And Logf received a message containing "DI: scope-closing hook panicked: second"
-And no Logf message contains "container scope-closing"
+And the handler recorded one "panic recovered" record with point "scope-closing" and one "panic value" record containing "second"
+And no recorded point attribute is "container scope-closing"
 ```
 
 <!-- cases: N/A 2 overrides: HookContainerPanic is the override -->

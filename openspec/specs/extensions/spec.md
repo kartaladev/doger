@@ -6,57 +6,8 @@ Defines the Extension SPI: a contract third-party modules implement so that any 
 
 ## Requirements
 
-### Requirement: Extend installs an extension into a private scope by default
-`Extend(root, ext, opts...)` SHALL call `ext.Extend(x)` once with an `ExtensionContext` whose `Scope()` is a new child scope of the root named `ext:<Name()>`, or `ext:<Name()>/<instance>` when the extension has an instance key. Services registered there SHALL be invisible from the root except through exports made with `ExtensionExport`/`ExtensionExportNamed`.
-
-#### Scenario: Default private layout with an export
-```gherkin
-Given a root scope
-And an extension "redis" whose Extend registers lazy "*redis.Pool" and lazy "*redis.Client" in x.Scope() and calls doger.ExtensionExport[*redis.Client](x)
-When the consumer calls doger.Extend(root, redisExt)
-Then it returns nil
-And the root has a child scope named "<scope>"
-And invoking "*redis.Client" from the root succeeds
-And invoking "*redis.Pool" from the root fails with an error matching ErrServiceNotFound
-
-Examples:
-  | instance | scope              |
-  | (none)   | ext:redis          |
-  | cache    | ext:redis/cache    |
-```
-
-#### Scenario: The context describes the installation
-```gherkin
-Given a root scope
-And an extension "redis" with instance key "<instance>" whose Extend records x.Root(), x.Instance() and x.Scope().Name()
-When the consumer calls doger.Extend(root, redisExt)
-Then the recorded root is the root scope, the instance is "<instance>" and the scope name is "<scope>"
-
-Examples:
-  | instance | scope           |
-  |          | ext:redis       |
-  | cache    | ext:redis/cache |
-```
-
-#### Scenario: A nil root means DefaultRootScope
-```gherkin
-Given DefaultRootScope is reset to an empty root scope
-When the consumer calls doger.Extend(nil, redisExt)
-Then DefaultRootScope has a child scope named "ext:redis"
-```
-
-<!-- cases: 2 overrides: covered by "The author and the installer choose the placement" -->
-<!-- cases: 3 zero values: nil root scenario; nil extension and empty name are covered by "Extend validates its inputs" -->
-<!-- cases: 4 boundaries: with and without an instance key -->
-<!-- cases: 5 errors: covered by "Extend validates its inputs" and "A failing Extend leaves nothing behind" -->
-<!-- cases: 6 duplicate: covered by "Identity and repeated installation" -->
-<!-- cases: 7 lifecycle: covered by "Extend follows the container phase" and "Extension services follow the container lifecycle" -->
-<!-- cases: 8 concurrency: covered by "Concurrent Extend calls install each identity once" -->
-<!-- cases: 9 panics: covered by "A failing Extend leaves nothing behind" -->
-<!-- cases: N/A 10 compatibility: new API -->
-
 ### Requirement: The author and the installer choose the placement
-An extension implementing `ExtensionPlacement` with `PlacementFlat` SHALL register into the root's own scope; `PlacementPrivate`, or no such method, SHALL use the private scope. The installer's `Flatten()` SHALL force the root, and `ExtendScopeName(name)` SHALL rename the private scope. When flattened, `ExtensionExport` SHALL do nothing and return nil.
+An extension implementing `ExtensionPlacement` with `PlacementFlat` SHALL register into the root's own scope; `PlacementPrivate`, or no such method, SHALL use the private scope. The installer's `ExtendIntoRoot()` SHALL force the root, and `ExtendScopeName(name)` SHALL rename the private scope. When flattened, `ExtensionExport` SHALL do nothing and return nil.
 
 #### Scenario: Placement by author and installer
 ```gherkin
@@ -71,7 +22,7 @@ Examples:
   | (none)            | (none)                           | child scope "ext:redis"      |
   | PlacementPrivate  | (none)                           | child scope "ext:redis"      |
   | PlacementFlat     | (none)                           | the root's own scope         |
-  | (none)            | doger.Flatten()                  | the root's own scope         |
+  | (none)            | doger.ExtendIntoRoot()                  | the root's own scope         |
   | PlacementFlat     | doger.ExtendScopeName("cache")   | the root's own scope         |
   | (none)            | doger.ExtendScopeName("cache")   | child scope "cache"          |
 ```
@@ -149,7 +100,7 @@ Examples:
   | redis.Extension(redis.Addr("a:1"))      | redis.Extension(redis.Addr("b:2"))       | an error matching ErrExtensionConflict         | 1     |
   | redis.Extension(redis.Instance("cache"))| redis.Extension(redis.Instance("queue")) | nil, with child scope "ext:redis/queue"        | 1     |
   | redis.Extension()                       | other.Extension() also named "redis"     | an error matching ErrExtensionConflict naming scope "ext:redis" | 1 |
-  | redis.Extension()                       | redis.Extension() with doger.Flatten()   | an error matching ErrExtensionConflict         | 1     |
+  | redis.Extension()                       | redis.Extension() with doger.ExtendIntoRoot()   | an error matching ErrExtensionConflict         | 1     |
   | &redisExt{} (pointer)                   | redisExt{} (value of the same type)      | an error matching ErrExtensionConflict naming scope "ext:redis" | 1 |
   | a metrics extension that declined       | the same metrics value                   | nil                                            | 1     |
   | a metrics extension that declined       | another metrics value                    | an error matching ErrExtensionConflict         | 1     |
@@ -174,7 +125,7 @@ And the root has child scopes "ext:redis" and "other-redis"
 <!-- cases: N/A 10 compatibility: new API -->
 
 ### Requirement: A failing Extend leaves nothing behind
-When `ext.Extend` returns an error or panics, `Extend` SHALL return an `*ExtensionError` naming the extension and instance and wrapping the cause (a recovered panic as an error), SHALL remove the private scope and export nothing, and SHALL NOT record the identity, so a later `Extend` can retry. Extensions it required stay installed. With `Flatten()` registrations are not rolled back.
+When `ext.Extend` returns an error or panics, `Extend` SHALL return an `*ExtensionError` naming the extension and instance and wrapping the cause (a recovered panic as an error), SHALL remove the private scope and export nothing, and SHALL NOT record the identity, so a later `Extend` can retry. Extensions it required stay installed. With `ExtendIntoRoot()` registrations are not rolled back.
 
 #### Scenario: Failure is reported and can be retried
 ```gherkin
@@ -197,12 +148,12 @@ Examples:
 ```gherkin
 Given a root scope
 And an extension "redis" whose Extend registers lazy "*redis.Pool" and then returns errors.New("dial failed")
-When the consumer calls doger.Extend(root, redisExt, doger.Flatten())
+When the consumer calls doger.Extend(root, redisExt, doger.ExtendIntoRoot())
 Then the error contains "dial failed"
 And "*redis.Pool" is still registered in the root
 ```
 
-<!-- cases: 2 overrides: Flatten disables rollback (second scenario) -->
+<!-- cases: 2 overrides: ExtendIntoRoot disables rollback (second scenario) -->
 <!-- cases: N/A 3 zero values: a nil error is success -->
 <!-- cases: N/A 4 boundaries: one failing call followed by one retry -->
 <!-- cases: 5 errors: error and panic rows; ExtensionError supports errors.As and Unwrap -->
@@ -253,25 +204,25 @@ And invoking "*redis.Client" from the root returns "app-client"
 <!-- cases: N/A 10 compatibility: new API -->
 
 ### Requirement: An extension can decline to install
-When `ext.Extend` returns an error matching `ErrExtensionDisabled`, `Extend` SHALL return nil, log one line naming the extension and its instance key, install nothing, and record the identity as disabled, except where "A declined install that cannot be rolled back cleanly" and "A declined replacement keeps the required install" specify otherwise.
+When `ext.Extend` returns an error matching `ErrExtensionDisabled`, `Extend` SHALL return nil, log one `slog.LevelInfo` record naming the extension and its instance key through `InjectorOpts.Logger`, install nothing, and record the identity as disabled, except where "A declined install that cannot be rolled back cleanly" and "A declined replacement keeps the required install" specify otherwise.
 
 #### Scenario: A disabled extension installs nothing
 ```gherkin
-Given a root scope with a Logf that records lines
+Given a root scope created with a Logger whose handler records every record
 And an extension "metrics" with instance key "<instance>" whose Extend registers lazy "*metrics.Exporter" and returns fmt.Errorf("off by config: %w", doger.ErrExtensionDisabled)
 When the consumer calls doger.Extend(root, metricsExt)
 Then it returns nil
-And one recorded log line contains "<line>"
+And exactly one recorded record has level INFO, message "extension disabled" and attribute extension=<extension>
 And the root has no child scopes
 
 Examples:
-  | instance | line                          |
-  |          | extension metrics disabled    |
-  | eu       | extension metrics/eu disabled |
+  | instance | extension  |
+  |          | metrics    |
+  | eu       | metrics/eu |
 ```
 
-<!-- cases: N/A 2 overrides: whether to disable is the extension author's choice; Flatten is covered by "A declined install that cannot be rolled back cleanly" -->
-<!-- cases: N/A 3 zero values: no input -->
+<!-- cases: N/A 2 overrides: whether to disable is the extension author's choice; ExtendIntoRoot is covered by "A declined install that cannot be rolled back cleanly" -->
+<!-- cases: 3 zero values: with a nil Logger the decline is discarded, as every record is (container-logging) -->
 <!-- cases: 4 boundaries: with and without an instance key -->
 <!-- cases: N/A 5 errors: a decline is not an error; the exceptions are their own requirements -->
 <!-- cases: 6 duplicate: a repeated Extend of a disabled identity follows "Identity and repeated installation" (disabled rows there) -->
@@ -313,12 +264,11 @@ A flattened extension that declines SHALL keep the registrations it made, as a f
 ```gherkin
 Given a root scope
 And an extension "metrics" whose Extend registers lazy "*metrics.Exporter" and returns doger.ErrExtensionDisabled
-When the consumer calls doger.Extend(root, metricsExt, doger.Flatten())
+When the consumer calls doger.Extend(root, metricsExt, doger.ExtendIntoRoot())
 Then it returns nil
 And "*metrics.Exporter" is still registered in the root
-And a second doger.Extend(root, metricsExt, doger.Flatten()) returns nil
+And a second doger.Extend(root, metricsExt, doger.ExtendIntoRoot()) returns nil
 ```
-
 
 #### Scenario: A declined install whose shutdown fails is reported
 ```gherkin
@@ -331,8 +281,7 @@ And the root has no child scopes
 And a second doger.Extend(root, metricsExt) returns nil
 ```
 
-
-<!-- cases: 2 overrides: Flatten keeps the registrations -->
+<!-- cases: 2 overrides: ExtendIntoRoot keeps the registrations -->
 <!-- cases: N/A 3 zero values, 4 boundaries: no input -->
 <!-- cases: 5 errors: the failed shutdown is returned, not matching ErrExtensionDisabled -->
 <!-- cases: 6 duplicate: a repeat of the disabled identity is a no-op in both scenarios -->
@@ -443,10 +392,9 @@ Examples:
   | an unrelated root service "*app.Config" was invoked | (none)                         | nil                                     | prod:6379     |
   | "*redis.Client" was invoked from the root     | (none)                               | an error matching ErrExtensionConflict  | default:6379  |
   | nothing was invoked                           | doger.ExtendScopeName("redis-prod")  | nil, child "redis-prod" and no child "ext:redis" | prod:6379 |
-  | nothing was invoked                           | doger.Flatten()                      | nil, no child "ext:redis"               | prod:6379     |
+  | nothing was invoked                           | doger.ExtendIntoRoot()                      | nil, no child "ext:redis"               | prod:6379     |
   | a service of a child scope of "ext:redis" was invoked | (none)                       | an error matching ErrExtensionConflict  | default:6379  |
 ```
-
 
 #### Scenario: A required install placed flat by its author is never replaced
 ```gherkin
@@ -456,7 +404,6 @@ And doger.Extend(root, cacheExt) returned nil
 When the consumer calls doger.Extend(root, flatRedis.Extension(flatRedis.Addr("prod:6379")))
 Then the error matches ErrExtensionConflict
 ```
-
 
 #### Scenario: A failing replacement restores the required install
 ```gherkin
@@ -473,8 +420,7 @@ Examples:
   | a later doger.Extend(root, redis.Extension(redis.Addr("prod:6379"))) returns nil, the restored install being unresolved |
 ```
 
-
-<!-- cases: 2 overrides: the explicit Extend is the override; another scope name or Flatten -->
+<!-- cases: 2 overrides: the explicit Extend is the override; another scope name or ExtendIntoRoot -->
 <!-- cases: N/A 3 zero values: no input -->
 <!-- cases: 4 boundaries: nothing resolved, an unrelated service resolved, a service of the scope or of a descendant resolved; placed flat by the author -->
 <!-- cases: 5 errors: conflict rows; a failing replacement -->
@@ -513,12 +459,12 @@ Examples:
 <!-- cases: N/A 10 compatibility: new API -->
 
 ### Requirement: Extend follows the container phase
-`Extend` SHALL be allowed while the container is idle, starting, started, ready or failed. Services an extension adds after a successful Start SHALL be started by the next `Refresh`; after a failed Start, `Refresh` fails with `ErrNotStarted` as today. In the closing or closed phase, `Extend` SHALL fail with an error matching `ErrStartAfterShutdown` and install nothing.
+`Extend` SHALL be allowed while the container is idle, starting, started, ready or failed. Services an extension adds after a successful Start SHALL be started by the next `Refresh`; after a failed Start, `Refresh` fails with `ErrNotStarted` as today. In the closing or closed phase, `Extend` SHALL fail with an error matching `ErrShutdown` and install nothing.
 
 #### Scenario: Extend in each phase
 ```gherkin
 Given a root scope in phase <phase>
-And an extension "redis" whose Extend registers lazy "*redis.Pool" implementing Start(ctx) error, and exports it
+And an extension "redis" whose Extend registers lazy "*redis.Pool" implementing Start(ctx) error with doger.AsStarter(), and exports it
 When the consumer calls doger.Extend(root, redisExt)
 Then the result is <result>
 
@@ -529,8 +475,8 @@ Examples:
   | started (called from a Started hook)      | nil, and the pool is started by root.Refresh()|
   | ready                                     | nil, and the pool is started by root.Refresh()|
   | failed                                    | nil, the pool is not started, and root.Refresh() fails with ErrNotStarted |
-  | closing (called from a Closing hook)      | an error matching ErrStartAfterShutdown       |
-  | closed                                    | an error matching ErrStartAfterShutdown       |
+  | closing (called from a Closing hook)      | an error matching ErrShutdown       |
+  | closed                                    | an error matching ErrShutdown       |
 ```
 
 <!-- cases: N/A 2 overrides: phases are not configurable -->
@@ -540,7 +486,7 @@ Examples:
 <!-- cases: 7 lifecycle: the subject -->
 <!-- cases: 8 concurrency: Extend concurrent with Start is unsupported and documented, as for the hook adders -->
 <!-- cases: N/A 9 panics: as for any Extend -->
-<!-- cases: N/A 10 compatibility: new API -->
+<!-- cases: 10 compatibility: BREAKING (flagged) - the closing and closed rows match ErrShutdown, which replaces ErrStartAfterShutdown -->
 
 ### Requirement: Extension services yield to the application
 An extension that registers its services with `AsDefault()` and exports them SHALL let an application service of the published name win, whether the application registers it before or after `Extend`, for readers in the root and in the extension's private scope.
@@ -582,7 +528,7 @@ Services of an extension's private scope SHALL be started by `Start`, shut down 
 #### Scenario: Lifecycle of extension services
 ```gherkin
 Given a root scope
-And an extension "redis" whose private "*redis.Pool" implements Start(ctx) error, Shutdown() error and HealthCheck() error returning errors.New("pool down"), each counting calls, exported
+And an extension "redis" whose private "*redis.Pool" implements Start(ctx) error, Shutdown() error and HealthCheck() error returning errors.New("pool down"), each counting calls, registered with doger.AsStarter() and exported
 And a lazy "*app.App" in the root invoking "*redis.Pool" and recording whether the pool was closed at its own shutdown
 And an ordinary child scope "jobs" with a lazy "*app.Job" implementing HealthCheck() error, invoked
 When the consumer calls Start, HealthCheck and Shutdown on the root
@@ -595,14 +541,14 @@ And "*app.App" did not see the pool closed
 #### Scenario: Only flattened extensions leave the root health check unchanged
 ```gherkin
 Given a root scope
-And an extension "redis" installed with doger.Flatten() whose lazy "*redis.Pool" implements HealthCheck() error and was invoked
+And an extension "redis" installed with doger.ExtendIntoRoot() whose lazy "*redis.Pool" implements HealthCheck() error and was invoked
 And an ordinary child scope "jobs" with a lazy "*app.Job" implementing HealthCheck() error, invoked
 When the consumer calls HealthCheck on the root
 Then the health map has key "*redis.Pool" and no key starting with "ext:"
 And the health map has no key for "*app.Job"
 ```
 
-<!-- cases: N/A 2 overrides: lifecycle is not configurable; Flatten puts the services in the root, where they follow the ordinary rules (flattened scenario) -->
+<!-- cases: N/A 2 overrides: lifecycle is not configurable; ExtendIntoRoot puts the services in the root, where they follow the ordinary rules (flattened scenario) -->
 <!-- cases: N/A 3 zero values, 4 boundaries, 5 invalid input: no input -->
 <!-- cases: 6 duplicate: each service checked once -->
 <!-- cases: 7 lifecycle: the subject; a root Shutdown whose context ended skips extension-scope services exactly as shutdown-context specifies, with no extension-specific rule -->
@@ -686,3 +632,58 @@ Examples:
 <!-- cases: N/A 8 concurrency: the stored context is read-only -->
 <!-- cases: N/A 9 panics: misuse never panics -->
 <!-- cases: N/A 10 compatibility: new API -->
+
+### Requirement: Extend installs an extension into a private scope of an explicit root by default
+`Extend(root, ext, opts...)` SHALL call `ext.Extend(x)` once with an `ExtensionContext` whose `Scope()` is a new child scope of the root named `ext:<Name()>`, or `ext:<Name()>/<instance>` when the extension has an instance key. Services registered there SHALL be invisible from the root except through exports made with `ExtensionExport`/`ExtensionExportNamed`. A nil root, including a typed nil, SHALL give `ErrNilInjector`.
+
+#### Scenario: Default private layout with an export
+```gherkin
+Given a root scope
+And an extension "redis" whose Extend registers lazy "*redis.Pool" and lazy "*redis.Client" in x.Scope() and calls doger.ExtensionExport[*redis.Client](x)
+When the consumer calls doger.Extend(root, redisExt)
+Then it returns nil
+And the root has a child scope named "<scope>"
+And invoking "*redis.Client" from the root succeeds
+And invoking "*redis.Pool" from the root fails with an error matching ErrServiceNotFound
+
+Examples:
+  | instance | scope              |
+  | (none)   | ext:redis          |
+  | cache    | ext:redis/cache    |
+```
+
+#### Scenario: The context describes the installation
+```gherkin
+Given a root scope
+And an extension "redis" with instance key "<instance>" whose Extend records x.Root(), x.Instance() and x.Scope().Name()
+When the consumer calls doger.Extend(root, redisExt)
+Then the recorded root is the root scope, the instance is "<instance>" and the scope name is "<scope>"
+
+Examples:
+  | instance | scope           |
+  |          | ext:redis       |
+  | cache    | ext:redis/cache |
+```
+
+#### Scenario: A nil root is rejected
+```gherkin
+Given an extension "redis" whose Extend counts its calls
+When the consumer calls doger.Extend(<root>, redisExt)
+Then the error matches ErrNilInjector
+And redisExt's Extend was called 0 times
+
+Examples:
+  | root                    |
+  | nil                     |
+  | (*doger.RootScope)(nil) |
+```
+
+<!-- cases: 2 overrides: covered by "The author and the installer choose the placement" -->
+<!-- cases: 3 zero values: nil and typed-nil root rows of "A nil root is rejected"; nil extension and empty name are covered by "Extend validates its inputs" -->
+<!-- cases: 4 boundaries: with and without an instance key -->
+<!-- cases: 5 errors: covered by "Extend validates its inputs" and "A failing Extend leaves nothing behind" -->
+<!-- cases: 6 duplicate: covered by "Identity and repeated installation" -->
+<!-- cases: 7 lifecycle: covered by "Extend follows the container phase" and "Extension services follow the container lifecycle" -->
+<!-- cases: 8 concurrency: covered by "Concurrent Extend calls install each identity once" -->
+<!-- cases: 9 panics: covered by "A failing Extend leaves nothing behind" -->
+<!-- cases: 10 compatibility: BREAKING (flagged) - a nil root used to mean DefaultRootScope, which this change removes; migration: pass the container created with doger.New() -->

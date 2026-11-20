@@ -149,7 +149,7 @@ Then it reads "env-b"
 ```gherkin
 Given a root scope with no InjectorOpts.PropertySource whose first property read happened
 When the consumer registers a lazy service under the name doger.NameOf[doger.PropertySource]()
-Then the registration panics with "DI: service `github.com/kartaladev/doger.PropertySource` has already been declared"
+Then the registration panics with "doger: service `github.com/kartaladev/doger.PropertySource` has already been declared"
 ```
 
 <!-- cases: 1 default: the environment row -->
@@ -176,12 +176,12 @@ And the second reads ("from-env", true)
 
 #### Scenario: A failing source provider leaves every property unset
 ```gherkin
-Given a root scope with a Logf that records lines and a lazy doger.PropertySource whose provider returns errors.New("vault sealed: token s3cret")
+Given a root scope with a Logger whose handler records every record at Debug level and a lazy doger.PropertySource whose provider returns errors.New("vault sealed: token s3cret")
 And the environment variable "DOGER_REDIS_ADDR" is set to "from-env"
 When an extension "redis" reads "addr" during its Extend
 Then the read returns ("", false)
-And one recorded log line contains "property source unavailable"
-And no recorded log line contains "s3cret" or "vault sealed"
+And one recorded record has message "property source unavailable"
+And no recorded record, in its message or attributes, contains "s3cret" or "vault sealed"
 ```
 
 <!-- cases: N/A 1 default, 2 overrides: failure handling is not configurable; InjectorOpts.PropertySource avoids the provider -->
@@ -198,10 +198,10 @@ The library SHALL NOT write property values to its logger or include them in err
 
 #### Scenario: Values stay out of logs and errors
 ```gherkin
-Given a root scope with a Logf that records lines and InjectorOpts.PropertySource holding "redis.password" = "s3cret"
+Given a root scope with a Logger whose handler records every record at Debug level and InjectorOpts.PropertySource holding "redis.password" = "s3cret"
 And an extension "redis" whose Extend reads "password" and then returns errors.New("auth failed")
 When the consumer calls doger.Extend(root, redisExt)
-Then no recorded log line and not the returned error contain "s3cret"
+Then no recorded record (message or attributes) and not the returned error contain "s3cret"
 ```
 
 <!-- cases: N/A 2-7: secrecy has no input beyond the value -->
@@ -254,7 +254,7 @@ Examples:
   | the root                                                    | false | ("", false)   |
   | a child scope "jobs" of the root                            | false | ("", false)   |
   | a child scope "pool" of the private scope of extension "redis" | true | ("a:1", true) |
-  | the root, by extension "redis" installed with doger.Flatten() | false | ("", false)  |
+  | the root, by extension "redis" installed with doger.ExtendIntoRoot() | false | ("", false)  |
 ```
 
 <!-- cases: N/A 2 overrides: the view follows the container's source -->
