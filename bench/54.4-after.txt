@@ -1,0 +1,140 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	11852509	       103.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 9376290	       130.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6646513	       175.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   81321	     14952 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	12404222	        89.05 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	10766568	       113.7 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3444937	       353.5 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	 9440127	       123.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1368746	       899.7 ns/op	      64 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	10577116	        99.54 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 8495920	       128.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6629527	       175.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   82702	     14778 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	14296422	        86.53 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	11207922	       110.0 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3308731	       344.1 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	10203303	       118.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1384797	       857.2 ns/op	      64 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	10302628	       103.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 8545166	       128.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6657362	       176.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   83398	     14540 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	14315324	        86.18 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	11183341	       110.1 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3284740	       345.6 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	10375645	       119.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1335542	       881.8 ns/op	      64 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	12353887	        99.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 9652748	       126.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6689223	       174.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   82046	     14744 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	14330168	        86.94 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	 9858270	       110.2 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3543264	       344.2 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	10385278	       118.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1377481	       861.5 ns/op	      64 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	12469869	        99.40 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 9651697	       127.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6815851	       173.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   73536	     14672 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	11825373	        85.91 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	10147315	       109.9 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3584902	       344.1 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	10340421	       118.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1379694	       868.0 ns/op	      64 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	12168852	       101.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 9247458	       131.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6777050	       174.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   69000	     15152 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	11894593	        85.96 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	 9441192	       110.4 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3560876	       343.6 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	10151560	       121.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1338702	       871.5 ns/op	      64 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	12281223	       100.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 9594862	       127.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6678387	       175.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   67033	     14978 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	14106949	        88.01 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	10712212	       110.2 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3561951	       344.4 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	10117531	       119.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1385254	       871.2 ns/op	      64 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	12269253	       100.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 9584638	       127.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6750595	       174.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   69968	     14761 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	12403564	        86.51 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	10167196	       110.0 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3572619	       343.6 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	10356622	       118.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1379294	       862.7 ns/op	      64 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	12381296	        97.44 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 9614995	       124.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6718215	       179.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   83515	     14224 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	14328942	        83.75 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	11146359	       107.5 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3536286	       336.5 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	10383399	       116.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1421588	       842.7 ns/op	      64 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14       	12463518	        96.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuilt/depth_5-14       	 9624091	       124.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeBuiltParallel-14       	 6633127	       180.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPerRequestScope-14           	   83234	     14357 ns/op	    8281 B/op	      90 allocs/op
+BenchmarkInvokeNamed-14               	14324480	        83.80 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInvokeTransient-14           	11166849	       106.6 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAlias-14               	 3564382	       335.1 ns/op	      64 B/op	       1 allocs/op
+BenchmarkInvokeAs-14                  	10413550	       115.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProviderChainTransient-14    	 1411755	       844.3 ns/op	      64 B/op	       1 allocs/op
+PASS

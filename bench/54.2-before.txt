@@ -1,0 +1,90 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 7670862	       159.7 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6601281	       179.4 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 5200402	       229.4 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   86269	     14255 ns/op	    8409 B/op	      96 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 7735158	       159.4 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6611173	       180.8 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 5114521	       243.4 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   78046	     15217 ns/op	    8409 B/op	      96 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 7757240	       155.5 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6757406	       180.5 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 5077840	       229.5 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   85351	     14305 ns/op	    8409 B/op	      96 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 7358847	       157.8 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6722007	       175.9 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 6287857	       201.8 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   82586	     14280 ns/op	    8409 B/op	      96 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 8103307	       155.2 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6742352	       195.2 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 4594306	       281.7 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   68523	     16611 ns/op	    8409 B/op	      96 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 8111404	       148.6 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6927121	       173.9 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 6126315	       200.0 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   83806	     14273 ns/op	    8409 B/op	      96 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 8231037	       149.1 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6909606	       181.0 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 5559734	       234.2 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   86037	     15426 ns/op	    8409 B/op	      96 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 8182650	       148.9 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6884734	       171.1 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 5934704	       198.0 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   87849	     14262 ns/op	    8409 B/op	      96 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 8035602	       149.2 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6975152	       171.3 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 6085147	       195.6 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   82245	     14205 ns/op	    8409 B/op	      96 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeBuilt/depth_0-14    	 8309078	       144.6 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuilt/depth_5-14    	 6967273	       171.3 ns/op	     160 B/op	       3 allocs/op
+BenchmarkInvokeBuiltParallel-14    	 5905550	       195.8 ns/op	     160 B/op	       3 allocs/op
+BenchmarkPerRequestScope-14        	   82077	     14357 ns/op	    8409 B/op	      96 allocs/op
+PASS

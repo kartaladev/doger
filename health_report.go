@@ -679,8 +679,9 @@ func wrapperOptions(wrapper any) *serviceOptions {
 // with opts, sorted and owned by the caller, and whether it is optional: an
 // unclassified checker carries HealthTagReadiness and is critical.
 func healthClassification(opts *serviceOptions) (tags []string, optional bool) {
+	optional = optionalHealth(opts)
 	if opts == nil || !opts.healthTagsSet {
-		return []string{HealthTagReadiness}, opts != nil && opts.optionalHealth
+		return []string{HealthTagReadiness}, optional
 	}
 
 	tags = slices.Sorted(slices.Values(opts.healthTags))
@@ -688,7 +689,13 @@ func healthClassification(opts *serviceOptions) (tags []string, optional bool) {
 		tags = []string{}
 	}
 
-	return tags, opts.optionalHealth
+	return tags, optional
+}
+
+// optionalHealth is the optional flag of healthClassification, without
+// building the tags.
+func optionalHealth(opts *serviceOptions) bool {
+	return opts != nil && opts.optionalHealth
 }
 
 // sortReportChecks orders covered by the path of scope names from the root,

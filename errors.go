@@ -556,6 +556,20 @@ func compareServiceDescriptions(a, b ServiceDescription) int {
 	)
 }
 
+// appendShutdownReport adds r to dst in place, as mergeShutdownReports(dst,
+// r) would, without copying what dst already holds.
+func appendShutdownReport(dst, r *ShutdownReport) {
+	dst.Services = append(dst.Services, r.Services...)
+	for k, v := range r.Errors {
+		if v != nil {
+			dst.Errors[k] = v
+		}
+	}
+	maps.Copy(dst.ServiceShutdownTime, r.ServiceShutdownTime)
+	dst.ShutdownTime += r.ShutdownTime
+	dst.Succeed = len(dst.Errors) == 0
+}
+
 // mergeShutdownReports merges multiple ShutdownReport values into a single report.
 // Services and ServiceShutdownTime are merged, and Errors are combined.
 // Succeed is true only if all reports succeeded and no errors are present.

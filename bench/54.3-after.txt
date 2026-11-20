@@ -1,0 +1,120 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  652053	      1732 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  586964	      1914 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  608790	      1929 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1408429	       837.3 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  110613	      9143 ns/op	   16234 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	    9283	    113397 ns/op	  149711 B/op	     554 allocs/op
+BenchmarkInvokeAllParallel-14             	  186459	      6461 ns/op	   16224 B/op	      59 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  590532	      1730 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  610584	      1905 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  554288	      2062 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1389519	       837.3 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  120777	      9443 ns/op	   16232 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	    9192	    116349 ns/op	  149743 B/op	     555 allocs/op
+BenchmarkInvokeAllParallel-14             	  196743	      6170 ns/op	   16223 B/op	      59 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  634401	      1841 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  564476	      1950 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  554692	      2036 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1344321	       823.8 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  119926	      9158 ns/op	   16232 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	    8907	    115935 ns/op	  149846 B/op	     556 allocs/op
+BenchmarkInvokeAllParallel-14             	  195561	      6255 ns/op	   16223 B/op	      59 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  628261	      1783 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  630764	      1805 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  546048	      2108 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1376760	       859.6 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  121766	      9286 ns/op	   16232 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	    9066	    117309 ns/op	  149788 B/op	     555 allocs/op
+BenchmarkInvokeAllParallel-14             	  185083	      6152 ns/op	   16224 B/op	      59 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  658318	      1709 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  600086	      1870 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  569242	      2075 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1381308	       828.0 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  112884	      9282 ns/op	   16234 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	    9213	    114398 ns/op	  149735 B/op	     554 allocs/op
+BenchmarkInvokeAllParallel-14             	  192627	      6404 ns/op	   16223 B/op	      59 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  575587	      1903 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  627574	      1827 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  564476	      2017 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1339615	       850.1 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  118083	      9350 ns/op	   16233 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	    9055	    113558 ns/op	  149792 B/op	     555 allocs/op
+BenchmarkInvokeAllParallel-14             	  189691	      6254 ns/op	   16224 B/op	      59 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  634952	      1771 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  584952	      1969 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  558920	      2012 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1398718	       849.8 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  122872	      9250 ns/op	   16232 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	    9124	    115970 ns/op	  149767 B/op	     555 allocs/op
+BenchmarkInvokeAllParallel-14             	  187095	      6221 ns/op	   16224 B/op	      59 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  663763	      1689 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  594208	      1959 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  582997	      1987 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1411024	       891.6 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  112748	      9728 ns/op	   16234 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	    9045	    115431 ns/op	  149795 B/op	     555 allocs/op
+BenchmarkInvokeAllParallel-14             	  192411	      6438 ns/op	   16223 B/op	      59 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  664660	      1758 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  607888	      1831 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  579385	      1950 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1378635	       868.8 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  121710	      9241 ns/op	   16232 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	   10358	    114388 ns/op	  149379 B/op	     550 allocs/op
+BenchmarkInvokeAllParallel-14             	  191254	      6487 ns/op	   16223 B/op	      59 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/kartaladev/doger/bench
+cpu: Apple M4 Pro
+BenchmarkInvokeAll/unrelated_0-14         	  650888	      1721 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_1000-14      	  601116	      1892 ns/op	    3568 B/op	      17 allocs/op
+BenchmarkInvokeAll/unrelated_10000-14     	  589941	      1904 ns/op	    3569 B/op	      17 allocs/op
+BenchmarkInvokeAllMixed/10-14             	 1454175	       803.1 ns/op	    1664 B/op	      11 allocs/op
+BenchmarkInvokeAllMixed/100-14            	  125042	      9107 ns/op	   16231 B/op	      59 allocs/op
+BenchmarkInvokeAllMixed/1000-14           	    8922	    118559 ns/op	  149841 B/op	     556 allocs/op
+BenchmarkInvokeAllParallel-14             	  191408	      6269 ns/op	   16223 B/op	      59 allocs/op
+PASS

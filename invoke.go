@@ -59,7 +59,7 @@ func invokeAnyByNameAs(i Injector, name string, source DependencySource) (any, e
 
 	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
 	op := beginInvocation(serviceScope, name)
-	child := newChildVirtualScope(vScope, serviceScope, name)
+	child := invocationInjector(injector, vScope, serviceScope, name, service)
 	instance, err := service.getInstanceAny(child)
 	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, op.elapsed(), err)
 	if err != nil {
@@ -116,7 +116,7 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 
 	injector.RootScope().hooks.onBeforeInvocation(serviceScope, name)
 	op := beginInvocation(serviceScope, name)
-	child := newChildVirtualScope(vScope, serviceScope, name)
+	child := invocationInjector(injector, vScope, serviceScope, name, service)
 	instance, err := service.getInstance(child)
 	injector.RootScope().hooks.onAfterInvocation(serviceScope, name, op.elapsed(), err)
 
@@ -131,6 +131,20 @@ func invokeByName[T any](i Injector, name string) (T, error) {
 	serviceScope.log(slog.LevelDebug, "service invoked", slog.String("service", name))
 
 	return instance, nil
+}
+
+// invocationInjector returns the injector a service's getInstance gets for
+// an invocation of name, registered in scope: a child virtual scope of
+// vScope, which carries the invoker chain a build needs, or injector itself
+// for a built lazy service. A built lazy service never builds again (it stays
+// built until its shutdown makes it terminal), so its getInstance uses its
+// injector only for the container options, which are the same.
+func invocationInjector(injector Injector, vScope *virtualScope, scope *Scope, name string, service any) Injector {
+	if lazy, ok := service.(interface{ isBuilt() bool }); ok && lazy.isBuilt() {
+		return injector
+	}
+
+	return newChildVirtualScope(vScope, scope, name)
 }
 
 // invokeByGenericType looks for a service by its type and invokes it.
@@ -188,7 +202,7 @@ func invokeServiceInstance(injector Injector, vScope *virtualScope, hookName, re
 
 	injector.RootScope().hooks.onBeforeInvocation(scope, hookName)
 	op := beginInvocation(scope, realName)
-	child := newChildVirtualScope(vScope, scope, realName)
+	child := invocationInjector(injector, vScope, scope, realName, service)
 	instance, err := service.(serviceWrapperGetInstanceAny).getInstanceAny(child) //nolint:errcheck,forcetypeassert // service was selected among stored service wrappers
 	injector.RootScope().hooks.onAfterInvocation(scope, hookName, op.elapsed(), err)
 	if err != nil {
@@ -397,6 +411,85 @@ func collectionCandidatesFor(source collectionSource, target reflect.Type) []col
 		return collectionCandidatesWithDefaults(source, target)
 	}
 
+	from := injectorScope(source.from)
+	excluded := excludedNames(source)
+	// the reading scope, only when it sees exports
+	var reader *Scope
+	if chainHasExports(from) {
+		reader = from
+	}
+
+	// each scope's services matching target come from its type-match cache,
+	// so the cost follows the matching services, not every visible one; a
+	// name registered in a nearer scope, matching or not, hides farther ones
+	candidates := []collectionCandidate{}
+	var nearer []scopeRead
+	for scope, depth := from, scopeDepth(from); scope != nil; scope, depth = scope.parentScope, depth-1 {
+		matches, version := scope.matchesForVersion(target)
+		for _, match := range matches {
+			if _, ok := excluded[match.name]; ok {
+				continue
+			}
+			shadowed, changed := shadowedByNearer(nearer, match.name)
+			if changed {
+				// a nearer scope changed since it was read: its services
+				// now may not be the ones its matches came from
+				return collectionCandidatesBySnapshot(source, target)
+			}
+			if shadowed {
+				continue
+			}
+			service := match.service.(serviceWrapperAny) //nolint:errcheck,forcetypeassert // matchesFor lists service wrappers only
+			if service.getServiceType() == ServiceTypeAlias && excludedAlias(match.service, reader) {
+				continue
+			}
+
+			candidates = append(candidates, collectionCandidate{
+				name:     match.name,
+				depth:    depth,
+				regIndex: match.regIndex,
+				scope:    scope,
+				service:  match.service,
+			})
+		}
+		nearer = append(nearer, scopeRead{scope: scope, version: version})
+	}
+
+	slices.SortFunc(candidates, func(a, b collectionCandidate) int { return a.compare(b.placement) })
+
+	return candidates
+}
+
+// scopeRead is a scope with the version of its services when it was read.
+type scopeRead struct {
+	scope   *Scope
+	version uint64
+}
+
+// shadowedByNearer reports whether one of the nearer scopes registers name,
+// or, as changed, that one of them changed since it was read, which leaves
+// the answer unknown.
+func shadowedByNearer(nearer []scopeRead, name string) (shadowed, changed bool) {
+	for _, read := range nearer {
+		read.scope.mu.RLock()
+		_, ok := read.scope.services[name]
+		version := read.scope.version
+		read.scope.mu.RUnlock()
+		if version != read.version {
+			return false, true
+		}
+		if ok {
+			return true, false
+		}
+	}
+
+	return false, false
+}
+
+// collectionCandidatesBySnapshot is collectionCandidatesFor by a walk of
+// every visible service, each scope read once under its lock. It is used
+// when a nearer scope changes while the type-match path runs.
+func collectionCandidatesBySnapshot(source collectionSource, target reflect.Type) []collectionCandidate {
 	candidates := []collectionCandidate{}
 	seen := excludedNames(source)
 	// the reading scope, only when it sees exports: a single captured
@@ -412,7 +505,6 @@ func collectionCandidatesFor(source collectionSource, target reflect.Type) []col
 		}
 		seen[name] = struct{}{}
 
-		// inlined newCollectionCandidate: this walk is the hot path
 		service, ok := s.(serviceWrapperAny)
 		if !ok || (service.getServiceType() == ServiceTypeAlias && excludedAlias(s, reader)) || !serviceCanCastToType(s, target) {
 			return true

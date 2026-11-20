@@ -170,7 +170,10 @@ func decidePropertySource(root *RootScope) PropertySource {
 			source = noProperties{}
 		}
 	}
-	root.self.log(slog.LevelDebug, "property source selected", slog.String("source_type", fmt.Sprintf("%T", source)))
+	if root.self.logEnabled(slog.LevelDebug) {
+		// the type name is formatted only for a Logger that keeps the record
+		root.self.log(slog.LevelDebug, "property source selected", slog.String("source_type", fmt.Sprintf("%T", source)))
+	}
 
 	return source
 }

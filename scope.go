@@ -67,11 +67,18 @@ type Scope struct {
 	// registered type is assignable to it; reset whenever services change.
 	// Guarded by mu.
 	typeMatches map[reflect.Type][]typeMatch
+	// version counts the changes of services: a reader that saw version v
+	// knows the services are still as it saw them while version is v.
+	// Guarded by mu.
+	version uint64
 
 	// Storing the invocation order is not needed anymore, but we keep it
 	// for improved observability in unit tests.
 	orderedInvocation      map[string]int // Map tracking service invocation order (faster than slice)
 	orderedInvocationIndex int            // Counter for tracking invocation order
+	// invokedNames holds the keys of orderedInvocation, for the lock-free
+	// check of onServiceInvoke; it is written under mu with that map
+	invokedNames sync.Map
 
 	// closing tracks the shutdowns of this child scope; nil until the first
 	// one. Guarded by rootScope.lifecycleMu. It is a pointer so that the
@@ -240,7 +247,9 @@ func (s *Scope) removeLocked(name string) (service any, ok bool) {
 	s.countDefault(service, -1)
 	s.countExport(service, -1)
 	s.typeMatches = nil
+	s.version++
 	delete(s.orderedInvocation, name)
+	s.invokedNames.Delete(name)
 	s.RootScope().dag.removeService(s.id, s.name, name)
 
 	return service, true
@@ -745,30 +754,167 @@ func (s *Scope) shutdownServicesInParallel(ctx context.Context, panics *shutdown
 		return keys(s.services)
 	}
 
+	// Each layer is the set of services the graph shows without a dependent
+	// when it is formed, as before; only how the layer is found changes.
+	// Instead of checking every remaining service after each layer (O(V)
+	// per layer, O(V^2) for a chain), only the services that can have
+	// become free are checked: the dependencies, within s, of the layer just
+	// shut down, and the services found free of dependents in s but still
+	// held by a dependent outside it. When none of them is free, every
+	// remaining service is checked as before, and a cycle is shut down at
+	// once, as before.
+	plan := newShutdownPlan(s, listServices())
 	for {
-		// loop over the services that have not been shutdown already
-		services := listServices()
-		if len(services) == 0 {
+		layer := plan.nextLayer(s, listServices)
+		if len(layer) == 0 {
 			break
 		}
 
-		// Check, under a single DAG lock, which services have no dependents
-		// (dependencies allowed here). Services having dependents must be
-		// shutdown first; the next iteration will shutdown the current service.
-		servicesToShutdown := s.rootScope.dag.listServicesHavingNoDependent(s.id, s.name, services)
-
-		if len(servicesToShutdown) > 0 {
-			r := s.shutdownServicesWithoutDependenciesInParallel(ctx, servicesToShutdown, panics)
-			report = mergeShutdownReports(report, r)
-		} else {
-			// In this branch, we expect that there is a circular dependency. We shutdown all services, without taking care of order.
-			// This is a fallback mechanism to ensure all services are eventually shut down.
-			r := s.shutdownServicesWithoutDependenciesInParallel(ctx, services, panics)
-			report = mergeShutdownReports(report, r)
-		}
+		r := s.shutdownServicesWithoutDependenciesInParallel(ctx, layer, panics)
+		appendShutdownReport(report, r)
+		plan.done(layer)
+		plan.done(plan.departed(s))
 	}
 
 	return report
+}
+
+// shutdownPlan finds the layers of a scope's shutdown with in-degree
+// counters (Kahn): dependents counts, per service, its dependents within
+// the scope not shut down yet; candidates holds the services whose count
+// reached 0 since the last layer, and blocked those found with no dependent
+// left in the scope but still held by the graph (a dependent outside the
+// scope, or an edge added once the plan was made).
+type shutdownPlan struct {
+	dependencies map[string][]string // within the scope, at the start of the shutdown
+	dependents   map[string]int
+	candidates   []string
+	blocked      map[string]struct{}
+	pending      map[string]struct{} // not yet counted as gone from the scope
+}
+
+// newShutdownPlan returns the plan of the shutdown of services, the
+// services of s: the ones without a dependent among them are the candidates
+// of the first layer.
+func newShutdownPlan(s *Scope, services []string) *shutdownPlan {
+	set := make(map[ServiceDescription]struct{}, len(services))
+	for _, name := range services {
+		set[newServiceDescription(s.id, s.name, name)] = struct{}{}
+	}
+
+	plan := &shutdownPlan{pending: make(map[string]struct{}, len(services))}
+	for _, name := range services {
+		plan.pending[name] = struct{}{}
+	}
+	snapshot := s.rootScope.dag.snapshotDependents(set)
+	if len(snapshot) > 0 {
+		plan.dependencies, plan.dependents = map[string][]string{}, make(map[string]int, len(snapshot))
+	}
+	for dependency, dependents := range snapshot {
+		plan.dependents[dependency.Service] = len(dependents)
+		for _, dependent := range dependents {
+			plan.dependencies[dependent.Service] = append(plan.dependencies[dependent.Service], dependency.Service)
+		}
+	}
+	for _, name := range services {
+		if plan.dependents[name] == 0 {
+			plan.candidates = append(plan.candidates, name)
+		}
+	}
+
+	return plan
+}
+
+// nextLayer returns the next layer: the candidates and blocked services
+// still in s that the graph shows without a dependent; else, as before
+// this plan existed, every service still in s without a dependent; else,
+// when s holds services that all have one (a cycle), all of them; nil once
+// s is empty.
+func (p *shutdownPlan) nextLayer(s *Scope, listServices func() []string) []string {
+	// candidates are distinct (each is added once, when its count reaches
+	// 0), and blocked ones are never candidates again
+	check := make([]string, 0, len(p.candidates)+len(p.blocked))
+	for _, name := range p.candidates {
+		if s.serviceExist(name) {
+			check = append(check, name)
+		}
+	}
+	for name := range p.blocked {
+		if s.serviceExist(name) {
+			check = append(check, name)
+		}
+	}
+	p.candidates = nil
+
+	layer := s.rootScope.dag.listServicesHavingNoDependent(s.id, s.name, check)
+	p.blocked = nil
+	if len(layer) < len(check) {
+		free := make(map[string]struct{}, len(layer))
+		for _, name := range layer {
+			free[name] = struct{}{}
+		}
+		p.blocked = map[string]struct{}{}
+		for _, name := range check {
+			if _, ok := free[name]; !ok {
+				p.blocked[name] = struct{}{}
+			}
+		}
+	}
+	if len(layer) > 0 {
+		return layer
+	}
+
+	services := listServices()
+	if len(services) == 0 {
+		return nil
+	}
+	if layer = s.rootScope.dag.listServicesHavingNoDependent(s.id, s.name, services); len(layer) > 0 {
+		return layer
+	}
+
+	// a circular dependency: every remaining service is shut down at once
+	return services
+}
+
+// departed returns the pending services that left s other than through a
+// layer of the plan, such as a service shut down by ShutdownNamed from the
+// Shutdown of another one. Their dependencies may have become free, as the
+// live graph shows; without counting them, those would wait for the
+// fallback that checks every service. It scans the pending services only
+// when s holds fewer of them than the plan expects.
+func (p *shutdownPlan) departed(s *Scope) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.services) >= len(p.pending) {
+		return nil
+	}
+
+	var gone []string
+	for name := range p.pending {
+		if _, ok := s.services[name]; !ok {
+			gone = append(gone, name)
+		}
+	}
+
+	return gone
+}
+
+// done records that services left the scope, in a layer or otherwise: each
+// of their dependencies within the scope that has no dependent left there
+// is a candidate of the next layer.
+func (p *shutdownPlan) done(layer []string) {
+	for _, name := range layer {
+		if _, ok := p.pending[name]; !ok {
+			continue
+		}
+		delete(p.pending, name)
+		delete(p.blocked, name)
+		for _, dependency := range p.dependencies[name] {
+			if p.dependents[dependency]--; p.dependents[dependency] == 0 {
+				p.candidates = append(p.candidates, dependency)
+			}
+		}
+	}
 }
 
 // shutdownServicesWithoutDependenciesInParallel shuts down multiple services concurrently
@@ -1051,6 +1197,7 @@ func (s *Scope) storeLocked(name string, replaced, service any) {
 	s.countExport(service, 1)
 	s.services[name] = service
 	s.typeMatches = nil
+	s.version++
 }
 
 // countDefault adds delta to the count of default registrations when service
@@ -1122,18 +1269,26 @@ type typeMatch struct {
 // assignable to target, in no particular order. The result is cached until
 // the scope's services change; callers must not modify it.
 func (s *Scope) matchesFor(target reflect.Type) []typeMatch {
+	matches, _ := s.matchesForVersion(target)
+	return matches
+}
+
+// matchesForVersion is matchesFor, with the version of the services the
+// matches were read from.
+func (s *Scope) matchesForVersion(target reflect.Type) ([]typeMatch, uint64) {
 	s.mu.RLock()
 	matches, ok := s.typeMatches[target]
+	version := s.version
 	s.mu.RUnlock()
 	if ok {
-		return matches
+		return matches, version
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if matches, ok := s.typeMatches[target]; ok {
-		return matches
+		return matches, s.version
 	}
 	matches = []typeMatch{}
 	for name, serviceAny := range s.services {
@@ -1148,7 +1303,7 @@ func (s *Scope) matchesFor(target reflect.Type) []typeMatch {
 	}
 	s.typeMatches[target] = matches
 
-	return matches
+	return matches, s.version
 }
 
 // serviceForEachRec iterates over all services in the current scope and all ancestor scopes,
@@ -1405,12 +1560,19 @@ func joinErrors(errs []error) error {
 // Parameters:
 //   - name: The name of the service that was invoked
 func (s *Scope) onServiceInvoke(name string) {
+	// every invocation after the first one only reads invokedNames, without
+	// a lock: the write lock is taken for the first invocation only
+	if _, invoked := s.invokedNames.Load(name); invoked {
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if _, ok := s.orderedInvocation[name]; !ok {
 		s.orderedInvocation[name] = s.orderedInvocationIndex
 		s.orderedInvocationIndex++
+		s.invokedNames.Store(name, struct{}{})
 	}
 }
 

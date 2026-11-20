@@ -230,9 +230,24 @@ var (
 // inferServiceName uses type inference to determine the service name
 // based on the generic type parameter T. This is used internally
 // to automatically generate service names from types.
+//
+// The name of a type is computed once and cached by its reflect.Type, so
+// resolving a service by type allocates nothing for its name.
 func inferServiceName[T any]() string {
-	return typetostring.GetType[T]()
+	t := reflect.TypeFor[T]()
+	if name, ok := serviceNames.Load(t); ok {
+		return name.(string) //nolint:errcheck,forcetypeassert // serviceNames holds strings only
+	}
+
+	name := typetostring.GetType[T]()
+	serviceNames.Store(t, name)
+
+	return name
 }
+
+// serviceNames caches inferServiceName by reflect.Type: a type's name never
+// changes, and the set of types a program resolves is bounded.
+var serviceNames sync.Map
 
 // inferServiceProviderStacktrace extracts stacktrace information from a service
 // for debugging and observability purposes. Transient services don't have
