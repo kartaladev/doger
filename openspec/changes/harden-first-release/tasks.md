@@ -383,7 +383,7 @@ This group depends on: the error-prefix group and the "Detach shut-down child sc
 - [x] 54.2 REFACTOR (Split Phase): read lock in `onServiceInvoke` with the write lock only on a first invocation, and the published-instance fast path in `instanceOrBuild`; verify `make test` green before and after and `benchstat` plus a mutex profile show lower contention on `BenchmarkInvokeBuiltParallel`
 - [x] 54.3 REFACTOR (Replace Algorithm): build `InvokeAll`/`InvokeAllMap` candidates from the per-scope type-match cache; verify `make test` and `BenchmarkInvokeAll` stays flat across 0/1k/10k unrelated
 - [x] 54.4 REFACTOR (Introduce cache): cache type names by `reflect.Type` and skip the virtual-scope allocation for an already-built service; verify `make test` and `BenchmarkInvokeBuilt` at or below 3 allocs/op
-- [ ] 54.5 REFACTOR (Replace Algorithm): plan shutdown with in-degree counters (Kahn, O(V+E)); verify the shutdown-order tests including 51.1 pass and `BenchmarkShutdownChain` scales linearly from 1k to 4k
+- [x] 54.5 REFACTOR (Replace Algorithm): plan shutdown with in-degree counters (Kahn, O(V+E)); verify the shutdown-order tests including 51.1 pass and `BenchmarkShutdownChain` scales linearly from 1k to 4k
 - [x] 54.6 REFACTOR: skip log argument building when no logger is set and cut health-check allocations; verify `make test` and `BenchmarkHealthCheck50` allocs/op below baseline
 - [ ] 54.7 Commit `bench/RESULTS.md` comparing `bench/baseline.txt` with `bench/after.txt`; verify `benchstat bench/baseline.txt bench/after.txt` shows no regression above 5%
 

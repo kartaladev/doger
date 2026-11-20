@@ -749,30 +749,135 @@ func (s *Scope) shutdownServicesInParallel(ctx context.Context, panics *shutdown
 		return keys(s.services)
 	}
 
+	// Each layer is the set of services the graph shows without a dependent
+	// when it is formed, as before; only how the layer is found changes.
+	// Instead of checking every remaining service after each layer (O(V)
+	// per layer, O(V^2) for a chain), only the services that can have
+	// become free are checked: the dependencies, within s, of the layer just
+	// shut down, and the services found free of dependents in s but still
+	// held by a dependent outside it. When none of them is free, every
+	// remaining service is checked as before, and a cycle is shut down at
+	// once, as before.
+	plan := newShutdownPlan(s, listServices())
 	for {
-		// loop over the services that have not been shutdown already
-		services := listServices()
-		if len(services) == 0 {
+		layer := plan.nextLayer(s, listServices)
+		if len(layer) == 0 {
 			break
 		}
 
-		// Check, under a single DAG lock, which services have no dependents
-		// (dependencies allowed here). Services having dependents must be
-		// shutdown first; the next iteration will shutdown the current service.
-		servicesToShutdown := s.rootScope.dag.listServicesHavingNoDependent(s.id, s.name, services)
-
-		if len(servicesToShutdown) > 0 {
-			r := s.shutdownServicesWithoutDependenciesInParallel(ctx, servicesToShutdown, panics)
-			report = mergeShutdownReports(report, r)
-		} else {
-			// In this branch, we expect that there is a circular dependency. We shutdown all services, without taking care of order.
-			// This is a fallback mechanism to ensure all services are eventually shut down.
-			r := s.shutdownServicesWithoutDependenciesInParallel(ctx, services, panics)
-			report = mergeShutdownReports(report, r)
-		}
+		r := s.shutdownServicesWithoutDependenciesInParallel(ctx, layer, panics)
+		appendShutdownReport(report, r)
+		plan.done(layer)
 	}
 
 	return report
+}
+
+// shutdownPlan finds the layers of a scope's shutdown with in-degree
+// counters (Kahn): dependents counts, per service, its dependents within
+// the scope not shut down yet; candidates holds the services whose count
+// reached 0 since the last layer, and blocked those found with no dependent
+// left in the scope but still held by the graph (a dependent outside the
+// scope, or an edge added once the plan was made).
+type shutdownPlan struct {
+	dependencies map[string][]string // within the scope, at the start of the shutdown
+	dependents   map[string]int
+	candidates   []string
+	blocked      map[string]struct{}
+}
+
+// newShutdownPlan returns the plan of the shutdown of services, the
+// services of s: the ones without a dependent among them are the candidates
+// of the first layer.
+func newShutdownPlan(s *Scope, services []string) *shutdownPlan {
+	set := make(map[ServiceDescription]struct{}, len(services))
+	for _, name := range services {
+		set[newServiceDescription(s.id, s.name, name)] = struct{}{}
+	}
+
+	plan := &shutdownPlan{}
+	snapshot := s.rootScope.dag.snapshotDependents(set)
+	if len(snapshot) > 0 {
+		plan.dependencies, plan.dependents = map[string][]string{}, make(map[string]int, len(snapshot))
+	}
+	for dependency, dependents := range snapshot {
+		plan.dependents[dependency.Service] = len(dependents)
+		for _, dependent := range dependents {
+			plan.dependencies[dependent.Service] = append(plan.dependencies[dependent.Service], dependency.Service)
+		}
+	}
+	for _, name := range services {
+		if plan.dependents[name] == 0 {
+			plan.candidates = append(plan.candidates, name)
+		}
+	}
+
+	return plan
+}
+
+// nextLayer returns the next layer: the candidates and blocked services
+// still in s that the graph shows without a dependent; else, as before
+// this plan existed, every service still in s without a dependent; else,
+// when s holds services that all have one (a cycle), all of them; nil once
+// s is empty.
+func (p *shutdownPlan) nextLayer(s *Scope, listServices func() []string) []string {
+	// candidates are distinct (each is added once, when its count reaches
+	// 0), and blocked ones are never candidates again
+	check := make([]string, 0, len(p.candidates)+len(p.blocked))
+	for _, name := range p.candidates {
+		if s.serviceExist(name) {
+			check = append(check, name)
+		}
+	}
+	for name := range p.blocked {
+		if s.serviceExist(name) {
+			check = append(check, name)
+		}
+	}
+	p.candidates = nil
+
+	layer := s.rootScope.dag.listServicesHavingNoDependent(s.id, s.name, check)
+	p.blocked = nil
+	if len(layer) < len(check) {
+		free := make(map[string]struct{}, len(layer))
+		for _, name := range layer {
+			free[name] = struct{}{}
+		}
+		p.blocked = map[string]struct{}{}
+		for _, name := range check {
+			if _, ok := free[name]; !ok {
+				p.blocked[name] = struct{}{}
+			}
+		}
+	}
+	if len(layer) > 0 {
+		return layer
+	}
+
+	services := listServices()
+	if len(services) == 0 {
+		return nil
+	}
+	if layer = s.rootScope.dag.listServicesHavingNoDependent(s.id, s.name, services); len(layer) > 0 {
+		return layer
+	}
+
+	// a circular dependency: every remaining service is shut down at once
+	return services
+}
+
+// done records that layer was shut down: each of its dependencies within
+// the scope that has no dependent left there is a candidate of the next
+// layer.
+func (p *shutdownPlan) done(layer []string) {
+	for _, name := range layer {
+		delete(p.blocked, name)
+		for _, dependency := range p.dependencies[name] {
+			if p.dependents[dependency]--; p.dependents[dependency] == 0 {
+				p.candidates = append(p.candidates, dependency)
+			}
+		}
+	}
 }
 
 // shutdownServicesWithoutDependenciesInParallel shuts down multiple services concurrently
