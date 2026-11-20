@@ -8,6 +8,13 @@ listed under **BREAKING** with its migration.
 
 ## Unreleased
 
+### Changed
+
+- `scheduler/gocron` requires `github.com/go-co-op/gocron/v2` v2.23.1
+  (was v2.23.0).
+
+## v0.2.0 - 2026-11-20
+
 First-release hardening (OpenSpec `harden-first-release`).
 
 ### BREAKING
@@ -91,9 +98,10 @@ Each entry gives the change and its migration.
   no `replace` directive.
 - New module `github.com/kartaladev/doger/clock/clockwork`, tagged
   `clock/clockwork/<version>`.
-- Dependency floors: `github.com/andybalholm/brotli` v1.2.7 in `http/fiber`
-  (GO-2026-6888) and `golang.org/x/net` v0.62.0 in `http/echo` and
-  `http/gin`. Echo's GO-2026-6875 and GO-2026-6872 are accepted in
-  [SECURITY.md](SECURITY.md).
+- Dependency floors: `github.com/valyala/fasthttp` v1.79.0 in `http/fiber`,
+  which no longer depends on `github.com/andybalholm/brotli` (GO-2026-6888),
+  and `golang.org/x/net` v0.62.0 in `http/echo` and `http/gin`. Echo's
+  GO-2026-6875 and GO-2026-6872 are accepted in [SECURITY.md](SECURITY.md).
+- `http/echo` requires `github.com/labstack/echo/v4` v4.16.5.
 - Releases are cut only from `main` through the `release` environment, after
   build, vet and `govulncheck` of the post-processed tree.
