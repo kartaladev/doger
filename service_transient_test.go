@@ -494,7 +494,7 @@ func TestServiceTransient_healthcheck(t *testing.T) {
 
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
-	time.Sleep(2 * time.Millisecond)
+	<-timeoutCtx.Done()
 
 	is.NoError(service4.healthcheck(timeoutCtx))
 
@@ -618,7 +618,7 @@ func TestServiceTransient_shutdown(t *testing.T) {
 
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
-	time.Sleep(2 * time.Millisecond)
+	<-timeoutCtx.Done()
 
 	is.NoError(service4.shutdown(timeoutCtx))
 

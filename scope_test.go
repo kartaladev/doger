@@ -1165,7 +1165,7 @@ func TestScope_serviceShutdown(t *testing.T) {
 			name: "timeout",
 			ctx: func() (context.Context, context.CancelFunc) {
 				timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-				time.Sleep(2 * time.Millisecond)
+				<-timeoutCtx.Done()
 				return timeoutCtx, cancel
 			},
 			service: "child2a-a",
@@ -1389,7 +1389,7 @@ func TestScope_onServiceShutdown(t *testing.T) {
 	// Test with timeout context
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
-	time.Sleep(2 * time.Millisecond)
+	<-timeoutCtx.Done()
 	err = rootScope.shutdownService(timeoutCtx, "shutdown-test")
 	is.ErrorContains(err, "could not find service")
 }

@@ -369,7 +369,7 @@ func TestServiceEager_healthcheck(t *testing.T) {
 	// Test with timeout context that expires
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
-	time.Sleep(2 * time.Millisecond) // Ensure timeout expires
+	<-timeoutCtx.Done()
 
 	// Test with context that has deadline but hasn't expired
 	futureCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -450,7 +450,7 @@ func TestServiceEager_shutdown(t *testing.T) {
 	// Test with timeout context that expires
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
-	time.Sleep(2 * time.Millisecond) // Ensure timeout expires
+	<-timeoutCtx.Done()
 
 	// Test with context that has deadline but hasn't expired
 	futureCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

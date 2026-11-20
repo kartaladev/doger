@@ -643,7 +643,7 @@ func TestServiceLazy_healthcheck(t *testing.T) {
 	// Test with timeout context
 	timeoutCtx, cancel2 := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel2()
-	time.Sleep(2 * time.Millisecond)
+	<-timeoutCtx.Done()
 	err2 := service4.healthcheck(timeoutCtx)
 	is.ErrorIs(err2, context.DeadlineExceeded)
 	is.ErrorContains(err2, "context deadline exceeded")
@@ -914,7 +914,7 @@ func TestServiceLazy_shutdown(t *testing.T) {
 	// Test with timeout context
 	timeoutCtx, cancel2 := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel2()
-	time.Sleep(2 * time.Millisecond)
+	<-timeoutCtx.Done()
 	service5 := newServiceLazy("foobar", func(i Injector) (*lazyTestShutdownerOK, error) {
 		return &lazyTestShutdownerOK{foobar: "foobar"}, nil
 	})

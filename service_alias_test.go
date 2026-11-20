@@ -387,7 +387,7 @@ func TestServiceAlias_healthcheck(t *testing.T) {
 	// Test with timeout context
 	timeoutCtx, cancel2 := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel2()
-	time.Sleep(2 * time.Millisecond)
+	<-timeoutCtx.Done() // a sleep is not enough: Windows timers fire up to ~15ms late
 	err2 := service6.healthcheck(timeoutCtx)
 	is.ErrorIs(err2, context.DeadlineExceeded)
 	is.ErrorContains(err2, "context deadline exceeded")
@@ -577,7 +577,7 @@ func TestServiceAlias_shutdown(t *testing.T) {
 	// Test with timeout context
 	timeoutCtx, cancel2 := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel2()
-	time.Sleep(2 * time.Millisecond)
+	<-timeoutCtx.Done()
 	service6Ctx := newServiceAlias[*lazyTestShutdownerOK, ShutdownerWithContextAndError]("github.com/kartaladev/doger.ShutdownerWithContextAndError", i2, "*github.com/kartaladev/doger.lazyTestShutdownerOK")
 	_, _ = service6Ctx.getInstanceAny(i2)
 	err2 := service6Ctx.shutdown(timeoutCtx)
