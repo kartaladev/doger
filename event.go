@@ -456,6 +456,10 @@ func (s *RootScope) reportEventError(ctx context.Context, err error) {
 // log package when Logger is unset, as event errors are.
 func (s *RootScope) logWarning(message string) {
 	if s.opts.Logger == discardLogger {
+		// The documented fallback when Logger is unset (setting it replaces
+		// this): message is a fixed library warning, written to the
+		// application's own log output.
+		// bearer:disable go_lang_log_output_neutralization,go_lang_logger_leak
 		log.Print(libPrefix + message)
 		return
 	}
@@ -467,6 +471,11 @@ func (s *RootScope) logWarning(message string) {
 // the standard log package when Logger is unset.
 func (s *RootScope) logEventError(message string) {
 	if s.opts.Logger == discardLogger {
+		// The documented last-resort sink for an error no caller receives,
+		// used only when neither Logger nor HookEventError is set (either
+		// replaces it): message is the library's own error text, written
+		// to the application's own log output.
+		// bearer:disable go_lang_log_output_neutralization,go_lang_logger_leak
 		log.Print(message)
 		return
 	}
