@@ -50,12 +50,12 @@ Registration panics for a concrete type that does not implement `Listener[E]` (o
 
 ### Options {#options}
 
-| Option | Default | Effect |
-|---|---|---|
-| `doger.ListenerOrder(n)` | 0 | Lower runs first |
-| `doger.ListenerFilter(pred)` | none | Skips the listener, without building it, when `pred(event)` is false; the last one wins, nil means none |
-| `doger.ListenerAsync()` | synchronous | Delivers through the event executor |
-| `doger.ListenerID(id)` | derived | Names the listener in errors and logs |
+| Option                       | Default     | Effect                                                                                                  |
+| ---------------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| `doger.ListenerOrder(n)`     | 0           | Lower runs first                                                                                        |
+| `doger.ListenerFilter(pred)` | none        | Skips the listener, without building it, when `pred(event)` is false; the last one wins, nil means none |
+| `doger.ListenerAsync()`      | synchronous | Delivers through the event executor                                                                     |
+| `doger.ListenerID(id)`       | derived     | Names the listener in errors and logs                                                                   |
 
 Default IDs are `<scope path>/<service>#<event type>` (with `/m<n>` for the n-th `ListenMethod`) and `<scope path>/func#<n>` for function listeners.
 
