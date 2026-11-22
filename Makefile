@@ -23,8 +23,8 @@ test-sql-down:
 # database tests of events/watermill/wmsql against PostgreSQL 17 and MySQL
 # 8.4 from the same compose file. The tests read DOGER_TEST_POSTGRES_DSN and
 # DOGER_TEST_MYSQL_DSN; CI sets them through the watermill-*-dsn targets.
-WATERMILL_POSTGRES_DSN ?= postgres://postgres:doger@127.0.0.1:54317/doger?sslmode=disable
-WATERMILL_MYSQL_DSN ?= root:doger@tcp(127.0.0.1:33084)/doger
+WATERMILL_POSTGRES_DSN ?= $(firstword $(SQL_POSTGRES_DSN))
+WATERMILL_MYSQL_DSN ?= $(firstword $(SQL_MYSQL_DSN))
 
 watermill-db-up:
 	docker compose -f $(SQL_COMPOSE) up -d --wait postgres17 mysql84

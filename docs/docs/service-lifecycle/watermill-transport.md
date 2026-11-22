@@ -18,13 +18,13 @@ go get github.com/kartaladev/doger/events/watermill/wmsql@latest
 
 watermill configures the consumer group per subscriber, not per subscription, and most backends start a new group at the oldest message, while doger starts a new group at the **latest** event. So the adapter takes a `SubscriberFactory` that builds one subscriber per subscription, and each backend needs the setting below.
 
-| Backend | Factory sets the group with | New group at the latest event | Status |
-|---|---|---|---|
-| watermill-sql (PostgreSQL, MySQL) | `dogerwmsql.PostgresSubscriberFactory(db)` / `MySQLSubscriberFactory(db)` | done by the factory (its offsets adapter seeds a new group at the newest row) | tested in CI with the conformance suite |
-| watermill-kafka | `kafka.SubscriberConfig{ConsumerGroup: sub.Group}` | sarama's default `Consumer.Offsets.Initial = sarama.OffsetNewest`, which `kafka.DefaultSaramaSubscriberConfig()` keeps; never set `sarama.OffsetOldest` | recipe |
-| watermill-redisstream | `redisstream.SubscriberConfig{ConsumerGroup: sub.Group}` | `OldestId: "$"` (the default `"0"` replays the stream) | recipe |
-| watermill-nats JetStream | `JetStream.DurablePrefix` (and `QueueGroupPrefix`) derived from `sub.Group` | add `nats.DeliverNew()` to `JetStream.SubscribeOptions` (the default delivers everything) | recipe |
-| watermill-nats core, gochannel | none: no durable groups, no redelivery on `Nack`, gochannel fans out to every subscriber | not possible | unsupported for `DeliverOnce`; use them in tests only |
+| Backend                           | Factory sets the group with                                                              | New group at the latest event                                                                                                                           | Status                                                |
+| --------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| watermill-sql (PostgreSQL, MySQL) | `dogerwmsql.PostgresSubscriberFactory(db)` / `MySQLSubscriberFactory(db)`                | done by the factory (its offsets adapter seeds a new group at the newest row)                                                                           | tested in CI with the conformance suite               |
+| watermill-kafka                   | `kafka.SubscriberConfig{ConsumerGroup: sub.Group}`                                       | sarama's default `Consumer.Offsets.Initial = sarama.OffsetNewest`, which `kafka.DefaultSaramaSubscriberConfig()` keeps; never set `sarama.OffsetOldest` | recipe                                                |
+| watermill-redisstream             | `redisstream.SubscriberConfig{ConsumerGroup: sub.Group}`                                 | `OldestId: "$"` (the default `"0"` replays the stream)                                                                                                  | recipe                                                |
+| watermill-nats JetStream          | `JetStream.DurablePrefix` (and `QueueGroupPrefix`) derived from `sub.Group`              | add `nats.DeliverNew()` to `JetStream.SubscribeOptions` (the default delivers everything)                                                               | recipe                                                |
+| watermill-nats core, gochannel    | none: no durable groups, no redelivery on `Nack`, gochannel fans out to every subscriber | not possible                                                                                                                                            | unsupported for `DeliverOnce`; use them in tests only |
 
 A recipe is a factory you write. For example, for Kafka:
 
@@ -58,14 +58,14 @@ root := doger.NewWithOpts(&doger.InjectorOpts{EventTransport: transport})
 
 ## Options {#options}
 
-| Behavior | Default | Override |
-|---|---|---|
-| Wait after a handler error before nacking | 1s | `WithRetryDelay(d)`; 0 nacks at once |
-| Attempts before giving up on a message | 10, counted per process | `WithMaxAttempts(n)`; 0 means unlimited |
-| A message given up on | acked and logged | `WithPoisonTopic(topic)` publishes it there first |
-| Metadata key prefix | `doger_` | `WithMetadataPrefix(p)` |
-| Logger | `watermill.NewSlogLogger(nil)` | `WithLogger(l)` |
-| Clock of the retry wait | real clock | `WithClock(c)` |
+| Behavior                                  | Default                        | Override                                          |
+| ----------------------------------------- | ------------------------------ | ------------------------------------------------- |
+| Wait after a handler error before nacking | 1s                             | `WithRetryDelay(d)`; 0 nacks at once              |
+| Attempts before giving up on a message    | 10, counted per process        | `WithMaxAttempts(n)`; 0 means unlimited           |
+| A message given up on                     | acked and logged               | `WithPoisonTopic(topic)` publishes it there first |
+| Metadata key prefix                       | `doger_`                       | `WithMetadataPrefix(p)`                           |
+| Logger                                    | `watermill.NewSlogLogger(nil)` | `WithLogger(l)`                                   |
+| Clock of the retry wait                   | real clock                     | `WithClock(c)`                                    |
 
 Each message carries the envelope ID as its UUID and the payload as its payload. The other fields are in its metadata: `doger_event_type`, `doger_version`, `doger_content_type`, `doger_published_at` (RFC 3339, UTC) and `doger_h_<name>` per header. A received message without `doger_event_type` is not doger's: it never reaches a listener and is given up on.
 
