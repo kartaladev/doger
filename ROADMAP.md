@@ -80,6 +80,9 @@ These came out of the same comparison. Each needs an exploration before it is pl
 - **Graph export.**
   - DOT or Mermaid output of the dependency graph, next to the existing explain output and HTTP UI.
   - Prior art: `fx.DotGraph` and `dig.Visualize` ([source](https://github.com/uber-go/dig/blob/v1.19.0/visualize.go)).
+- **MySQL start position for new watermill-sql groups (follow-up of #35).**
+  - `dogerwmsql` seeds a new MySQL group at the highest committed offset. MySQL has no snapshot horizon like PostgreSQL's `pg_snapshot_xmin`, so a message from a transaction that was open when the group was created, and commits with a lower auto-increment offset, is skipped. watermill-sql skips such messages for existing groups too. The limitation was reproduced with a failing test during the second review of #35 (finding #6) and is documented in the `offsets.go` doc comment and the watermill transport guide; PostgreSQL is not affected.
+  - To decide: fix it in doger (for example a seed that waits out open transactions, using `information_schema.innodb_trx`), fix it upstream in watermill-sql, or keep documenting it and steer MySQL users who need the guarantee to PostgreSQL.
 - **Configuration validation at start.**
   - Validate configuration values when the container starts.
   - In Go this is usually done outside DI (viper, envconfig), so it is low priority. It may fit as a component kind.
