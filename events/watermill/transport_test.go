@@ -37,6 +37,7 @@ func TestNew(t *testing.T) {
 		{name: "negative_max_attempts", pub: true, subs: true, opts: []dogerwatermill.Option{dogerwatermill.WithMaxAttempts(-1)}, wantErr: true},
 		{name: "empty_metadata_prefix", pub: true, subs: true, opts: []dogerwatermill.Option{dogerwatermill.WithMetadataPrefix("")}, wantErr: true},
 		{name: "zero_delay_and_unlimited_attempts", pub: true, subs: true, opts: []dogerwatermill.Option{dogerwatermill.WithRetryDelay(0), dogerwatermill.WithMaxAttempts(0)}},
+		{name: "nil_option_ignored", pub: true, subs: true, opts: []dogerwatermill.Option{nil, dogerwatermill.WithMaxAttempts(3)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

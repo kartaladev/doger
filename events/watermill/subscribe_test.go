@@ -63,6 +63,7 @@ func TestSubscribe(t *testing.T) {
 	tests := []struct {
 		name       string
 		factoryErr error
+		panics     bool
 		nilSub     bool
 		subErr     error
 		wantErr    error
@@ -72,6 +73,7 @@ func TestSubscribe(t *testing.T) {
 		{name: "factory_error", factoryErr: errNoBroker, wantErr: errNoBroker},
 		{name: "subscribe_error", subErr: errNoTopic, wantErr: errNoTopic, wantClosed: 1},
 		{name: "nil_subscriber", nilSub: true, wantErr: dogerwatermill.ErrInvalidConfig},
+		{name: "factory_panics", panics: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -82,11 +84,20 @@ func TestSubscribe(t *testing.T) {
 			if tt.nilSub {
 				factory.sub = nil
 			}
-			transport, err := dogerwatermill.New(&recordingPublisher{}, factory.Build)
+			build := factory.Build
+			if tt.panics {
+				build = func(context.Context, doger.Subscription) (message.Subscriber, error) { panic("kaboom") }
+			}
+			transport, err := dogerwatermill.New(&recordingPublisher{}, build)
 			require.NoError(t, err)
 
 			stop, err := transport.Subscribe(context.Background(), mailSubscription, noopHandler)
 
+			if tt.panics {
+				require.ErrorContains(t, err, "kaboom")
+				assert.Nil(t, stop)
+				return
+			}
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 				assert.Nil(t, stop)

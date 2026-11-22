@@ -24,6 +24,7 @@ Examples:
   | pub | subs | WithMaxAttempts(-1)         | a nil *Transport and an error matching ErrInvalidConfig |
   | pub | subs | WithMetadataPrefix("")      | a nil *Transport and an error matching ErrInvalidConfig |
   | pub | subs | WithRetryDelay(0), WithMaxAttempts(0) | a *Transport and a nil error      |
+  | pub | subs | nil, WithMaxAttempts(3)     | a *Transport and a nil error (a nil option is ignored) |
 ```
 
 #### Scenario: Construction is passive
@@ -86,10 +87,10 @@ Examples:
   | returns ErrNoBroker                                             | Subscribe returns an error matching ErrNoBroker                                |
   | returns a fake subscriber whose Subscribe returns ErrNoTopic    | Subscribe returns an error matching ErrNoTopic and the fake subscriber was closed |
   | returns nil, nil                                                | Subscribe returns an error matching ErrInvalidConfig                           |
+  | panics with "kaboom"                                            | Subscribe returns an error whose message contains "kaboom" and no stop function |
 ```
 
 <!-- cases: N/A 4,6: one subscriber per call; repeated calls build repeated subscribers, owned by their stop functions -->
-<!-- cases: N/A 9 panics: a panicking factory is recovered and returned as an error -->
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: Received messages map back to envelopes
@@ -171,7 +172,7 @@ Then the message was nacked and the logger recorded ErrBrokerDown
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: Stop ends the subscription
-The stop function SHALL cancel consumption, wait for the handler in flight to return or for its context to end, then close the subscriber the factory built, and return nil on success. A second call SHALL return nil. Cancelling the context given to `Subscribe` SHALL also end consumption.
+The stop function SHALL cancel consumption, wait for the handler in flight to return or for its context to end, then close the subscriber the factory built, and return nil on success. On a clean stop the subscriber SHALL be closed before the context given to its `Subscribe` is cancelled; when the stop context ends first, the handler's context SHALL be cancelled before the subscriber is closed. A second call SHALL return nil. Cancelling the context given to `Subscribe` SHALL also end consumption.
 
 #### Scenario: Stop waits for the handler
 ```gherkin
@@ -198,10 +199,11 @@ Examples:
   | that is idle                                 | calls stop twice                          | both calls return nil and the subscriber was closed once    |
   | that is idle                                 | cancels the context given to Subscribe    | consumption ends within 1s and no goroutine leaked          |
   | whose subscriber's Close returns ErrClose    | calls stop                                | stop returns an error matching ErrClose                     |
+  | whose subscriber's Close panics with "kaboom" | calls stop                               | stop returns an error whose message contains "kaboom"       |
+  | that is idle                                 | calls stop                                | the subscriber was closed before the context given to its Subscribe was cancelled |
 ```
 
 <!-- cases: N/A 3,4: no values beyond the contexts -->
-<!-- cases: N/A 9 panics: a panicking Close is recovered and returned as an error -->
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: The transport is safe for concurrent use
@@ -234,15 +236,32 @@ Examples:
 
 #### Scenario: Missing database configuration
 ```gherkin
-Given DOGER_TEST_POSTGRES_DSN is unset and the CI environment variable is <ci>
+Given DOGER_TEST_POSTGRES_DSN is unset, the CI environment variable is <ci> and the operating system is <os>
 When the PostgreSQL conformance test runs
 Then the test <outcome>
 
 Examples:
-  | ci     | outcome                                                |
-  | unset  | is skipped with the message "set DOGER_TEST_POSTGRES_DSN to run" |
-  | "true" | fails with the message "DOGER_TEST_POSTGRES_DSN is required in CI" |
+  | ci     | os     | outcome                                                |
+  | unset  | linux  | is skipped with the message "set DOGER_TEST_POSTGRES_DSN to run" |
+  | "true" | linux  | fails with the message "DOGER_TEST_POSTGRES_DSN is required in CI" |
+  | "true" | darwin | is skipped with the message "set DOGER_TEST_POSTGRES_DSN to run" (macOS and Windows CI runners have no databases) |
 ```
 
 <!-- cases: N/A 2-9: the suite owns these cases -->
 <!-- cases: N/A 10 compatibility: new module -->
+
+### Requirement: The transport exposes its publisher and message mapping
+`Transport.Publisher()` SHALL return the publisher given to `New`, and `Transport.Message(env)` SHALL return a message with the UUID, payload and metadata `Send` would publish for `env`, under the transport's metadata prefix.
+
+#### Scenario: Publisher and message
+```gherkin
+Given a transport over a recording publisher "pub" with WithMetadataPrefix("x-")
+When the consumer sends Envelope{ID: "id-1", ...} and calls Message with the same envelope
+Then Publisher() returns "pub", and the message has the UUID, payload and metadata of the one published
+
+Examples:
+  | prefix | publisher |
+  | x-     | pub       |
+```
+
+<!-- cases: N/A 2-10: accessors over state New already validated -->

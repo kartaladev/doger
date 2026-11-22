@@ -7,7 +7,7 @@ Makes watermill-sql (PostgreSQL and MySQL) meet doger's transport contract out o
 ## ADDED Requirements
 
 ### Requirement: Subscriber factories map subscriptions to consumer groups
-`PostgresSubscriberFactory(db, opts...)` and `MySQLSubscriberFactory(db, opts...)` SHALL return a `dogerwatermill.SubscriberFactory` that builds a watermill-sql subscriber whose `ConsumerGroup` is the subscription's group, so members of one group compete and different groups each receive every message. A nil `db` SHALL panic with "doger: dogerwmsql: nil *sql.DB".
+`PostgresSubscriberFactory(db, opts...)` and `MySQLSubscriberFactory(db, opts...)` SHALL return a `dogerwatermill.SubscriberFactory` that builds a watermill-sql subscriber whose `ConsumerGroup` is the subscription's group, so members of one group compete and different groups each receive every message. By default the subscriber initializes its tables (`InitializeSchema` true) and uses the schema adapter of `PostgresSchema()` / `MySQLSchema()`; `WithSubscriberConfig` adjusts any setting before the factory sets the group and the offsets adapter, and `WithLogger` sets its logger. A nil `db` SHALL panic with "doger: dogerwmsql: nil *sql.DB".
 
 #### Scenario: Groups on a SQL backend
 ```gherkin
@@ -69,6 +69,27 @@ Then exactly 1 of them handled exactly 1 message
 <!-- cases: N/A 9 panics: no consumer callback is involved -->
 <!-- cases: N/A 10 compatibility: new module; watermill-sql's own default (start at 0) is unchanged for subscribers built without these factories -->
 
+### Requirement: Payloads round-trip byte for byte
+`PostgresSchema()` and `MySQLSchema()` SHALL return watermill-sql schema adapters whose payload column is binary (`BYTEA` / `LONGBLOB`), so that a payload published with one is received unchanged by a subscriber of the matching factory, whether or not it is JSON.
+
+#### Scenario: Payload bytes
+```gherkin
+Given a <database> publisher and subscriber factory both using the binary schema adapter
+When a message with payload <payload> is published and received
+Then the received payload equals the published bytes
+
+Examples:
+  | database   | payload                          |
+  | PostgreSQL | {"n":1}                          |
+  | PostgreSQL | the bytes 00 ff 10 "raw"         |
+  | MySQL      | {"n":1}                          |
+  | MySQL      | the bytes 00 ff 10 "raw"         |
+```
+
+<!-- cases: N/A 2 overrides: another schema adapter through WithSubscriberConfig and the publisher's config is the consumer's choice -->
+<!-- cases: N/A 4-9: no further inputs, state or callbacks -->
+<!-- cases: N/A 10 compatibility: tables created before keep their column type -->
+
 ### Requirement: Ephemeral groups are removed when they stop
 When a subscription with `Ephemeral` true stops, the factory's subscriber SHALL delete that group's stored offset. `WithKeepEphemeralGroups()` SHALL disable the deletion. A non-ephemeral group's offset SHALL always be kept.
 
@@ -99,7 +120,7 @@ Then it returns an error from the database driver and the subscriber is closed
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: The outbox writes in the caller's transaction
-`NewOutbox(db, transport, cfg)` SHALL return an `*Outbox` implementing `doger.TxEventSender` whose `TxSource()` is `sqltx.Source()`. `SendTx` SHALL resolve its transaction with `sqltx.FromDB(ctx, db)`, return that function's error unchanged, and write the message on the resolved `SQL()`, addressed to the envelope's destination through the forwarder topic. `Send` and `Subscribe` SHALL delegate to the transport.
+`NewOutbox(db, transport, cfg)` SHALL return an `*Outbox` on PostgreSQL implementing `doger.TxEventSender` whose `TxSource()` is `sqltx.Source()`. `SendTx` SHALL resolve its transaction with `sqltx.FromDB(ctx, db)`, return that function's error unchanged, and write the message on the resolved `SQL()`, addressed to the envelope's destination through the forwarder topic. `Send` and `Subscribe` SHALL delegate to the transport.
 
 #### Scenario: Outbox delivery follows the transaction
 ```gherkin
@@ -141,6 +162,7 @@ Examples:
   | db  | t   | OutboxConfig{}                      | an *Outbox whose TxSource() is sqltx.Source() and forwarder topic is "doger_outbox" |
   | db  | t   | OutboxConfig{ForwarderTopic: "fwd"} | an *Outbox whose forwarder topic is "fwd"                                    |
   | db  | t   | OutboxConfig{ForwarderTopic: ""}    | an *Outbox whose forwarder topic is "doger_outbox"                           |
+  | db  | t   | OutboxConfig{Logger: nil}           | an *Outbox logging with watermill.NewSlogLogger(nil)                         |
   | nil | t   | OutboxConfig{}                      | an error matching dogerwatermill.ErrInvalidConfig                            |
   | db  | nil | OutboxConfig{}                      | an error matching dogerwatermill.ErrInvalidConfig                            |
 ```
@@ -152,11 +174,11 @@ Examples:
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: The outbox forwarder follows the container lifecycle
-The `Outbox` SHALL implement `doger.StarterWithContextAndError` and `doger.ShutdownerWithContextAndError`. `Start` SHALL run the forwarder in a goroutine and return once it is running; `Shutdown` SHALL close it and wait for it to exit. Messages committed while the forwarder is not running SHALL be relayed after it starts.
+The `Outbox` SHALL implement `doger.StarterWithContextAndError` and `doger.ShutdownerWithContextAndError`, and the container SHALL start and stop it when it is registered as the `NameOf[doger.EventTransport]()` service with `doger.AsStarter()`. `Start` SHALL run the forwarder in a goroutine and return once it is running; `Shutdown` SHALL close it and wait for it to exit. Messages committed while the forwarder is not running SHALL be relayed after it starts.
 
 #### Scenario: Forwarder lifecycle
 ```gherkin
-Given a root whose NameOf[doger.EventTransport]() service is an Outbox on PostgreSQL, and a remote listener "mail" on another started root
+Given a root whose NameOf[doger.EventTransport]() service is an Outbox on PostgreSQL registered with doger.AsStarter(), and a remote listener "mail" on another started root
 When <sequence>
 Then "mail" ran <ran> times within 5s and no goroutine leaked after both roots shut down
 

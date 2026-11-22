@@ -5,7 +5,7 @@ Specs: `specs/watermill-event-transport`, `specs/watermill-sql-support`. Test na
 ## 1. Module scaffolding (no behavior)
 
 - [x] 1.1 Create modules `github.com/kartaladev/doger/events/watermill` and `.../events/watermill/wmsql` (Go 1.27, `TestMain` with goleak, `doc.go`), add both to `go.work`, `.github/dependabot.yml` and `make modules`; verify `make test-all` and `make lint-all` pass with the empty packages
-- [x] 1.2 Add PostgreSQL and MySQL service containers to the Linux CI job setting `DOGER_TEST_POSTGRES_DSN` / `DOGER_TEST_MYSQL_DSN`, with SHA-pinned actions; verify the workflow passes `make lint-all` and the existing `release-integrity` checks
+- [x] 1.2 Start PostgreSQL and MySQL from `events/sql/compose.yaml` on the Linux rows of the CI test job (service containers cannot run on its macOS and Windows rows) setting `DOGER_TEST_POSTGRES_DSN` / `DOGER_TEST_MYSQL_DSN`, with SHA-pinned actions; verify the workflow passes `make lint-all` and the existing `release-integrity` checks
 
 ## 2. Construction (spec: "Constructing the transport")
 
@@ -69,6 +69,13 @@ Specs: `specs/watermill-event-transport`, `specs/watermill-sql-support`. Test na
 
 - [x] 11.1 Write the "watermill transport" guide in `docs/` (setup, options, SQL helpers, outbox with `sqltx`, recipes, at-least-once and idempotency, attempt counting caveat) and a CHANGELOG entry; verify the docs build per `docs/` instructions
 - [x] 11.2 Run `make test-all`, `make lint-all` and `make vuln` with both DSNs set; verify all pass
+
+## 12. Verify follow-ups (from `/opsx:verify`)
+
+- [x] 12.1 Binary payload schemas (D8): RED `TestSchema_PayloadBytes` failed on MySQL (both rows) and PostgreSQL (binary) with JSON columns; GREEN `PostgresSchema()` / `MySQLSchema()` as factory and outbox defaults; `TestConformance` passes on MySQL
+- [x] 12.2 Stop order (D6): RED `TestStop_Edges/closes_before_cancelling` failed; GREEN close before cancelling the subscription context on a clean stop
+- [x] 12.3 Coverage of existing behavior: `TestSubscribe/factory_panics` and `TestNew/nil_option_ignored` (both shown to fail with the protection disabled); `TestFactory_CleanupError` asserts the subscriber was closed (shown to fail with Close skipped)
+- [x] 12.4 READMEs for `events/watermill` and `events/watermill/wmsql`; release dry run accepts pgx as a runtime requirement of `wmsql`
 
 ## Workflow follow-up
 

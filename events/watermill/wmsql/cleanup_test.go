@@ -8,10 +8,12 @@ import (
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-sql/v4/pkg/sql"
+	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/kartaladev/doger"
+	dogerwatermill "github.com/kartaladev/doger/events/watermill"
 	dogerwmsql "github.com/kartaladev/doger/events/watermill/wmsql"
 )
 
@@ -94,11 +96,25 @@ func TestFactory_CleanupError(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, time.Minute)
 	db := openDB(t, postgres)
-	sub := doger.Subscription{Destination: topic, Group: "cache/7f3a", Mode: doger.DeliverAll, Ephemeral: true}
-	stop := subscribeOne(t, db, sub)
+	// keep the subscriber the factory builds, to check it was closed
+	var built message.Subscriber
+	factory := dogerwmsql.PostgresSubscriberFactory(db, fast(), dogerwmsql.WithLogger(watermill.NopLogger{}))
+	transport, err := dogerwatermill.New(newPublisher(t, postgres, db),
+		func(ctx context.Context, sub doger.Subscription) (message.Subscriber, error) {
+			s, err := factory(ctx, sub)
+			built = s
+			return s, err
+		}, dogerwatermill.WithLogger(watermill.NopLogger{}))
+	require.NoError(t, err)
+	stop, err := transport.Subscribe(context.Background(),
+		doger.Subscription{Destination: topic, Group: "cache/7f3a", Mode: doger.DeliverAll, Ephemeral: true},
+		func(context.Context, doger.Envelope) error { return nil })
+	require.NoError(t, err)
 
 	require.NoError(t, db.Close())
-	err := stop(context.Background())
+	err = stop(context.Background())
 
 	assert.ErrorContains(t, err, "database is closed")
+	_, err = built.Subscribe(context.Background(), topic)
+	assert.ErrorIs(t, err, sql.ErrSubscriberClosed, "the subscriber was closed")
 }

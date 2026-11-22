@@ -220,6 +220,7 @@ func TestNewOutbox(t *testing.T) {
 		{name: "defaults", db: db, transport: transport, wantTopic: "doger_outbox"},
 		{name: "forwarder_topic", db: db, transport: transport, cfg: dogerwmsql.OutboxConfig{ForwarderTopic: "fwd"}, wantTopic: "fwd"},
 		{name: "empty_forwarder_topic", db: db, transport: transport, cfg: dogerwmsql.OutboxConfig{ForwarderTopic: ""}, wantTopic: "doger_outbox"},
+		{name: "default_logger", db: db, transport: transport, cfg: dogerwmsql.OutboxConfig{Logger: nil}, wantTopic: "doger_outbox"},
 		{name: "nil_db", transport: transport, wantErr: true},
 		{name: "nil_transport", db: db, wantErr: true},
 	}
@@ -238,6 +239,9 @@ func TestNewOutbox(t *testing.T) {
 			var _ doger.TxEventSender = outbox
 			assert.Equal(t, sqltx.Source(), outbox.TxSource())
 			assert.Equal(t, tt.wantTopic, dogerwmsql.ForwarderTopic(outbox))
+			if tt.cfg.Logger == nil {
+				assert.IsType(t, watermill.NewSlogLogger(nil), dogerwmsql.OutboxLogger(outbox), "default logger")
+			}
 		})
 	}
 }
