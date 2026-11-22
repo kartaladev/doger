@@ -53,7 +53,7 @@ func subscribeOne(t *testing.T, db *stdsql.DB, sub doger.Subscription, opts ...d
 	select {
 	case <-handled:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the envelope was not handled")
+		require.FailNow(t, "the envelope was not handled")
 	}
 
 	return stop

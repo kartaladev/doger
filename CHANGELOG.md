@@ -26,7 +26,8 @@ listed under **BREAKING** with its migration.
   `PostgresSchema` / `MySQLSchema` schema adapters with binary payload
   columns; and `Outbox`, a PostgreSQL transactional outbox on `events/sqltx`
   transactions relayed by watermill's forwarder, its tables shaped by
-  `OutboxConfig.SchemaAdapter` and `OffsetsAdapter`.
+  `OutboxConfig.SchemaAdapter` and `OffsetsAdapter`, created when missing
+  unless `OutboxConfig.SkipSchemaInitialization` is set.
 - `make test-watermill` runs the `wmsql` database tests against PostgreSQL
   17 and MySQL 8.4 in Docker; Linux CI runs them in `make test-all`.
 

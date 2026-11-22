@@ -3,6 +3,7 @@ package dogerwmsql
 import (
 	"context"
 	stdsql "database/sql"
+	"fmt"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -69,9 +70,6 @@ type dialect struct {
 	// headOffsets wraps offsets so that new groups start at the head,
 	// reporting false for an offsets adapter it does not know.
 	headOffsets func(offsets sql.OffsetsAdapter, messagesTable func(string) string) (sql.OffsetsAdapter, bool)
-	// defaultTable names the messages table of a schema adapter that
-	// does not tell.
-	defaultTable func(topic string) string
 	// deleteGroup deletes the offset of one group from offsetsTable.
 	deleteGroup func(offsetsTable string) string
 }
@@ -84,7 +82,6 @@ var (
 			base, ok := offsets.(sql.DefaultPostgreSQLOffsetsAdapter)
 			return postgresHeadOffsets{DefaultPostgreSQLOffsetsAdapter: base, messagesTable: table}, ok
 		},
-		defaultTable: sql.DefaultPostgreSQLSchema{}.MessagesTable,
 		deleteGroup: func(offsetsTable string) string {
 			return `DELETE FROM ` + offsetsTable + ` WHERE consumer_group = $1`
 		},
@@ -96,7 +93,6 @@ var (
 			base, ok := offsets.(sql.DefaultMySQLOffsetsAdapter)
 			return mysqlHeadOffsets{DefaultMySQLOffsetsAdapter: base, messagesTable: table}, ok
 		},
-		defaultTable: sql.DefaultMySQLSchema{}.MessagesTable,
 		deleteGroup: func(offsetsTable string) string {
 			return `DELETE FROM ` + offsetsTable + ` WHERE consumer_group = ?`
 		},
@@ -120,7 +116,12 @@ func newFactory(db *stdsql.DB, opts []Option, d dialect) dogerwatermill.Subscrib
 			fn(&sc)
 		}
 		sc.ConsumerGroup = sub.Group
-		if head, ok := d.headOffsets(sc.OffsetsAdapter, messagesTable(sc.SchemaAdapter, d.defaultTable)); ok {
+		table, named := messagesTable(sc.SchemaAdapter)
+		if head, ok := d.headOffsets(sc.OffsetsAdapter, table); ok {
+			if !named {
+				return nil, fmt.Errorf("%w: dogerwmsql: the schema adapter %T has no MessagesTable(topic string) string method, "+
+					"so a new group cannot start at the latest message; add the method or set your own OffsetsAdapter", dogerwatermill.ErrInvalidConfig, sc.SchemaAdapter)
+			}
 			sc.OffsetsAdapter = head
 		}
 
@@ -166,14 +167,14 @@ func applyOptions(opts []Option) factoryConfig {
 	return cfg
 }
 
-// messagesTable returns the messages table naming of schema, or fallback
-// for a schema adapter that does not tell.
-func messagesTable(schema sql.SchemaAdapter, fallback func(topic string) string) func(topic string) string {
+// messagesTable returns the messages table naming of schema, or false for
+// a schema adapter that does not tell.
+func messagesTable(schema sql.SchemaAdapter) (func(topic string) string, bool) {
 	if named, ok := schema.(interface{ MessagesTable(topic string) string }); ok {
-		return named.MessagesTable
+		return named.MessagesTable, true
 	}
 
-	return fallback
+	return nil, false
 }
 
 // WithKeepEphemeralGroups keeps the stored offset of an ephemeral group

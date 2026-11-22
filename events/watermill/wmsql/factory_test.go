@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ThreeDotsLabs/watermill"
+	"github.com/ThreeDotsLabs/watermill-sql/v4/pkg/sql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -91,4 +93,26 @@ func TestFactory_NilDB(t *testing.T) {
 			assert.PanicsWithValue(t, "doger: dogerwmsql: nil *sql.DB", func() { tt.factory() })
 		})
 	}
+}
+
+// hiddenTables is a schema adapter that does not tell its table names.
+type hiddenTables struct{ sql.SchemaAdapter }
+
+// A schema adapter that does not tell its messages table cannot seed new
+// groups: the factory must not guess the table.
+func TestFactory_SchemaWithoutTableName(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Minute)
+	db := openDB(t, postgres)
+	schema := dogerwmsql.PostgresSchema()
+	schema.GenerateMessagesTableName = func(topic string) string { return `"app_events_` + topic + `"` }
+	factory := dogerwmsql.PostgresSubscriberFactory(db, fast(), dogerwmsql.WithLogger(watermill.NopLogger{}),
+		dogerwmsql.WithSubscriberConfig(func(c *sql.SubscriberConfig) { c.SchemaAdapter = hiddenTables{schema} }))
+
+	sub, err := factory(context.Background(), doger.Subscription{Destination: topic, Group: "mail", Mode: doger.DeliverOnce})
+
+	if sub != nil {
+		_ = sub.Close()
+	}
+	require.ErrorIs(t, err, dogerwatermill.ErrInvalidConfig)
 }

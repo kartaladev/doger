@@ -28,6 +28,6 @@ outbox, err := dogerwmsql.NewOutbox(db, transport, dogerwmsql.OutboxConfig{})
 doger.ProvideNamedValue[doger.EventTransport](root, doger.NameOf[doger.EventTransport](), outbox, doger.AsStarter())
 ```
 
-`SendTx` writes the event in the transaction `events/sqltx` binds to the context (`sqltx.InTx`, `BeginTx`, `BindTx`), and watermill's forwarder relays it once the transaction commits. `OutboxConfig.SchemaAdapter` and `OffsetsAdapter` shape its tables. Register the outbox with `doger.AsStarter()` so that the container starts and stops the forwarder.
+`SendTx` writes the event in the transaction `events/sqltx` binds to the context (`sqltx.InTx`, `BeginTx`, `BindTx`), and watermill's forwarder relays it once the transaction commits. `OutboxConfig.SchemaAdapter` and `OffsetsAdapter` shape its tables; it creates those missing, unless `SkipSchemaInitialization` is set. Register the outbox with `doger.AsStarter()` so that the container starts and stops the forwarder.
 
 See the [Watermill transport guide](https://github.com/kartaladev/doger/blob/main/docs/docs/service-lifecycle/watermill-transport.md) for details.

@@ -93,6 +93,20 @@ Each finding was proven with a test that failed before the fix.
 - [x] 13.10 Overridable defaults (rule 6): `OutboxConfig.SchemaAdapter` / `OffsetsAdapter` (`TestOutbox_Adapters`) and `WithCleanupTimeout` (`TestFactory_EphemeralCleanup` rows), each shown to fail with the override ignored
 - [x] 13.11 Guide, READMEs, package docs and CHANGELOG updated
 
+## 14. Second review follow-ups (from `/code-review high .`)
+
+Each finding was reproduced by a test that failed (or hung) before the fix.
+
+- [x] 14.1 Shared schema lock in the caller's transaction (D7): RED `TestOutbox_SchemaLock` (2 rows: a same-transaction `Send` to a new topic deadlocked; after a `BindTx` transaction committed directly, `Send` waited); GREEN create only missing tables, under `sql.DefaultSchemaInitializationLock("doger_outbox")`
+- [x] 14.2 Role without CREATE: RED `TestOutbox_RestrictedRole` ("permission denied for schema" from `Start`); GREEN create only missing tables; `OutboxConfig.SkipSchemaInitialization` with `TestOutbox_SkipSchemaInitialization`
+- [x] 14.3 Start cut short: RED `TestOutbox_StartCancelled` hung (`Router.Close` before the router ran); GREEN let the forwarder finish subscribing, close it, wait for `Run`
+- [x] 14.4 Start ignored its context: RED `TestOutbox_StartHonorsContext` (schema locks held: Start and Shutdown did not return); GREEN context-bounded table creation and a channel lock shared by Start and Shutdown; the test is not parallel
+- [x] 14.5 MySQL outbox: proof that a rolled-back business row survived (`CREATE TABLE` committed it); GREEN `NewOutbox` rejects MySQL adapters (`TestNewOutbox/mysql_schema`)
+- [x] 14.6 MySQL seed: proof that a new group skipped a message of a transaction open at seed time; documented as a limitation (D3, guide), no code change
+- [x] 14.7 Schema adapter without `MessagesTable`: RED `TestFactory_SchemaWithoutTableName`; GREEN the factory returns `ErrInvalidConfig` instead of guessing
+- [x] 14.8 Test convention: bare `t.Fatal` / `t.Error` replaced with testify in both modules
+- [x] 14.9 Guide, README and CHANGELOG updated
+
 ## Workflow follow-up
 
 - Archive after review; requires `add-event-transport` archived first.

@@ -142,7 +142,7 @@ func (r *envelopeRecorder) wait(t *testing.T, n int) []doger.Envelope {
 		select {
 		case <-r.got:
 		case <-timer.C:
-			t.Fatalf("received fewer than %d envelopes within %v", n, deliverTimeout)
+			require.FailNowf(t, "too few envelopes", "received fewer than %d within %v", n, deliverTimeout)
 		}
 	}
 	r.mu.Lock()

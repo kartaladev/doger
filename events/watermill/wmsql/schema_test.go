@@ -42,7 +42,7 @@ func TestSchema_PayloadBytes(t *testing.T) {
 					msg.Ack()
 					assert.Equal(t, message.Payload(payload), msg.Payload)
 				case <-time.After(10 * time.Second):
-					t.Fatal("no message received")
+					require.FailNow(t, "no message received")
 				}
 			})
 		}

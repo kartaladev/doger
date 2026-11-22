@@ -131,7 +131,7 @@ func TestConcurrent(t *testing.T) {
 		select {
 		case <-got:
 		case <-time.After(deliverTimeout):
-			t.Fatal("not every envelope was delivered")
+			require.FailNow(t, "not every envelope was delivered")
 		}
 	}
 	for _, stop := range stops {

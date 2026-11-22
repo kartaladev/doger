@@ -50,7 +50,11 @@ type mysqlHeadOffsets struct {
 }
 
 // BeforeSubscribingQueries seeds the group's offset with the newest
-// message of the topic, 0 for an empty one; see postgresHeadOffsets.
+// committed message of the topic, 0 for an empty one. Unlike PostgreSQL,
+// MySQL tells no snapshot horizon: a transaction open at seed time that
+// took a lower auto-increment offset commits below the seed and is
+// skipped by the new group, as watermill-sql's MySQL subscriber skips it
+// for any group already past that offset.
 func (a mysqlHeadOffsets) BeforeSubscribingQueries(params sql.BeforeSubscribingQueriesParams) ([]sql.Query, error) {
 	return []sql.Query{{
 		Query: mysqlSeedQuery(a.MessagesOffsetsTable(params.Topic), a.messagesTable(params.Topic)),

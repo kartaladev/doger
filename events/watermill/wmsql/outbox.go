@@ -5,7 +5,6 @@ import (
 	stdsql "database/sql"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -31,14 +30,30 @@ type OutboxConfig struct {
 	Logger watermill.LoggerAdapter
 	// SchemaAdapter shapes the outbox table: its name, payload column and
 	// queries. Default [PostgresSchema](). It must be a PostgreSQL one:
-	// the first SendTx creates the table in the caller's transaction.
+	// NewOutbox rejects watermill-sql's MySQL adapters, since MySQL
+	// commits the caller's transaction on CREATE TABLE. A
+	// sql.DefaultPostgreSQLSchema without its own lock creates the tables
+	// under an advisory lock of the outbox's own,
+	// sql.DefaultSchemaInitializationLock("doger_outbox"), not the one
+	// other watermill-sql schema setup shares.
 	SchemaAdapter sql.SchemaAdapter
 	// OffsetsAdapter shapes the forwarder's offsets table. Default
 	// watermill-sql's sql.DefaultPostgreSQLOffsetsAdapter{}, whose new
 	// group starts at the oldest message, so the forwarder relays what was
 	// committed before it first ran.
 	OffsetsAdapter sql.OffsetsAdapter
+	// SkipSchemaInitialization makes the outbox never create its tables,
+	// for a migration tool that owns them. By default the outbox creates
+	// those missing: Start both, and SendTx the outbox table in the
+	// caller's transaction until a transaction that did committed. Tables
+	// that exist are never created again, so a role that may not create
+	// tables works either way once they exist.
+	SkipSchemaInitialization bool
 }
+
+// outboxSchemaLock is the advisory lock the outbox's default schema
+// adapter creates its tables under.
+var outboxSchemaLock = sql.DefaultSchemaInitializationLock("doger_outbox")
 
 // Outbox is a transactional outbox on PostgreSQL in front of a
 // dogerwatermill transport: a doger.TxEventSender whose SendTx writes the
@@ -56,14 +71,14 @@ type Outbox struct {
 	logger    watermill.LoggerAdapter
 	schema    sql.SchemaAdapter
 	offsets   sql.OffsetsAdapter
+	skipInit  bool
 
-	schemaMu    sync.Mutex
-	schemaReady bool        // both tables exist: Start created them
-	tableReady  atomic.Bool // the outbox table exists
+	tableReady atomic.Bool // the outbox table exists
 
-	mu        sync.Mutex
+	lock      chan struct{} // held by Start and Shutdown; a channel, so waiting honors a context
 	forwarder *forwarder.Forwarder
-	done      chan struct{} // closed when the forwarder's Run returned
+	cancelRun context.CancelFunc // cancels the forwarder's Run context
+	done      chan struct{}      // closed when the forwarder's Run returned
 }
 
 var (
@@ -74,7 +89,8 @@ var (
 
 // NewOutbox returns an outbox writing to db in front of transport. It
 // starts nothing and touches no table until SendTx or Start. A nil db or
-// transport returns an error matching dogerwatermill.ErrInvalidConfig.
+// transport, or a MySQL schema or offsets adapter, returns an error
+// matching dogerwatermill.ErrInvalidConfig.
 func NewOutbox(db *stdsql.DB, transport *dogerwatermill.Transport, cfg OutboxConfig) (*Outbox, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%w: nil *sql.DB", dogerwatermill.ErrInvalidConfig)
@@ -94,10 +110,23 @@ func NewOutbox(db *stdsql.DB, transport *dogerwatermill.Transport, cfg OutboxCon
 	if cfg.OffsetsAdapter == nil {
 		cfg.OffsetsAdapter = sql.DefaultPostgreSQLOffsetsAdapter{}
 	}
+	switch cfg.SchemaAdapter.(type) {
+	case sql.DefaultMySQLSchema, *sql.DefaultMySQLSchema:
+		return nil, fmt.Errorf("%w: the outbox needs PostgreSQL: MySQL commits the caller's transaction on CREATE TABLE", dogerwatermill.ErrInvalidConfig)
+	}
+	switch cfg.OffsetsAdapter.(type) {
+	case sql.DefaultMySQLOffsetsAdapter, *sql.DefaultMySQLOffsetsAdapter:
+		return nil, fmt.Errorf("%w: the outbox needs PostgreSQL offsets", dogerwatermill.ErrInvalidConfig)
+	}
+	if pg, ok := cfg.SchemaAdapter.(sql.DefaultPostgreSQLSchema); ok && pg.InitializeSchemaLock == 0 {
+		pg.InitializeSchemaLock = outboxSchemaLock
+		cfg.SchemaAdapter = pg
+	}
 
 	return &Outbox{
 		db: db, transport: transport, topic: cfg.ForwarderTopic, logger: cfg.Logger,
-		schema: cfg.SchemaAdapter, offsets: cfg.OffsetsAdapter,
+		schema: cfg.SchemaAdapter, offsets: cfg.OffsetsAdapter, skipInit: cfg.SkipSchemaInitialization,
+		lock: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -153,26 +182,91 @@ func (o *Outbox) boundTx(ctx context.Context) (*sqltx.Tx, error) {
 	return tx, nil
 }
 
-// ensureTable creates the outbox table in tx, on the connection tx holds,
-// until Start or a committed transaction created it: the pool may have no
-// other connection to spare. watermill-sql's queries take an advisory
-// transaction lock, so concurrent first transactions create it in turn.
+// ensureTable creates the outbox table in tx, on the connection tx holds
+// (the pool may have no other to spare), unless it exists: until Start or
+// a transaction through sqltx committed, each SendTx checks. The creation
+// queries take the schema adapter's advisory lock until tx ends, so
+// concurrent first transactions create the table in turn; the outbox's own
+// lock keeps other watermill-sql schema setup out of that wait.
 func (o *Outbox) ensureTable(ctx context.Context, tx *sqltx.Tx) error {
-	if o.tableReady.Load() {
+	if o.skipInit || o.tableReady.Load() {
+		return nil
+	}
+	markReady := func(context.Context) { o.tableReady.Store(true) }
+	exists, err := tablesExist(ctx, tx.SQL(), messagesTableOf(o.schema, o.topic))
+	if err != nil {
+		return fmt.Errorf("doger: dogerwmsql: find the outbox table: %w", err)
+	}
+	if exists { // possibly created by tx itself: ready once it commits
+		tx.OnCommit(markReady)
 		return nil
 	}
 	queries, err := o.schema.SchemaInitializingQueries(sql.SchemaInitializingQueriesParams{Topic: o.topic})
 	if err != nil {
 		return fmt.Errorf("doger: dogerwmsql: create the outbox table: %w", err)
 	}
-	for _, q := range queries {
-		if _, err := tx.SQL().ExecContext(ctx, q.Query, q.Args...); err != nil {
-			return fmt.Errorf("doger: dogerwmsql: create the outbox table: %w", err)
-		}
+	if err := execAll(ctx, tx.SQL(), queries); err != nil {
+		return fmt.Errorf("doger: dogerwmsql: create the outbox table: %w", err)
 	}
-	tx.OnCommit(func(context.Context) { o.tableReady.Store(true) })
+	tx.OnCommit(markReady)
 
 	return nil
+}
+
+// queryExecer is a *sql.DB or a *sql.Tx.
+type queryExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (stdsql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *stdsql.Row
+}
+
+// tablesExist reports whether every table exists, false for a table whose
+// name is unknown ("").
+func tablesExist(ctx context.Context, q queryExecer, tables ...string) (bool, error) {
+	for _, table := range tables {
+		if table == "" {
+			return false, nil
+		}
+		var exists bool
+		if err := q.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
+			return false, err
+		}
+		if !exists {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// execAll runs queries in order on q.
+func execAll(ctx context.Context, q queryExecer, queries []sql.Query) error {
+	for _, query := range queries {
+		if _, err := q.ExecContext(ctx, query.Query, query.Args...); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// messagesTableOf returns the messages table of topic in schema, "" when
+// the adapter does not tell.
+func messagesTableOf(schema sql.SchemaAdapter, topic string) string {
+	if named, ok := schema.(interface{ MessagesTable(topic string) string }); ok {
+		return named.MessagesTable(topic)
+	}
+
+	return ""
+}
+
+// offsetsTableOf returns the offsets table of topic in offsets, "" when
+// the adapter does not tell.
+func offsetsTableOf(offsets sql.OffsetsAdapter, topic string) string {
+	if named, ok := offsets.(interface{ MessagesOffsetsTable(topic string) string }); ok {
+		return named.MessagesOffsetsTable(topic)
+	}
+
+	return ""
 }
 
 // txPublisher returns a publisher writing enveloped messages to the
@@ -186,26 +280,62 @@ func (o *Outbox) txPublisher(tx *sqltx.Tx) (*forwarder.Publisher, error) {
 	return forwarder.NewPublisher(pub, forwarder.PublisherConfig{ForwarderTopic: o.topic}), nil
 }
 
-// ensureSchema creates the outbox tables (the messages and the
-// forwarder's offsets) once, outside any transaction, for Start.
-func (o *Outbox) ensureSchema() error {
-	o.schemaMu.Lock()
-	defer o.schemaMu.Unlock()
-	if o.schemaReady {
+// ensureSchema creates, for Start, the outbox tables (the messages and
+// the forwarder's offsets) that do not exist, in a transaction of its own
+// bounded by ctx. With SkipSchemaInitialization it only checks that the
+// tables it can name exist: a forwarder whose subscribe fails would leak a
+// watermill router goroutine.
+func (o *Outbox) ensureSchema(ctx context.Context) error {
+	messages, offsets := messagesTableOf(o.schema, o.topic), offsetsTableOf(o.offsets, o.topic)
+	if o.skipInit {
+		for _, table := range []string{messages, offsets} {
+			if table == "" {
+				continue
+			}
+			exists, err := tablesExist(ctx, o.db, table)
+			if err != nil {
+				return fmt.Errorf("doger: dogerwmsql: find the outbox tables: %w", err)
+			}
+			if !exists {
+				return fmt.Errorf("doger: dogerwmsql: the outbox table %s does not exist, and SkipSchemaInitialization is set", table)
+			}
+		}
 		return nil
 	}
-	sub, err := o.newSubscriber()
+	exists, err := tablesExist(ctx, o.db, messages, offsets)
 	if err != nil {
-		return err
+		return fmt.Errorf("doger: dogerwmsql: find the outbox tables: %w", err)
 	}
-	defer sub.Close() //nolint:errcheck // never subscribed: nothing to close
-	if err := sub.SubscribeInitialize(o.topic); err != nil {
-		return fmt.Errorf("doger: dogerwmsql: create the outbox tables: %w", err)
+	if !exists {
+		if err := o.createSchema(ctx); err != nil {
+			return fmt.Errorf("doger: dogerwmsql: create the outbox tables: %w", err)
+		}
 	}
-	o.schemaReady = true
 	o.tableReady.Store(true)
 
 	return nil
+}
+
+// createSchema runs the schema and offsets adapters' creation queries in
+// one transaction bounded by ctx.
+func (o *Outbox) createSchema(ctx context.Context) error {
+	queries, err := o.schema.SchemaInitializingQueries(sql.SchemaInitializingQueriesParams{Topic: o.topic})
+	if err != nil {
+		return err
+	}
+	offsetQueries, err := o.offsets.SchemaInitializingQueries(sql.OffsetsSchemaInitializingQueriesParams{Topic: o.topic})
+	if err != nil {
+		return err
+	}
+	tx, err := o.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := execAll(ctx, tx, append(queries, offsetQueries...)); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+
+	return tx.Commit()
 }
 
 // newSubscriber returns a watermill-sql subscriber of the outbox table.
@@ -215,7 +345,7 @@ func (o *Outbox) newSubscriber() (*sql.Subscriber, error) {
 	sub, err := sql.NewSubscriber(sql.BeginnerFromStdSQL(o.db), sql.SubscriberConfig{
 		SchemaAdapter:    o.schema,
 		OffsetsAdapter:   o.offsets,
-		InitializeSchema: true,
+		InitializeSchema: false, // ensureSchema's, or a migration's
 	}, o.logger)
 	if err != nil {
 		return nil, fmt.Errorf("doger: dogerwmsql: outbox subscriber: %w", err)
@@ -224,15 +354,34 @@ func (o *Outbox) newSubscriber() (*sql.Subscriber, error) {
 	return sub, nil
 }
 
-// Start runs the forwarder in a goroutine and returns once it is running,
-// or its error. Starting a started outbox does nothing.
+// acquire takes the Start/Shutdown lock, or returns ctx's error.
+func (o *Outbox) acquire(ctx context.Context) error {
+	select {
+	case o.lock <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// release frees the Start/Shutdown lock.
+func (o *Outbox) release() { <-o.lock }
+
+// Start creates the missing tables (see
+// OutboxConfig.SkipSchemaInitialization), runs the forwarder in a
+// goroutine and returns once it is running, or its error. When ctx ends
+// first, Start stops what it started, once the forwarder finished
+// subscribing, and returns ctx's error. Starting a
+// started outbox does nothing.
 func (o *Outbox) Start(ctx context.Context) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	if err := o.acquire(ctx); err != nil {
+		return err
+	}
+	defer o.release()
 	if o.forwarder != nil {
 		return nil
 	}
-	if err := o.ensureSchema(); err != nil {
+	if err := o.ensureSchema(ctx); err != nil {
 		return err
 	}
 	sub, err := o.newSubscriber()
@@ -246,34 +395,59 @@ func (o *Outbox) Start(ctx context.Context) error {
 
 	done := make(chan struct{})
 	var runErr error
+	// Start's context ends when the container's Start returns; the
+	// forwarder runs until Shutdown closes it
+	runCtx, cancelRun := context.WithCancel(context.WithoutCancel(ctx))
 	go func() {
 		defer close(done)
-		// Start's context ends when the container's Start returns; the
-		// forwarder runs until Shutdown closes it
-		runErr = fwd.Run(context.WithoutCancel(ctx))
+		runErr = fwd.Run(runCtx)
 	}()
 	select {
 	case <-fwd.Running():
 	case <-done:
+		cancelRun()
 		return fmt.Errorf("doger: dogerwmsql: outbox forwarder: %w", runErr)
 	case <-ctx.Done():
-		return errors.Join(ctx.Err(), fwd.Close())
+		return errors.Join(ctx.Err(), stopForwarder(fwd, cancelRun, done))
 	}
-	o.forwarder, o.done = fwd, done
+	o.forwarder, o.cancelRun, o.done = fwd, cancelRun, done
 
 	return nil
 }
 
+// stopForwarder stops a forwarder whose Run may still be starting: it
+// lets Run finish starting (one subscribe), closes it, and waits for Run
+// to return. The router's Close must not run before the router is
+// running, or it waits for handlers that never start; and cancelling Run's
+// context while it subscribes leaks a router goroutine waiting for a
+// handler that never ran.
+func stopForwarder(fwd *forwarder.Forwarder, cancelRun context.CancelFunc, done <-chan struct{}) error {
+	defer cancelRun()
+	var err error
+	select {
+	case <-fwd.Running():
+		err = fwd.Close()
+	case <-done:
+	}
+	<-done
+
+	return err
+}
+
 // Shutdown closes the forwarder and waits for it to exit, or for ctx to
-// end. Shutting down an outbox that is not running returns nil.
+// end, as it waits for a Start in progress. Shutting down an outbox that
+// is not running returns nil.
 func (o *Outbox) Shutdown(ctx context.Context) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	if err := o.acquire(ctx); err != nil {
+		return err
+	}
+	defer o.release()
 	if o.forwarder == nil {
 		return nil
 	}
-	fwd, done := o.forwarder, o.done
-	o.forwarder, o.done = nil, nil
+	fwd, cancelRun, done := o.forwarder, o.cancelRun, o.done
+	o.forwarder, o.cancelRun, o.done = nil, nil, nil
+	defer cancelRun()
 	err := fwd.Close()
 	select {
 	case <-done:

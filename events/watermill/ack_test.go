@@ -135,17 +135,17 @@ func TestAck_RetryDelay(t *testing.T) {
 				case d := <-clock.Started:
 					assert.Equal(t, delay, d, "scheduled delay")
 				case <-time.After(deliverTimeout):
-					t.Fatal("no retry delay was scheduled")
+					require.FailNow(t, "no retry delay was scheduled")
 				}
 				select {
 				case <-msg.Nacked():
-					t.Fatal("nacked before the clock advanced")
+					require.FailNow(t, "nacked before the clock advanced")
 				case <-time.After(50 * time.Millisecond):
 				}
 				clock.Advance(delay - time.Nanosecond)
 				select {
 				case <-msg.Nacked():
-					t.Fatal("nacked before the full delay elapsed")
+					require.FailNow(t, "nacked before the full delay elapsed")
 				case <-time.After(50 * time.Millisecond):
 				}
 				clock.Advance(time.Nanosecond)
@@ -221,11 +221,11 @@ func TestAck_PoisonFailureRetry(t *testing.T) {
 
 		select {
 		case <-msg.Nacked():
-			t.Fatal("nacked at once after the failed poison publish")
+			require.FailNow(t, "nacked at once after the failed poison publish")
 		case d := <-clock.Started:
 			assert.Equal(t, time.Second, d, "scheduled delay")
 		case <-time.After(deliverTimeout):
-			t.Fatal("neither nacked nor delayed")
+			require.FailNow(t, "neither nacked nor delayed")
 		}
 		clock.Advance(time.Second)
 		assert.True(t, <-settled, "message nacked after the delay")

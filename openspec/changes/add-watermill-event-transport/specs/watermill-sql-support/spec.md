@@ -7,7 +7,7 @@ Makes watermill-sql (PostgreSQL and MySQL) meet doger's transport contract out o
 ## ADDED Requirements
 
 ### Requirement: Subscriber factories map subscriptions to consumer groups
-`PostgresSubscriberFactory(db, opts...)` and `MySQLSubscriberFactory(db, opts...)` SHALL return a `dogerwatermill.SubscriberFactory` that builds a watermill-sql subscriber whose `ConsumerGroup` is the subscription's group, so members of one group compete and different groups each receive every message. By default the subscriber initializes its tables (`InitializeSchema` true) and uses the schema adapter of `PostgresSchema()` / `MySQLSchema()`; `WithSubscriberConfig` adjusts any setting before the factory sets the group and the offsets adapter, and `WithLogger` sets its logger. A nil `db` SHALL panic with "doger: dogerwmsql: nil *sql.DB".
+`PostgresSubscriberFactory(db, opts...)` and `MySQLSubscriberFactory(db, opts...)` SHALL return a `dogerwatermill.SubscriberFactory` that builds a watermill-sql subscriber whose `ConsumerGroup` is the subscription's group, so members of one group compete and different groups each receive every message. By default the subscriber initializes its tables (`InitializeSchema` true) and uses the schema adapter of `PostgresSchema()` / `MySQLSchema()`; `WithSubscriberConfig` adjusts any setting before the factory sets the group and the offsets adapter, and `WithLogger` sets its logger. When the factory would seed new groups (the default offsets adapter) and the schema adapter has no `MessagesTable(topic string) string` method, the factory SHALL return an error matching `dogerwatermill.ErrInvalidConfig` instead of guessing the table. A nil `db` SHALL panic with "doger: dogerwmsql: nil *sql.DB".
 
 #### Scenario: Groups on a SQL backend
 ```gherkin
@@ -33,6 +33,13 @@ Examples:
   | constructor                         |
   | dogerwmsql.PostgresSubscriberFactory |
   | dogerwmsql.MySQLSubscriberFactory    |
+```
+
+#### Scenario: A schema adapter that does not name its table
+```gherkin
+Given a PostgreSQL factory built with WithSubscriberConfig setting a schema adapter, naming tables "app_events_<topic>", that has no MessagesTable method
+When the factory builds the subscriber of Subscription{Destination: "orders.placed", Group: "mail", Mode: DeliverOnce}
+Then it returns an error matching dogerwatermill.ErrInvalidConfig
 ```
 
 <!-- cases: N/A 4 boundaries: group names are validated by watermill-sql; doger groups are non-empty by construction -->
@@ -72,6 +79,7 @@ When a subscription for group "mail" starts and the open transaction commits
 Then the subscription receives "in-flight" within 10s
 ```
 
+<!-- cases: known limitation, MySQL: MySQL tells no snapshot horizon, so a transaction open at seed time that took a lower auto-increment offset commits below the seed and the new group skips it (reproduced in the review triage); watermill-sql's MySQL subscriber skips it the same way for any group already past that offset. Documented in the guide; not tested as behavior to keep. -->
 <!-- cases: N/A 2 overrides: none, the start position is part of doger's contract -->
 <!-- cases: N/A 5 errors: a failing seed query fails Subscribe with the database error, as any watermill-sql initialization error does -->
 <!-- cases: N/A 9 panics: no consumer callback is involved -->
@@ -130,7 +138,7 @@ Then it returns an error from the database driver and the subscriber is closed
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: The outbox writes in the caller's transaction
-`NewOutbox(db, transport, cfg)` SHALL return an `*Outbox` on PostgreSQL implementing `doger.TxEventSender` whose `TxSource()` is `sqltx.Source()`. `SendTx` SHALL resolve its transaction with `sqltx.FromDB(ctx, db)`, return that function's error unchanged, and write the message on the resolved `SQL()`, addressed to the envelope's destination through the forwarder topic. Until `Start` or a committed `SendTx` created the outbox table, `SendTx` SHALL create it in that transaction, needing no other connection. `OutboxConfig.SchemaAdapter` (default `PostgresSchema()`) and `OffsetsAdapter` (default watermill-sql's PostgreSQL adapter) SHALL shape the tables. `Send` and `Subscribe` SHALL delegate to the transport.
+`NewOutbox(db, transport, cfg)` SHALL return an `*Outbox` on PostgreSQL implementing `doger.TxEventSender` whose `TxSource()` is `sqltx.Source()`. `SendTx` SHALL resolve its transaction with `sqltx.FromDB(ctx, db)`, return that function's error unchanged, and write the message on the resolved `SQL()`, addressed to the envelope's destination through the forwarder topic. The outbox SHALL create only the tables that do not exist. Until `Start` or a committed `SendTx` made the outbox table known, `SendTx` SHALL check for it in that transaction and create it there when missing, needing no other connection, under the advisory lock `sql.DefaultSchemaInitializationLock("doger_outbox")` instead of the one other watermill-sql schema setup shares (for a `sql.DefaultPostgreSQLSchema` without a lock of its own). `OutboxConfig.SkipSchemaInitialization` SHALL turn creation off. `OutboxConfig.SchemaAdapter` (default `PostgresSchema()`) and `OffsetsAdapter` (default watermill-sql's PostgreSQL adapter) SHALL shape the tables; `NewOutbox` SHALL reject watermill-sql's MySQL schema or offsets adapters with an error matching `dogerwatermill.ErrInvalidConfig`, since MySQL commits the caller's transaction on `CREATE TABLE`. `Send` and `Subscribe` SHALL delegate to the transport.
 
 #### Scenario: Outbox delivery follows the transaction
 ```gherkin
@@ -174,6 +182,7 @@ Examples:
   | db  | t   | OutboxConfig{ForwarderTopic: ""}    | an *Outbox whose forwarder topic is "doger_outbox"                           |
   | db  | t   | OutboxConfig{Logger: nil}           | an *Outbox logging with watermill.NewSlogLogger(nil)                         |
   | db  | t   | OutboxConfig{SchemaAdapter: a schema naming tables "custom_<topic>", OffsetsAdapter: an adapter naming them "custom_offsets_<topic>"} | an *Outbox writing to "custom_doger_outbox", whose started forwarder uses "custom_offsets_doger_outbox" and relays the committed message |
+  | db  | t   | OutboxConfig{SchemaAdapter: dogerwmsql.MySQLSchema()} | an error matching dogerwatermill.ErrInvalidConfig          |
   | nil | t   | OutboxConfig{}                      | an error matching dogerwatermill.ErrInvalidConfig                            |
   | db  | nil | OutboxConfig{}                      | an error matching dogerwatermill.ErrInvalidConfig                            |
 ```
@@ -191,12 +200,38 @@ Examples:
   | with the default pool         | 8 concurrently |
 ```
 
+#### Scenario: Schema setup does not wait for the caller's transaction
+```gherkin
+Given an Outbox that was not started, over a transport whose watermill-sql publisher creates tables on first use
+When <sequence>
+Then the transport's Send to the new topic "orders.shipped" returns within 10s
+
+Examples:
+  | sequence                                                                                                   |
+  | inside one sqltx.InTx transaction, SendTx writes an envelope, then Send sends one to "orders.shipped"     |
+  | SendTx writes in a *sql.Tx bound with sqltx.BindTx and committed directly, then in a second one left open, and Send sends to "orders.shipped" |
+```
+
+#### Scenario: Tables a migration created
+```gherkin
+Given the outbox tables created by the owner's Start, and a role allowed to read and write them but not to create tables
+When an Outbox on that role's connection starts and SendTx writes inside sqltx.InTx
+Then Start and the transaction return nil
+```
+
+#### Scenario: Schema initialization turned off
+```gherkin
+Given an Outbox with OutboxConfig{SkipSchemaInitialization: true} on a database without its tables
+When SendTx writes inside sqltx.InTx, then Start is called
+Then both return an error containing "does not exist", and no outbox table was created
+```
+
 <!-- cases: N/A 6 duplicate: one Outbox per database; several Outboxes on one database share tables by forwarder topic -->
 <!-- cases: N/A 9 panics: SendTx panics are recovered by doger core as *ExternalizeError -->
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: The outbox forwarder follows the container lifecycle
-The `Outbox` SHALL implement `doger.StarterWithContextAndError` and `doger.ShutdownerWithContextAndError`, and the container SHALL start and stop it when it is registered as the `NameOf[doger.EventTransport]()` service with `doger.AsStarter()`. `Start` SHALL run the forwarder in a goroutine and return once it is running; `Shutdown` SHALL close it and wait for it to exit. Messages committed while the forwarder is not running SHALL be relayed after it starts.
+The `Outbox` SHALL implement `doger.StarterWithContextAndError` and `doger.ShutdownerWithContextAndError`, and the container SHALL start and stop it when it is registered as the `NameOf[doger.EventTransport]()` service with `doger.AsStarter()`. `Start` SHALL create the missing tables in a transaction of its own bounded by its context, run the forwarder in a goroutine and return once it is running; `Shutdown` SHALL close it and wait for it to exit. Both SHALL honor their context, also while one waits for the other. When `Start`'s context ends first, it SHALL return that context's error and leave no forwarder running: it lets a forwarder still subscribing finish, closes it, and waits for it to exit. Messages committed while the forwarder is not running SHALL be relayed after it starts.
 
 #### Scenario: Forwarder lifecycle
 ```gherkin
@@ -219,7 +254,22 @@ Then it returns nil
 ```
 
 <!-- cases: N/A 3,4,6: no further inputs -->
-<!-- cases: N/A 5 errors: a forwarder that fails to start returns its error from Start, failing the container's Start as any Starter error does -->
+#### Scenario: Start honors its context
+```gherkin
+Given an Outbox on a database without its tables, while another transaction holds the schema advisory locks
+When Start is called with a context that times out after 300ms, and Shutdown with one that times out after 300ms 50ms later
+Then Start returns an error matching context.DeadlineExceeded within 3s, and Shutdown returns within 3s
+```
+
+#### Scenario: Start cut short
+```gherkin
+Given the outbox tables exist and a transport subscription for "orders.placed"
+When 20 Outboxes are started with deadlines of 0 to 19ms, each shut down when its Start returned nil
+And one envelope is then committed through SendTx
+Then the subscription receives nothing within 2s from a forwarder of a Start cut short, and no goroutine leaked
+```
+
+<!-- cases: 5 errors: a forwarder that fails to start returns its error from Start, failing the container's Start as any Starter error does -->
 <!-- cases: N/A 9 panics: forwarder panics are recovered by watermill's router -->
 <!-- cases: N/A 10 compatibility: new module -->
 

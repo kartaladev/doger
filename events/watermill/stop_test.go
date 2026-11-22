@@ -87,12 +87,12 @@ func TestStop_Deadline(t *testing.T) {
 	case <-time.After(time.Second):
 		closeOnce(&giveUpOnce, giveUp)
 		<-stopped
-		t.Fatal("stop did not return within 1s of its deadline")
+		require.FailNow(t, "stop did not return within 1s of its deadline")
 	}
 	select {
 	case <-cancelled:
 	case <-time.After(time.Second):
-		t.Error("the handler context was not cancelled")
+		assert.Fail(t, "the handler context was not cancelled")
 	}
 	// past the deadline, the subscriber closes in the background
 	assert.Eventually(t, func() bool { return fake.closes.Load() == 1 }, time.Second, 5*time.Millisecond, "subscriber closes")
@@ -178,7 +178,7 @@ func TestStop_CloseAfterDeadline(t *testing.T) {
 	case err := <-stopped:
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	case <-time.After(time.Second):
-		t.Fatal("stop did not return within 1s of its deadline")
+		require.FailNow(t, "stop did not return within 1s of its deadline")
 	}
 	assert.Zero(t, errorsLogged(logger), "nothing logged while Close waits")
 	close(fake.closeBlock)

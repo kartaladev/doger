@@ -17,6 +17,8 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 	gomysql "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" driver
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	dogerwatermill "github.com/kartaladev/doger/events/watermill"
 	dogerwmsql "github.com/kartaladev/doger/events/watermill/wmsql"
@@ -48,7 +50,7 @@ func requireDSN(t *testing.T, env string) string {
 	t.Helper()
 	dsn, skip, fail := lookupDSN(env, os.Getenv, runtime.GOOS)
 	if fail != "" {
-		t.Fatal(fail)
+		require.FailNow(t, fail)
 	}
 	if skip != "" {
 		t.Skip(skip)
@@ -98,9 +100,7 @@ func openDB(t *testing.T, e engine) *stdsql.DB {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	admin, err := stdsql.Open(e.driver, dsn)
-	if err != nil {
-		t.Fatalf("open %s: %v", e.name, err)
-	}
+	require.NoError(t, err, "open %s", e.name)
 	t.Cleanup(func() { _ = admin.Close() })
 
 	var raw [6]byte
@@ -110,21 +110,17 @@ func openDB(t *testing.T, e engine) *stdsql.DB {
 	if e.name == "mysql" {
 		create, drop = "CREATE DATABASE "+schema, "DROP DATABASE "+schema
 	}
-	if _, err := admin.ExecContext(ctx, create); err != nil {
-		t.Fatalf("%s: %s: %v", e.name, create, err)
-	}
+	_, err = admin.ExecContext(ctx, create)
+	require.NoError(t, err, "%s: %s", e.name, create)
 
 	db, err := stdsql.Open(e.driver, scopedDSN(t, e, dsn, schema))
-	if err != nil {
-		t.Fatalf("open %s: %v", e.name, err)
-	}
+	require.NoError(t, err, "open %s", e.name)
 	t.Cleanup(func() {
 		_ = db.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if _, err := admin.ExecContext(ctx, drop); err != nil {
-			t.Errorf("%s: %s: %v", e.name, drop, err)
-		}
+		_, err := admin.ExecContext(ctx, drop)
+		assert.NoError(t, err, "%s: %s", e.name, drop)
 	})
 
 	return db
@@ -136,9 +132,7 @@ func scopedDSN(t *testing.T, e engine, dsn, schema string) string {
 	t.Helper()
 	if e.name == "mysql" {
 		cfg, err := gomysql.ParseDSN(dsn)
-		if err != nil {
-			t.Fatalf("parse %s DSN: %v", e.name, err)
-		}
+		require.NoError(t, err, "parse %s DSN", e.name)
 		cfg.DBName = schema
 		return cfg.FormatDSN()
 	}
@@ -146,9 +140,7 @@ func scopedDSN(t *testing.T, e engine, dsn, schema string) string {
 		return dsn + " search_path=" + schema
 	}
 	u, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatalf("parse %s DSN: %v", e.name, err)
-	}
+	require.NoError(t, err, "parse %s DSN", e.name)
 	q := u.Query()
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
@@ -163,9 +155,7 @@ func newPublisher(t *testing.T, e engine, db *stdsql.DB) *sql.Publisher {
 		SchemaAdapter:        e.schema,
 		AutoInitializeSchema: true,
 	}, watermill.NopLogger{})
-	if err != nil {
-		t.Fatalf("watermill-sql publisher: %v", err)
-	}
+	require.NoError(t, err, "watermill-sql publisher")
 	t.Cleanup(func() { _ = pub.Close() })
 
 	return pub
@@ -175,9 +165,7 @@ func newPublisher(t *testing.T, e engine, db *stdsql.DB) *sql.Publisher {
 func publishN(t *testing.T, pub message.Publisher, topic string, n int) {
 	t.Helper()
 	for range n {
-		if err := pub.Publish(topic, message.NewMessage(watermill.NewUUID(), []byte(`{"n":1}`))); err != nil {
-			t.Fatalf("publish: %v", err)
-		}
+		require.NoError(t, pub.Publish(topic, message.NewMessage(watermill.NewUUID(), []byte(`{"n":1}`))), "publish")
 	}
 }
 
@@ -190,9 +178,7 @@ func newTestTransport(t *testing.T, e engine, db *stdsql.DB, factoryOpts ...doge
 		e.factory(db, append([]dogerwmsql.Option{fast(), dogerwmsql.WithLogger(watermill.NopLogger{})}, factoryOpts...)...),
 		dogerwatermill.WithRetryDelay(10*time.Millisecond),
 		dogerwatermill.WithLogger(watermill.NopLogger{}))
-	if err != nil {
-		t.Fatalf("dogerwatermill.New: %v", err)
-	}
+	require.NoError(t, err, "dogerwatermill.New")
 
 	return transport
 }
