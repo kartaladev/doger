@@ -239,6 +239,21 @@ check_release() {
 	grep -Eq '^[[:space:]]+generate_release_notes:[[:space:]]+true' "$f" ||
 		fail "$r: the release action is not called with generate_release_notes: true"
 
+	# make test-all runs the wmsql database tests, which fail in CI on Linux
+	# without their DSNs: the release starts the databases first, as test.yml
+	local test_all db_up
+	test_all="$(first_line '^[[:space:]]+run:[[:space:]]+make test-all[[:space:]]*$' "$f")"
+	db_up="$(first_line 'make watermill-db-up' "$f")"
+	if [ "$test_all" -gt 0 ]; then
+		{ [ "$db_up" -gt 0 ] && [ "$db_up" -lt "$test_all" ]; } ||
+			fail "$r: 'make test-all' runs before the test databases are started (make watermill-db-up)"
+		local dsn
+		for dsn in DOGER_TEST_POSTGRES_DSN DOGER_TEST_MYSQL_DSN; do
+			[ "$(first_line "$dsn=" "$f")" -gt 0 ] && [ "$(first_line "$dsn=" "$f")" -lt "$test_all" ] ||
+				fail "$r: 'make test-all' runs without $dsn exported"
+		done
+	fi
+
 	# the steps run scripts/release-steps.sh, shared with the dry run
 	local strip tidy pin verify vuln tags
 	strip="$(first_line 'run:[[:space:]]+scripts/release-steps\.sh strip' "$f")"
@@ -625,6 +640,19 @@ jobs: {}'
 	expect "$fx" release fail "does not declare 'environment: release'"
 	expect "$fx" release fail "must set 'persist-credentials: false'"
 	expect "$fx" release fail "no step pins the released modules"
+
+	# release: make test-all without the test databases
+	fixture
+	put .github/workflows/release.yml "$head"'
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: make test-all
+      - name: Start the databases
+        run: make watermill-db-up'
+	expect "$fx" release fail "'make test-all' runs before the test databases are started"
+	expect "$fx" release fail "'make test-all' runs without DOGER_TEST_POSTGRES_DSN exported"
 
 	# release: steps that hard-code the adapters and pin only the root
 	fixture
