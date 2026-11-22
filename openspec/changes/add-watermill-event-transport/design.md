@@ -50,6 +50,7 @@ func New(pub message.Publisher, subs SubscriberFactory, opts ...Option) (*Transp
 //          WithLogger(watermill.LoggerAdapter), WithClock(doger.Clock)
 var ErrInvalidConfig = errors.New("doger: dogerwatermill: invalid configuration")
 ```
+- `Transport.Publisher()` returns the publisher and `Transport.Message(env)` the message `Send` would publish. Both are exported for the outbox (D7), which relays to that publisher and must encode with the transport's metadata prefix; nothing else needs them.
 - The factory receives the whole `doger.Subscription`, so it can set the group, use `Ephemeral` for non-durable consumers, and choose per destination. A factory returning `(nil, nil)` is a configuration error, not a panic.
 - The transport owns each subscriber the factory built and closes it in `stop`. It never closes `pub`: the caller created it and may share it.
 - Options return validation errors through `New` (functional options with errors, per golang-design-patterns).
@@ -58,6 +59,9 @@ var ErrInvalidConfig = errors.New("doger: dogerwatermill: invalid configuration"
 - `dogerwmsql` wraps watermill-sql's `DefaultPostgreSQLOffsetsAdapter` / `DefaultMySQLOffsetsAdapter`, replacing `BeforeSubscribingQueries` with an insert that seeds `offset_acked` and `last_processed_transaction_id` from the newest row of the messages table (`ON CONFLICT DO NOTHING` / `INSERT IGNORE`), so an existing group keeps its offset and concurrent first subscribers race safely on the primary key.
 - *Alternative:* subscribe, then skip messages older than the subscription time. Rejected: it depends on clocks and still acks old rows one by one.
 - *Alternative:* reject SQL for `DeliverAll`. Rejected: SQL is the backend most doger users already have.
+- On PostgreSQL the seed reads only rows below `pg_snapshot_xmin(pg_current_snapshot())`, the rows watermill-sql's select can read. A transaction open at seed time may hold a lower ID than a committed row; seeding past that row skipped its messages forever once it committed (proven by `TestOffsets_SeedBelowOpenTransaction`). So "latest" is the readable head: rows above `xmin` have reached no group yet, and the new group receives them with the others. `xmin` is server-wide, so tests that need an exact count wait for readability, and the conformance tests run before the parallel tests.
+- MySQL tells no snapshot horizon: the seed takes `MAX(offset)` of the committed rows, so a transaction open at seed time that took a lower auto-increment offset commits below it and the new group skips it, as watermill-sql's MySQL subscriber does for any group already past that offset. Reproduced during the review triage; documented as a limitation in the guide.
+- A schema adapter set through `WithSubscriberConfig` without `MessagesTable(topic)` makes the factory return `ErrInvalidConfig` when it would seed: guessing watermill-sql's default naming queried the wrong table.
 - The seed query is verified against both databases by "New and existing groups" and "Concurrent first subscribers of one group".
 
 ### D4. Ephemeral groups
@@ -73,16 +77,22 @@ var ErrInvalidConfig = errors.New("doger: dogerwatermill: invalid configuration"
 Subscribe: sub := factory(ctx, s); ch := sub.Subscribe(loopCtx, s.Destination); go loop
 loop:  for msg in ch:
          env, ok := decode(msg)            !ok        -> giveUp(msg)
+         pending give-up for msg.UUID      -> giveUp(msg), handler not run
          err := h(msg.Context(), env)      nil        -> Ack, forget(msg.UUID)
+                                           panic      -> an ordinary error
                                            permanent  -> giveUp(msg)
                                            attempts>=max (max>0) -> giveUp(msg)
                                            else       -> wait(retryDelay | loopCtx) ; Nack
-giveUp: poison topic set ? Publish(poison, msg) ok -> Ack ; err -> log, Nack
-                         : log, Ack
-stop(ctx): cancel loopCtx ; wait loop done or ctx.Done() ; sub.Close() ; once
+giveUp: poison topic set ? Publish(poison, msg) ok -> Ack, forget ; err -> log, remember reason, wait(retryDelay) ; Nack
+                         : log, Ack, forget
+a message received after the loop was stopped -> Nack, not handled; a channel closed by the subscriber -> log
+stop(ctx): stop consuming ; wait loop done or ctx.Done()
+           ctx ended first -> cancel the handler context (subCtx), close in the background (error logged), return ctx.Err()
+           else sub.Close() ; cancel subCtx ; once
 ```
+- The subscription context (passed to the subscriber's `Subscribe` and parent of the handler contexts) is cancelled after `Close` on a clean stop: cancelling it first made watermill-sql log an `ERROR ... context canceled` for its aborted fetch on every shutdown. When the stop context ends first, the handler context is cancelled before `Close`, so a subscriber waiting for that handler's acknowledgement can close.
 - One goroutine per subscription with a clear owner (the stop function) and exit (`loopCtx` cancel plus the channel closing), per golang-concurrency. A `sync.Once` makes stop idempotent; a `done` channel signals the loop's exit.
-- Attempts live in a `map[string]int` owned by the loop goroutine (no lock), keyed by UUID and deleted on ack or give-up, so memory is bounded by messages in flight. The count resets on restart; the guide says so, and backends with native delivery counts can be added later.
+- Attempts live in an `attemptTracker` owned by the loop goroutine (no lock): a map plus a list keyed by UUID, deleted on ack or a successful give-up, bounded by `WithMaxTrackedMessages` (default 1000) by forgetting the least recently failed message. A plain map grew without bound, since a message that failed here and was then handled by another member of the group never returns. The tracker also holds the reason of a give-up whose poison publish failed, so its redelivery skips the handler. The count resets on restart; the guide says so, and backends with native delivery counts can be added later.
 - The retry wait uses the injected clock (`WithClock`, default real clock) so tests drive it with a fake clock, and selects on `loopCtx.Done()` so stop never waits a full delay.
 - Concurrency per subscription is one message at a time, as watermill delivers. Consumers needing parallelism scale through backend partitions or more instances; a per-subscription worker pool would break per-key ordering that Kafka users expect.
 
@@ -90,9 +100,19 @@ stop(ctx): cancel loopCtx ; wait loop done or ctx.Done() ; sub.Close() ; once
 - Transactions come from `github.com/kartaladev/doger/events/sqltx` (defined by `add-sql-event-transport`): `sqltx.Tx` implements `doger.Tx` and exposes `SQL() *sql.Tx` and `DB() *sql.DB`; `BeginTx`, `InTx` and `BindTx` put it in a context; `From(ctx)` finds it; `FromDB(ctx, db)` finds it only when bound to `db`, returning errors matching `doger.ErrNoTransaction` (none bound or ended) or `sqltx.ErrForeignTransaction` (bound to another `*sql.DB`); `Source()` is the `doger.TxSource`.
 - `Outbox.TxSource()` returns `sqltx.Source()`. `Outbox.SendTx` calls `sqltx.FromDB(ctx, outboxDB)` and returns its error unchanged, so every SQL adapter reports a missing transaction as `doger.ErrNoTransaction` and a transaction on another database as `sqltx.ErrForeignTransaction` (a row written there would silently lose the atomicity the outbox exists for). `ErrInvalidConfig` stays for construction errors only. Otherwise it builds `forwarder.NewPublisher(sql.NewPublisher(sql.TxFromStdSQL(tx.SQL()), ...), ForwarderTopic)` and publishes the mapped message to the envelope's destination. One publisher per call, as watermill-sql requires one publisher per transaction.
 - The forwarder (`forwarder.NewForwarder` over a watermill-sql subscriber on the forwarder topic and the transport's publisher) delivers messages after commit.
-- `Outbox` implements `doger.StarterWithContextAndError` / `ShutdownerWithContextAndError`, so registering it as the `NameOf[doger.EventTransport]()` service ties the forwarder to the container.
+- `Outbox` implements `doger.StarterWithContextAndError` / `ShutdownerWithContextAndError`. Registered as the `NameOf[doger.EventTransport]()` service with `doger.AsStarter()`, its forwarder starts and stops with the container: core detects Starters by registered type, and the `EventTransport` interface has no `Start` method.
+- The outbox is PostgreSQL only, as the specs cover. Its tables follow `OutboxConfig.SchemaAdapter` (default `PostgresSchema()`) and `OffsetsAdapter` (default `sql.DefaultPostgreSQLOffsetsAdapter{}`). `NewOutbox` rejects watermill-sql's MySQL schema and offsets adapters: MySQL commits the caller's transaction on `CREATE TABLE`, which silently undid the outbox's atomicity (reproduced).
+- Tables are created only when missing (`to_regclass`), so a role without CREATE works once a migration created them, and `OutboxConfig.SkipSchemaInitialization` turns creation off (`Start` then only checks the tables exist, since a forwarder whose subscribe fails leaks a watermill router goroutine).
+  - `Start` creates them in a transaction of its own bounded by its context; watermill-sql's `SubscribeInitialize` takes no context.
+  - Before that, `SendTx` checks in the caller's transaction and creates the outbox table there when missing: creating it on another connection deadlocked a pool of one connection. Its creation queries take `sql.DefaultSchemaInitializationLock("doger_outbox")` (set on a `DefaultPostgreSQLSchema` without its own lock) until that transaction ends, so concurrent first transactions create it in turn. watermill-sql's shared lock deadlocked a same-transaction `Send` to a new topic, and every `BindTx` transaction committed directly (its `OnCommit` never runs, so each one re-ran the creation).
+- `Start` and `Shutdown` share a lock held through a channel, so both honor their context while they wait. A `Start` cut short lets a forwarder still subscribing finish, closes it, and waits for `Run`: watermill's `Router.Close` before the router runs waits forever for handlers that never start, and cancelling `Run` while it subscribes leaks a router goroutine. `OutboxConfig.Logger` defaults to `watermill.NewSlogLogger(nil)`; the transport's logger is not exposed.
 - *Alternative:* a binder private to `dogerwmsql`. Rejected by the maintainer: two binders would let an application bind a transaction the after-commit listeners see but the outbox does not.
 - *Alternative:* leave the outbox to a documented recipe. Rejected: the outbox is the reason teams pick a SQL-backed transport, and the conformance suite can only check it if it is code.
+
+### D8. Binary payload columns
+- watermill-sql's default schema adapters store the payload in a `JSON` column. MySQL rewrites JSON on insert (`{"n":1}` comes back as `{"n": 1}`), which failed the conformance suite's `SendReceive`, and both databases reject payloads that are not JSON, such as those of a protobuf codec.
+- `dogerwmsql.PostgresSchema()` / `MySQLSchema()` return the default adapters with a `BYTEA` / `LONGBLOB` payload column. They are the factories' and the outbox's default; consumers pass the same one to their publisher, since whoever creates the table first picks its column type. Existing tables keep theirs.
+- *Alternative:* keep the JSON defaults and configure binary columns only in tests. Rejected by the maintainer: zero-config MySQL users would get altered payloads and non-JSON codecs would fail.
 
 ## Risks / Trade-offs
 
@@ -100,7 +120,9 @@ stop(ctx): cancel loopCtx ; wait loop done or ctx.Done() ; sub.Close() ; once
 - [Attempt counts reset on restart, so a crash loop can retry forever] → documented; permanent errors and poison topics are the intended exits.
 - [Recipes for Kafka, NATS and Redis are not exercised in CI] → each recipe states the exact setting that makes new groups start at the latest event and links the backend source; typed helpers with tests are the follow-up.
 - [The SQL seed query depends on watermill-sql's table layout] → pinned to watermill-sql/v4; the integration tests fail on a layout change, and Dependabot upgrades run them.
-- [CI on macOS and Windows has no database services] → database tests skip outside Linux CI only when `CI` is unset; Linux CI requires the DSNs (spec "Missing database configuration").
+- [On PostgreSQL a new group can receive rows committed shortly before it, when a transaction was open on the server] → those rows are above `xmin` and have reached no group yet; delivery is at least once anyway, and skipping them would lose the open transactions' messages.
+- [On MySQL a new group can skip a message from a transaction open while it was created] → watermill-sql's MySQL subscriber has the same gap for existing groups; documented, PostgreSQL has no such gap.
+- [CI on macOS and Windows has no database services] → database tests without their DSN fail only when `CI` is set on Linux, and skip otherwise (spec "Missing database configuration").
 
 ## Public API & Defaults
 
@@ -110,15 +132,17 @@ New modules; no change to doger core. **No breaking change.**
 |---|---|---|
 | `dogerwatermill.New(pub, subs, opts...) (*Transport, error)` | constructor | n/a |
 | `dogerwatermill.SubscriberFactory` | func type | consumer-provided |
-| `WithRetryDelay(d)`, `WithMaxAttempts(n)`, `WithPoisonTopic(t)`, `WithMetadataPrefix(p)`, `WithLogger(l)`, `WithClock(c)` | options | 1s, 10, none (ack and log), `doger_`, slog default, real clock |
+| `WithRetryDelay(d)`, `WithMaxAttempts(n)`, `WithMaxTrackedMessages(n)`, `WithPoisonTopic(t)`, `WithMetadataPrefix(p)`, `WithLogger(l)`, `WithClock(c)` | options | 1s, 10, 1000, none (ack and log), `doger_`, slog default, real clock |
 | `dogerwatermill.ErrInvalidConfig` | sentinel | n/a |
 | `dogerwmsql.PostgresSubscriberFactory(db, opts...)`, `MySQLSubscriberFactory(db, opts...)` | constructors | new groups at head; ephemeral cleanup on |
-| `dogerwmsql.WithKeepEphemeralGroups()`, `WithSubscriberConfig(func(*sql.SubscriberConfig))` | options | off; watermill-sql defaults |
-| `dogerwmsql.NewOutbox(db, transport, OutboxConfig) (*Outbox, error)`, `OutboxConfig{ForwarderTopic, Logger}` | outbox | `doger_outbox`, transport's logger; `TxSource()` is always `sqltx.Source()` |
+| `dogerwatermill.Transport.Publisher()`, `Transport.Message(env)` | methods | n/a (for the outbox) |
+| `dogerwmsql.WithKeepEphemeralGroups()`, `WithCleanupTimeout(d)`, `WithSubscriberConfig(func(*sql.SubscriberConfig))`, `WithLogger(l)` | options | off; 30s (`DefaultCleanupTimeout`); watermill-sql defaults with `InitializeSchema: true` and the binary schema; slog default |
+| `dogerwmsql.PostgresSchema()`, `MySQLSchema()` | schema adapters | `BYTEA` / `LONGBLOB` payload column |
+| `dogerwmsql.NewOutbox(db, transport, OutboxConfig) (*Outbox, error)`, `OutboxConfig{ForwarderTopic, Logger, SchemaAdapter, OffsetsAdapter, SkipSchemaInitialization}` | outbox (PostgreSQL) | `doger_outbox`, slog default, `PostgresSchema()`, watermill-sql's PostgreSQL offsets adapter (MySQL adapters rejected), missing tables created; `TxSource()` is always `sqltx.Source()`; register with `doger.AsStarter()` |
 
 ## Test Strategy
 
-Each scenario maps to one Go test; `Examples` rows run as named subtests. All tests run with `-race`; each module's `TestMain` runs goleak. Unit tests use fakes in `fakes_test.go`: a recording publisher, a fake subscriber with a controllable channel that records `Ack`/`Nack`/`Close`, and an in-process fake broker (topic → subscribers, round robin per group) for round trips. Database tests read `DOGER_TEST_POSTGRES_DSN` / `DOGER_TEST_MYSQL_DSN`, create uniquely named tables per test, skip locally when unset, and fail in CI when unset.
+Each scenario maps to one Go test; `Examples` rows run as named subtests. All tests run with `-race`; each module's `TestMain` runs goleak. Unit tests use fakes in `fakes_test.go`: a recording publisher, a fake subscriber with a controllable channel that records `Ack`/`Nack`/`Close`, and an in-process fake broker (topic → subscribers, round robin per group) for round trips. Database tests read `DOGER_TEST_POSTGRES_DSN` / `DOGER_TEST_MYSQL_DSN`, create uniquely named tables per test, skip locally when unset, and fail in CI when unset. Tests sensitive to server-wide state are not parallel, so they run before the parallel ones: the conformance tests (a new PostgreSQL group starts below `xmin`, which any open transaction holds back) and `TestOutbox_StartHonorsContext` (advisory locks are shared by the whole database). Tests use testify (`require.FailNow`, `require.NoError`) rather than bare `t.Fatal`.
 
 **`specs/watermill-event-transport/spec.md`** (module `events/watermill`)
 
@@ -138,6 +162,7 @@ Each scenario maps to one Go test; `Examples` rows run as named subtests. All te
 | Stop context bounds the wait | `stop_test.go: TestStop_Deadline` | unit, `testWithTimeout` |
 | Stop edge cases | `stop_test.go: TestStop_Edges/<row>` | table-driven, goleak |
 | Concurrent sends and subscriptions | `transport_test.go: TestConcurrent` | race |
+| The transport exposes its publisher and message mapping | `send_test.go: TestTransport_MessageAndPublisher` | unit |
 | Conformance on SQL backends | `wmsql/conformance_test.go: TestConformance/<row>` | conformance, database |
 | Missing database configuration | `wmsql/dsn_test.go: TestDSNRequired/<row>` | table-driven |
 
@@ -158,7 +183,8 @@ The conformance test lives in `wmsql` because it needs watermill-sql; it exercis
 | Outbox configuration | `outbox_test.go: TestNewOutbox/<row>` | table-driven |
 | Forwarder lifecycle | `outbox_test.go: TestOutbox_Lifecycle/<row>` | integration, goleak, database |
 | Shutdown before Start | `outbox_test.go: TestOutbox_ShutdownBeforeStart` | unit |
-| Outbox passes the transaction subtests | `conformance_test.go: TestOutboxConformance` | conformance, database |
+| Outbox passes the transaction subtests | `outbox_test.go: TestOutboxConformance` | conformance, database |
+| Payloads round-trip byte for byte | `schema_test.go: TestSchema_PayloadBytes/<row>` | table-driven, database |
 
 **Examples:** `ExampleNew` (memory-free fake backend), `ExampleWithPoisonTopic` in `events/watermill`; `ExamplePostgresSubscriberFactory`, `ExampleNewOutbox` (with `sqltx.InTx`) in `wmsql` (compile-only, no `// Output:`, since they need a database).
 

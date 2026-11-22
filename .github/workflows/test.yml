@@ -40,9 +40,27 @@ jobs:
     - name: Build
       run: make build
 
+    # the database tests of events/watermill/wmsql need PostgreSQL and
+    # MySQL: on Linux, start the events/sql compose services and export
+    # their DSNs (service containers are Linux-only and cannot be set per
+    # matrix row). With CI set, those tests fail on Linux without the DSNs
+    # and skip on macOS and Windows, which have no container runtime.
+    - name: Start the databases (Linux)
+      if: runner.os == 'Linux'
+      run: |
+          make watermill-db-up
+          {
+            echo "DOGER_TEST_POSTGRES_DSN=$(make -s watermill-postgres-dsn)"
+            echo "DOGER_TEST_MYSQL_DSN=$(make -s watermill-mysql-dsn)"
+          } >> "$GITHUB_ENV"
+
     # go test -race in every go.work module (root, adapters, examples)
     - name: Test
       run: make test-all
+
+    - name: Stop the databases (Linux)
+      if: always() && runner.os == 'Linux'
+      run: make watermill-db-down
 
     - name: Test coverage
       run: make coverage

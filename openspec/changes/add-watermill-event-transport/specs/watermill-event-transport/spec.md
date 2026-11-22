@@ -24,6 +24,9 @@ Examples:
   | pub | subs | WithMaxAttempts(-1)         | a nil *Transport and an error matching ErrInvalidConfig |
   | pub | subs | WithMetadataPrefix("")      | a nil *Transport and an error matching ErrInvalidConfig |
   | pub | subs | WithRetryDelay(0), WithMaxAttempts(0) | a *Transport and a nil error      |
+  | pub | subs | nil, WithMaxAttempts(3)     | a *Transport and a nil error (a nil option is ignored) |
+  | pub | subs | WithMaxTrackedMessages(0)   | a nil *Transport and an error matching ErrInvalidConfig |
+  | pub | subs | WithMaxTrackedMessages(1)   | a *Transport and a nil error                |
 ```
 
 #### Scenario: Construction is passive
@@ -72,7 +75,7 @@ Examples:
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: Subscribe builds one subscriber per subscription
-`Subscribe(ctx, sub, h)` SHALL call the factory once with `sub`, subscribe the returned subscriber to `sub.Destination`, and return a stop function. A factory or subscribe error SHALL be returned, and a subscriber already built SHALL be closed.
+`Subscribe(ctx, sub, h)` SHALL call the factory once with `sub`, subscribe the returned subscriber to `sub.Destination`, and return a stop function. A factory or subscribe error SHALL be returned, and a subscriber already built SHALL be closed. A subscription without a destination or a group, or a nil handler, SHALL be rejected with an error matching `doger.ErrSubscriptionNotSupported` without calling the factory. When the subscriber closes its message channel before the subscription stopped, the transport SHALL log an error.
 
 #### Scenario: Subscribe outcomes
 ```gherkin
@@ -86,10 +89,30 @@ Examples:
   | returns ErrNoBroker                                             | Subscribe returns an error matching ErrNoBroker                                |
   | returns a fake subscriber whose Subscribe returns ErrNoTopic    | Subscribe returns an error matching ErrNoTopic and the fake subscriber was closed |
   | returns nil, nil                                                | Subscribe returns an error matching ErrInvalidConfig                           |
+  | panics with "kaboom"                                            | Subscribe returns an error whose message contains "kaboom" and no stop function |
+```
+
+#### Scenario: Rejected subscriptions
+```gherkin
+Given a transport whose factory returns a fake subscriber
+When the consumer subscribes <subscription> with <handler>
+Then Subscribe returns an error matching doger.ErrSubscriptionNotSupported and no stop function, and the factory was not called
+
+Examples:
+  | subscription                                              | handler       |
+  | Subscription{Destination: "orders.placed", Mode: DeliverOnce} | a handler |
+  | Subscription{Group: "mail", Mode: DeliverOnce}            | a handler     |
+  | Subscription{Destination: "orders.placed", Group: "mail"} | nil           |
+```
+
+#### Scenario: The backend closes the message channel
+```gherkin
+Given a started subscription whose transport logs to a capture logger
+When the fake subscriber closes its message channel before stop
+Then the logger recorded one error within 5s
 ```
 
 <!-- cases: N/A 4,6: one subscriber per call; repeated calls build repeated subscribers, owned by their stop functions -->
-<!-- cases: N/A 9 panics: a panicking factory is recovered and returned as an error -->
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: Received messages map back to envelopes
@@ -126,7 +149,7 @@ Examples:
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: Acknowledgement, retries and poison handling
-The adapter SHALL ack when the handler returns nil. On another error it SHALL wait the retry delay, then nack. After the maximum attempts for one message UUID, or on an error for which `doger.IsPermanentError` is true, it SHALL publish the message to the poison topic and ack, or ack and log when no poison topic is set. A failed poison publish SHALL nack.
+The adapter SHALL ack when the handler returns nil. On another error it SHALL wait the retry delay, then nack. After the maximum attempts for one message UUID, or on an error for which `doger.IsPermanentError` is true, it SHALL publish the message to the poison topic and ack, or ack and log when no poison topic is set. A failed poison publish SHALL be logged, wait the retry delay, then nack; the message's redelivery SHALL be published to the poison topic again without running the handler, while the subscription remembers it. A handler panic SHALL be handled as an ordinary error. Each subscription SHALL remember the attempts of at most `WithMaxTrackedMessages(n)` failing messages (default 1000), forgetting the least recently failed one beyond it.
 
 #### Scenario: Handler outcomes
 ```gherkin
@@ -165,13 +188,45 @@ When the backend delivers message "m-1"
 Then the message was nacked and the logger recorded ErrBrokerDown
 ```
 
-<!-- cases: N/A 3 zero values: WithRetryDelay(0) and WithMaxAttempts(0) are rows above -->
+#### Scenario: Poison publish retry
+```gherkin
+Given a subscription with WithPoisonTopic("poison"), <options>, whose publisher fails on "poison" <failures>
+When the backend delivers message "m-1" <delivery>
+Then <outcome>
+
+Examples:
+  | options                                         | failures                       | delivery          | outcome                                                                                   |
+  | WithClock(a fake clock), WithRetryDelay(1s), a handler returning doger.PermanentError(ErrBadOrder) | once | once | the message was not nacked until the fake clock advanced 1s, then nacked |
+  | WithRetryDelay(0), WithMaxAttempts(2), a handler returning ErrOutOfStock every time | the first 3 times | until it is acked | the handler ran 2 times, "poison" was tried 4 times and received "m-1" once, and the message was nacked 4 times |
+```
+
+#### Scenario: A handler panics
+```gherkin
+Given a subscription with WithRetryDelay(0), WithMaxAttempts(2) and a handler that panics with "kaboom"
+When the backend delivers message "m-1" until it is acked
+Then the handler ran 2 times, the message was nacked once, and the logger recorded one error containing "kaboom"
+```
+
+#### Scenario: Tracked messages are bounded
+```gherkin
+Given a subscription with WithRetryDelay(0), WithMaxAttempts(2), <tracked> and a handler that fails every time with ErrOutOfStock
+When the backend delivers "m-1", then "m-2", then "m-1" again
+Then the second delivery of "m-1" was <settled>
+
+Examples:
+  | tracked                   | settled                                          |
+  | no option (1000)          | acked: its attempts were exhausted               |
+  | WithMaxTrackedMessages(1) | nacked: "m-1" was forgotten when "m-2" failed    |
+```
+
+And 100000 distinct messages failing once each leave the default subscription remembering 1000 (TestSubscription_AttemptsBounded).
+
+<!-- cases: N/A 3 zero values: WithRetryDelay(0) and WithMaxAttempts(0) are rows above; WithMaxTrackedMessages(0) is rejected by New -->
 <!-- cases: N/A 6 duplicate: attempts are counted per message UUID and reset when the message is acked -->
-<!-- cases: N/A 9 panics: handler panics arrive as errors from doger core -->
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: Stop ends the subscription
-The stop function SHALL cancel consumption, wait for the handler in flight to return or for its context to end, then close the subscriber the factory built, and return nil on success. A second call SHALL return nil. Cancelling the context given to `Subscribe` SHALL also end consumption.
+The stop function SHALL cancel consumption, wait for the handler in flight to return or for its context to end, then close the subscriber the factory built, and return nil on success. A message received after consumption was cancelled SHALL be nacked, not handled. On a clean stop the subscriber SHALL be closed before the context given to its `Subscribe` is cancelled. When the stop context ends first, the handler's context SHALL be cancelled and stop SHALL return the context's error at once, the subscriber closing in the background with its Close error logged. A second call SHALL return nil. Cancelling the context given to `Subscribe` SHALL also end consumption.
 
 #### Scenario: Stop waits for the handler
 ```gherkin
@@ -184,7 +239,21 @@ Then stop returned after the handler returned, the subscriber was closed once, a
 ```gherkin
 Given a subscription whose handler is running and blocks until its context is done
 When the consumer calls stop with a context that times out after 50ms
-Then stop returns an error matching context.DeadlineExceeded within 1s, the handler's context was cancelled, and the subscriber was closed
+Then stop returns an error matching context.DeadlineExceeded within 1s, the handler's context was cancelled, and the subscriber was closed within 1s
+```
+
+#### Scenario: A Close that blocks past the deadline
+```gherkin
+Given a subscription whose handler ignores its context and whose subscriber's Close blocks, then returns ErrClose
+When the consumer calls stop with a context that times out after 50ms
+Then stop returns an error matching context.DeadlineExceeded within 1s, nothing was logged yet, and once Close returns the logger records ErrClose
+```
+
+#### Scenario: No delivery after stop
+```gherkin
+Given a subscription handling "m-1" while "m-2" waits on the message channel
+When the consumer calls stop and "m-1"'s handler returns
+Then the handler ran only for "m-1" (20 repetitions)
 ```
 
 #### Scenario: Stop edge cases
@@ -198,10 +267,11 @@ Examples:
   | that is idle                                 | calls stop twice                          | both calls return nil and the subscriber was closed once    |
   | that is idle                                 | cancels the context given to Subscribe    | consumption ends within 1s and no goroutine leaked          |
   | whose subscriber's Close returns ErrClose    | calls stop                                | stop returns an error matching ErrClose                     |
+  | whose subscriber's Close panics with "kaboom" | calls stop                               | stop returns an error whose message contains "kaboom"       |
+  | that is idle                                 | calls stop                                | the subscriber was closed before the context given to its Subscribe was cancelled |
 ```
 
 <!-- cases: N/A 3,4: no values beyond the contexts -->
-<!-- cases: N/A 9 panics: a panicking Close is recovered and returned as an error -->
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: The transport is safe for concurrent use
@@ -234,15 +304,32 @@ Examples:
 
 #### Scenario: Missing database configuration
 ```gherkin
-Given DOGER_TEST_POSTGRES_DSN is unset and the CI environment variable is <ci>
+Given DOGER_TEST_POSTGRES_DSN is unset, the CI environment variable is <ci> and the operating system is <os>
 When the PostgreSQL conformance test runs
 Then the test <outcome>
 
 Examples:
-  | ci     | outcome                                                |
-  | unset  | is skipped with the message "set DOGER_TEST_POSTGRES_DSN to run" |
-  | "true" | fails with the message "DOGER_TEST_POSTGRES_DSN is required in CI" |
+  | ci     | os     | outcome                                                |
+  | unset  | linux  | is skipped with the message "set DOGER_TEST_POSTGRES_DSN to run" |
+  | "true" | linux  | fails with the message "DOGER_TEST_POSTGRES_DSN is required in CI" |
+  | "true" | darwin | is skipped with the message "set DOGER_TEST_POSTGRES_DSN to run" (macOS and Windows CI runners have no databases) |
 ```
 
 <!-- cases: N/A 2-9: the suite owns these cases -->
 <!-- cases: N/A 10 compatibility: new module -->
+
+### Requirement: The transport exposes its publisher and message mapping
+`Transport.Publisher()` SHALL return the publisher given to `New`, and `Transport.Message(env)` SHALL return a message with the UUID, payload and metadata `Send` would publish for `env`, under the transport's metadata prefix.
+
+#### Scenario: Publisher and message
+```gherkin
+Given a transport over a recording publisher "pub" with WithMetadataPrefix("x-")
+When the consumer sends Envelope{ID: "id-1", ...} and calls Message with the same envelope
+Then Publisher() returns "pub", and the message has the UUID, payload and metadata of the one published
+
+Examples:
+  | prefix | publisher |
+  | x-     | pub       |
+```
+
+<!-- cases: N/A 2-10: accessors over state New already validated -->

@@ -30,6 +30,10 @@ updates:
       # the SQL drivers live only in events/sql, covered by its own run
       - dependency-name: github.com/jackc/pgx/v5
       - dependency-name: github.com/go-sql-driver/mysql
+      # watermill and its SQL backend live only in events/watermill and
+      # events/watermill/wmsql, covered by their own runs
+      - dependency-name: github.com/ThreeDotsLabs/watermill
+      - dependency-name: github.com/ThreeDotsLabs/watermill-sql/v4
 
   - package-ecosystem: gomod
     directories:

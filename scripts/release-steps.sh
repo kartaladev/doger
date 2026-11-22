@@ -113,7 +113,8 @@ strip() {
 # scheduler/gocron (which use clockwork at run time), only tests use: the
 # SQL drivers are the integration-test drivers of events/sql, which imports
 # none. A released module keeps one only when its non-test packages import
-# it; scripts/release-dry-run.sh checks every released go.mod for them.
+# it (pgx in events/watermill/wmsql, through watermill-sql);
+# scripts/release-dry-run.sh checks every released go.mod for them.
 test_only=(
 	github.com/stretchr/testify
 	go.uber.org/goleak

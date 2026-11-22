@@ -1,4 +1,4 @@
-.PHONY: build test test-sql test-sql-down watch-test bench watch-bench coverage tools lint lint-fix modules test-all lint-all vuln govulncheck-install audit outdated weight doc
+.PHONY: build test test-sql test-sql-down test-watermill watermill-db-up watermill-db-down watermill-postgres-dsn watermill-mysql-dsn watch-test bench watch-bench coverage tools lint lint-fix modules test-all lint-all vuln govulncheck-install audit outdated weight doc
 
 build:
 	go build -v ./...
@@ -19,6 +19,24 @@ test-sql:
 	cd events/sql && DOGER_SQL_REQUIRE=1 DOGER_SQL_POSTGRES_DSN="$(SQL_POSTGRES_DSN)" DOGER_SQL_MYSQL_DSN="$(SQL_MYSQL_DSN)" go test -race -count=1 ./...
 test-sql-down:
 	docker compose -f $(SQL_COMPOSE) down -v
+
+# database tests of events/watermill/wmsql against PostgreSQL 17 and MySQL
+# 8.4 from the same compose file. The tests read DOGER_TEST_POSTGRES_DSN and
+# DOGER_TEST_MYSQL_DSN; CI sets them through the watermill-*-dsn targets.
+WATERMILL_POSTGRES_DSN ?= $(firstword $(SQL_POSTGRES_DSN))
+WATERMILL_MYSQL_DSN ?= $(firstword $(SQL_MYSQL_DSN))
+
+watermill-db-up:
+	docker compose -f $(SQL_COMPOSE) up -d --wait postgres17 mysql84
+watermill-db-down:
+	docker compose -f $(SQL_COMPOSE) down -v
+watermill-postgres-dsn:
+	@echo '$(WATERMILL_POSTGRES_DSN)'
+watermill-mysql-dsn:
+	@echo '$(WATERMILL_MYSQL_DSN)'
+
+test-watermill: watermill-db-up
+	cd events/watermill/wmsql && DOGER_TEST_POSTGRES_DSN='$(WATERMILL_POSTGRES_DSN)' DOGER_TEST_MYSQL_DSN='$(WATERMILL_MYSQL_DSN)' go test -race -count=1 ./...
 
 watch-test:
 	reflex -t 50ms -s -- sh -c 'gotest -race ./...'
