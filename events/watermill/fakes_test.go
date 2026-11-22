@@ -86,6 +86,7 @@ type fakeSubscriber struct {
 	subscribeErr error
 	closeErr     error
 	closePanic   any
+	closeBlock   chan struct{} // when set, Close waits for it to close
 
 	mu     sync.Mutex
 	topics []string
@@ -116,6 +117,9 @@ func (s *fakeSubscriber) Subscribe(ctx context.Context, topic string) (<-chan *m
 
 func (s *fakeSubscriber) Close() error {
 	s.closes.Add(1)
+	if s.closeBlock != nil {
+		<-s.closeBlock
+	}
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
 		if s.subCtx != nil {
@@ -352,10 +356,12 @@ func (c *fakeClock) Now() time.Time {
 
 func (c *fakeClock) Since(t time.Time) time.Duration { return c.Now().Sub(t) }
 
+// AfterFunc reports d on Started once the timer is registered, so an
+// Advance after receiving it runs the timer.
 func (c *fakeClock) AfterFunc(d time.Duration, f func()) doger.Timer {
-	c.Started <- d
 	timer := &fakeTimer{clock: c, f: f}
 	if d <= 0 {
+		c.Started <- d
 		go f()
 		return timer
 	}
@@ -363,6 +369,7 @@ func (c *fakeClock) AfterFunc(d time.Duration, f func()) doger.Timer {
 	timer.at = c.now.Add(d)
 	c.timers = append(c.timers, timer)
 	c.mu.Unlock()
+	c.Started <- d
 
 	return timer
 }

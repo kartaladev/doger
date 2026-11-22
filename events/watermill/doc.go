@@ -25,12 +25,17 @@
 // redelivers it. The transport gives up on a message after
 // [WithMaxAttempts] runs (10 by default, 0 for unlimited), on a
 // doger.PermanentError, or when it carries no doger metadata: it publishes
-// the message to the [WithPoisonTopic] topic and acks it (a failed publish
-// nacks it), or, with no poison topic, logs and acks it.
+// the message to the [WithPoisonTopic] topic and acks it, or, with no
+// poison topic, logs and acks it. A failed poison publish waits the retry
+// delay, then nacks the message, and its redelivery is published there
+// again without running the handler. A handler panic is an ordinary error.
 //
 // Attempts are counted per message UUID in the consuming process: they
 // reset when the process restarts or the message is acked, so a process
-// that crashes while handling a message retries it again from one.
+// that crashes while handling a message retries it again from one. Each
+// subscription remembers the attempts of at most
+// [WithMaxTrackedMessages] failing messages (1000 by default), forgetting
+// the one that failed least recently.
 // Permanent errors and the poison topic are the intended exits. Delivery
 // is at least once: deduplicate in listeners by
 // doger.EnvelopeFromContext(ctx).ID.

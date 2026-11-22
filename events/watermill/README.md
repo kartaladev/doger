@@ -25,6 +25,7 @@ For PostgreSQL and MySQL, use the factories, binary schemas and outbox of [`wmsq
 |---|---|---|
 | Wait after a handler error before nacking | 1s | `WithRetryDelay(d)` |
 | Attempts before giving up on a message | 10, per process | `WithMaxAttempts(n)`; 0 is unlimited |
+| Failing messages whose attempts a subscription remembers | 1000 | `WithMaxTrackedMessages(n)` |
 | A message given up on | acked and logged | `WithPoisonTopic(topic)` |
 | Metadata key prefix | `doger_` | `WithMetadataPrefix(p)` |
 | Logger | `watermill.NewSlogLogger(nil)` | `WithLogger(l)` |

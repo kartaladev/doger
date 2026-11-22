@@ -40,7 +40,7 @@ Examples:
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: A new group starts at the latest message
-A subscriber built by these factories for a group with no stored offset SHALL start after the last message already in the topic, not at offset 0. A group with a stored offset SHALL resume after it.
+A subscriber built by these factories for a group with no stored offset SHALL start after the last message already in the topic that watermill-sql can read (on PostgreSQL, the rows below the snapshot's `xmin`), not at offset 0. A message committed after the group was created by a transaction open at that time SHALL be delivered to it. A group with a stored offset SHALL resume after it.
 
 #### Scenario: New and existing groups
 ```gherkin
@@ -62,6 +62,14 @@ Examples:
 Given a PostgreSQL topic "orders.placed" holding 5 messages and no stored offset for "mail"
 When 4 subscriptions for group "mail" start at the same time and 1 more message is published
 Then exactly 1 of them handled exactly 1 message
+```
+
+#### Scenario: A transaction open while the group is created
+```gherkin
+Given a PostgreSQL topic "orders.placed" holding 1 message
+And an open transaction that published message "in-flight", then a committed message published after it
+When a subscription for group "mail" starts and the open transaction commits
+Then the subscription receives "in-flight" within 10s
 ```
 
 <!-- cases: N/A 2 overrides: none, the start position is part of doger's contract -->
@@ -91,20 +99,22 @@ Examples:
 <!-- cases: N/A 10 compatibility: tables created before keep their column type -->
 
 ### Requirement: Ephemeral groups are removed when they stop
-When a subscription with `Ephemeral` true stops, the factory's subscriber SHALL delete that group's stored offset. `WithKeepEphemeralGroups()` SHALL disable the deletion. A non-ephemeral group's offset SHALL always be kept.
+When a subscription with `Ephemeral` true stops, the factory's subscriber SHALL delete that group's stored offset within `WithCleanupTimeout(d)` (default 30s; 0 or less restores it), returning a deletion cut short from stop. `WithKeepEphemeralGroups()` SHALL disable the deletion. A non-ephemeral group's offset SHALL always be kept.
 
 #### Scenario: Group rows after stop
 ```gherkin
 Given a PostgreSQL topic "orders.placed" and a factory built with <options>
 And a started subscription with Group "<group>" and Ephemeral <ephemeral> that acknowledged 1 message
-When its stop function returns nil
-Then the stored offset for "<group>" <kept>
+When its stop function returns
+Then the stop function returned <error> and the stored offset for "<group>" <kept>
 
 Examples:
-  | options                    | group          | ephemeral | kept           |
-  | no options                 | cache/7f3a     | true      | no longer exists |
-  | WithKeepEphemeralGroups()  | cache/7f3a     | true      | still exists   |
-  | no options                 | mail           | false     | still exists   |
+  | options                    | group          | ephemeral | error                                  | kept             |
+  | no options                 | cache/7f3a     | true      | nil                                    | no longer exists |
+  | WithKeepEphemeralGroups()  | cache/7f3a     | true      | nil                                    | still exists     |
+  | no options                 | mail           | false     | nil                                    | still exists     |
+  | WithCleanupTimeout(1ns)    | cache/7f3a     | true      | an error matching context.DeadlineExceeded | still exists |
+  | WithCleanupTimeout(0)      | cache/7f3a     | true      | nil                                    | no longer exists |
 ```
 
 #### Scenario: Cleanup failure is reported
@@ -120,7 +130,7 @@ Then it returns an error from the database driver and the subscriber is closed
 <!-- cases: N/A 10 compatibility: new module -->
 
 ### Requirement: The outbox writes in the caller's transaction
-`NewOutbox(db, transport, cfg)` SHALL return an `*Outbox` on PostgreSQL implementing `doger.TxEventSender` whose `TxSource()` is `sqltx.Source()`. `SendTx` SHALL resolve its transaction with `sqltx.FromDB(ctx, db)`, return that function's error unchanged, and write the message on the resolved `SQL()`, addressed to the envelope's destination through the forwarder topic. `Send` and `Subscribe` SHALL delegate to the transport.
+`NewOutbox(db, transport, cfg)` SHALL return an `*Outbox` on PostgreSQL implementing `doger.TxEventSender` whose `TxSource()` is `sqltx.Source()`. `SendTx` SHALL resolve its transaction with `sqltx.FromDB(ctx, db)`, return that function's error unchanged, and write the message on the resolved `SQL()`, addressed to the envelope's destination through the forwarder topic. Until `Start` or a committed `SendTx` created the outbox table, `SendTx` SHALL create it in that transaction, needing no other connection. `OutboxConfig.SchemaAdapter` (default `PostgresSchema()`) and `OffsetsAdapter` (default watermill-sql's PostgreSQL adapter) SHALL shape the tables. `Send` and `Subscribe` SHALL delegate to the transport.
 
 #### Scenario: Outbox delivery follows the transaction
 ```gherkin
@@ -163,13 +173,25 @@ Examples:
   | db  | t   | OutboxConfig{ForwarderTopic: "fwd"} | an *Outbox whose forwarder topic is "fwd"                                    |
   | db  | t   | OutboxConfig{ForwarderTopic: ""}    | an *Outbox whose forwarder topic is "doger_outbox"                           |
   | db  | t   | OutboxConfig{Logger: nil}           | an *Outbox logging with watermill.NewSlogLogger(nil)                         |
+  | db  | t   | OutboxConfig{SchemaAdapter: a schema naming tables "custom_<topic>", OffsetsAdapter: an adapter naming them "custom_offsets_<topic>"} | an *Outbox writing to "custom_doger_outbox", whose started forwarder uses "custom_offsets_doger_outbox" and relays the committed message |
   | nil | t   | OutboxConfig{}                      | an error matching dogerwatermill.ErrInvalidConfig                            |
   | db  | nil | OutboxConfig{}                      | an error matching dogerwatermill.ErrInvalidConfig                            |
 ```
 
 <!-- cases: N/A 4 boundaries: no numeric input -->
+#### Scenario: The first SendTx creates the table
+```gherkin
+Given an Outbox that was not started, on a database <pool>
+When <callers> call SendTx inside sqltx.InTx
+Then every call returns nil within 10s and <callers> rows are committed
+
+Examples:
+  | pool                          | callers |
+  | limited to 1 open connection  | 1       |
+  | with the default pool         | 8 concurrently |
+```
+
 <!-- cases: N/A 6 duplicate: one Outbox per database; several Outboxes on one database share tables by forwarder topic -->
-<!-- cases: N/A 8 concurrency: SendTx runs on the publisher's goroutine inside its transaction; the forwarder is covered by the lifecycle requirement -->
 <!-- cases: N/A 9 panics: SendTx panics are recovered by doger core as *ExternalizeError -->
 <!-- cases: N/A 10 compatibility: new module -->
 

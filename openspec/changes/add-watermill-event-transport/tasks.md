@@ -77,6 +77,22 @@ Specs: `specs/watermill-event-transport`, `specs/watermill-sql-support`. Test na
 - [x] 12.3 Coverage of existing behavior: `TestSubscribe/factory_panics` and `TestNew/nil_option_ignored` (both shown to fail with the protection disabled); `TestFactory_CleanupError` asserts the subscriber was closed (shown to fail with Close skipped)
 - [x] 12.4 READMEs for `events/watermill` and `events/watermill/wmsql`; release dry run accepts pgx as a runtime requirement of `wmsql`
 
+## 13. Code review follow-ups (from `/code-review high` on PR #35)
+
+Each finding was proven with a test that failed before the fix.
+
+- [x] 13.1 Poison publish failure: RED `TestAck_PoisonFailureRetry` (nacked at once; handler rerun after giving up); GREEN wait the retry delay, then nack, and give up on the redelivery without running the handler
+- [x] 13.2 Bounded attempts: RED `TestSubscription_AttemptsBounded` (100000 entries); GREEN `attemptTracker` with `WithMaxTrackedMessages` (default 1000); `TestAttemptTracker`, `TestAck_MaxTrackedMessages`, `TestNew` rows
+- [x] 13.3 Handler panic: RED `TestAck_HandlerPanic` crashed the test binary; GREEN recover in `callHandler` as an ordinary error
+- [x] 13.4 Seed below open transactions (D3): RED `TestOffsets_SeedBelowOpenTransaction` lost the message; GREEN seed below `xmin`; `awaitReadable` in the offsets tests and non-parallel conformance tests
+- [x] 13.5 Closed message channel: RED `TestSubscribe_ChannelClosed` (nothing logged); GREEN log an error
+- [x] 13.6 Outbox table in the caller's transaction (D7): RED `TestOutbox_SendTxSingleConnection` waited for a second connection; GREEN create it in the transaction; `TestOutbox_SendTxConcurrentFirst`
+- [x] 13.7 Stop past its deadline: RED `TestStop_CloseAfterDeadline` blocked on Close; GREEN close in the background, error logged
+- [x] 13.8 No delivery after stop: RED `TestStop_NoDeliveryAfterStop` handled a message after stop; GREEN nack a message received once the loop stopped
+- [x] 13.9 Rejected subscriptions: RED `TestSubscribe_Rejected` (3 rows accepted); GREEN error matching `doger.ErrSubscriptionNotSupported`
+- [x] 13.10 Overridable defaults (rule 6): `OutboxConfig.SchemaAdapter` / `OffsetsAdapter` (`TestOutbox_Adapters`) and `WithCleanupTimeout` (`TestFactory_EphemeralCleanup` rows), each shown to fail with the override ignored
+- [x] 13.11 Guide, READMEs, package docs and CHANGELOG updated
+
 ## Workflow follow-up
 
 - Archive after review; requires `add-event-transport` archived first.

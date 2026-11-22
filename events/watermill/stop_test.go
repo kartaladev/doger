@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ThreeDotsLabs/watermill"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -93,7 +94,8 @@ func TestStop_Deadline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Error("the handler context was not cancelled")
 	}
-	assert.Equal(t, int64(1), fake.closes.Load(), "subscriber closes")
+	// past the deadline, the subscriber closes in the background
+	assert.Eventually(t, func() bool { return fake.closes.Load() == 1 }, time.Second, 5*time.Millisecond, "subscriber closes")
 }
 
 func TestStop_Edges(t *testing.T) {
@@ -145,4 +147,77 @@ func TestStop_Edges(t *testing.T) {
 
 		assert.ErrorContains(t, stop(context.Background()), "kaboom")
 	})
+}
+
+func TestStop_CloseAfterDeadline(t *testing.T) {
+	testWithTimeout(t, 30*time.Second)
+
+	fake := newFakeSubscriber()
+	fake.closeBlock = make(chan struct{}) // Close waits, as for an unacked message
+	fake.closeErr = errClose
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	logger := watermill.NewCaptureLogger()
+	transport, err := dogerwatermill.New(&recordingPublisher{}, (&countingFactory{sub: fake}).Build, dogerwatermill.WithLogger(logger))
+	require.NoError(t, err)
+	stop, err := transport.Subscribe(context.Background(), mailSubscription, func(context.Context, doger.Envelope) error {
+		close(started)
+		<-release // ignores its context
+		return nil
+	})
+	require.NoError(t, err)
+	go fake.deliver(dogerMessage("m-1"), deliverTimeout)
+	<-started
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	stopped := make(chan error, 1)
+	go func() { stopped <- stop(ctx) }()
+
+	select {
+	case err := <-stopped:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		t.Fatal("stop did not return within 1s of its deadline")
+	}
+	assert.Zero(t, errorsLogged(logger), "nothing logged while Close waits")
+	close(fake.closeBlock)
+	assert.Eventually(t, func() bool { return errorLogged(logger, errClose) }, deliverTimeout, 5*time.Millisecond,
+		"the late Close error was logged")
+}
+
+func TestStop_NoDeliveryAfterStop(t *testing.T) {
+	testWithTimeout(t, 60*time.Second)
+
+	// run picks at random between its stop and a waiting message: repeat
+	// so a loop that does not prefer the stop fails with near certainty
+	for i := range 20 {
+		fake := newFakeSubscriber()
+		started, release := make(chan struct{}), make(chan struct{})
+		var handled atomic.Int64
+		stop := subscribeFake(t, fake, context.Background(), func(context.Context, doger.Envelope) error {
+			if handled.Add(1) == 1 {
+				close(started)
+				<-release
+			}
+			return nil
+		})
+		go fake.deliver(dogerMessage("m-1"), deliverTimeout)
+		<-started
+		second := make(chan struct{})
+		go func() {
+			defer close(second)
+			fake.deliver(dogerMessage("m-2"), time.Second) // waits while m-1 is handled
+		}()
+		time.Sleep(20 * time.Millisecond)
+
+		stopped := make(chan error, 1)
+		go func() { stopped <- stop(context.Background()) }()
+		time.Sleep(20 * time.Millisecond) // stop has stopped the loop and waits for m-1
+		close(release)
+
+		require.NoError(t, <-stopped)
+		<-second
+		require.Equal(t, int64(1), handled.Load(), "iteration %d: a message was handled after stop", i)
+	}
 }

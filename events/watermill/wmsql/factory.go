@@ -3,6 +3,7 @@ package dogerwmsql
 import (
 	"context"
 	stdsql "database/sql"
+	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-sql/v4/pkg/sql"
@@ -17,9 +18,10 @@ type Option func(*factoryConfig)
 
 // factoryConfig is the configuration the options set.
 type factoryConfig struct {
-	configure     []func(*sql.SubscriberConfig)
-	logger        watermill.LoggerAdapter
-	keepEphemeral bool
+	configure      []func(*sql.SubscriberConfig)
+	logger         watermill.LoggerAdapter
+	keepEphemeral  bool
+	cleanupTimeout time.Duration
 }
 
 // WithSubscriberConfig adjusts the watermill-sql subscriber configuration
@@ -138,6 +140,7 @@ func newFactory(db *stdsql.DB, opts []Option, d dialect) dogerwatermill.Subscrib
 			Subscriber: subscriber,
 			db:         db,
 			group:      sub.Group,
+			timeout:    cfg.cleanupTimeout,
 			deleteQuery: func(topic string) string {
 				return d.deleteGroup(offsets.MessagesOffsetsTable(topic))
 			},
@@ -155,6 +158,9 @@ func applyOptions(opts []Option) factoryConfig {
 	}
 	if cfg.logger == nil {
 		cfg.logger = watermill.NewSlogLogger(nil)
+	}
+	if cfg.cleanupTimeout <= 0 {
+		cfg.cleanupTimeout = DefaultCleanupTimeout
 	}
 
 	return cfg
@@ -177,5 +183,15 @@ func messagesTable(schema sql.SchemaAdapter, fallback func(topic string) string)
 func WithKeepEphemeralGroups() Option {
 	return func(c *factoryConfig) {
 		c.keepEphemeral = true
+	}
+}
+
+// WithCleanupTimeout bounds the deletion of an ephemeral group's stored
+// offset when its subscription stops; a deletion cut short is returned by
+// the subscription's stop and the offset row is left. Default 30s; 0 or a
+// negative duration restores it.
+func WithCleanupTimeout(d time.Duration) Option {
+	return func(c *factoryConfig) {
+		c.cleanupTimeout = d
 	}
 }

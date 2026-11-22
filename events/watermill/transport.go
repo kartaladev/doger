@@ -22,6 +22,9 @@ const (
 	DefaultRetryDelay     = time.Second
 	DefaultMaxAttempts    = 10
 	DefaultMetadataPrefix = "doger_"
+	// DefaultMaxTrackedMessages is how many failing messages a
+	// subscription remembers the attempts of (see [WithMaxTrackedMessages]).
+	DefaultMaxTrackedMessages = 1000
 )
 
 // SubscriberFactory builds the watermill subscriber of one
@@ -52,6 +55,7 @@ var _ doger.EventTransport = (*Transport)(nil)
 type config struct {
 	retryDelay  time.Duration
 	maxAttempts int
+	maxTracked  int
 	poisonTopic string
 	prefix      string
 	logger      watermill.LoggerAdapter
@@ -89,10 +93,29 @@ func WithMaxAttempts(n int) Option {
 	}
 }
 
+// WithMaxTrackedMessages sets how many failing messages each subscription
+// remembers the attempts of. Beyond it, the message that failed least
+// recently is forgotten, and counts its attempts from one again if it
+// returns: a message that failed here and was then handled by another
+// member of the group never returns, so the memory stays bounded. Default
+// 1000; a count below 1 is an error.
+func WithMaxTrackedMessages(n int) Option {
+	return func(c *config) error {
+		if n < 1 {
+			return fmt.Errorf("%w: max tracked messages %d below 1", ErrInvalidConfig, n)
+		}
+		c.maxTracked = n
+		return nil
+	}
+}
+
 // WithPoisonTopic sets the topic a message is published to when the
 // transport gives up on it (a permanent handler error, the attempts
 // exhausted, or a message without doger metadata), before it is
-// acknowledged. A failed publish to it nacks the message. Default none:
+// acknowledged. A failed publish to it waits the retry delay, then nacks
+// the message; its redelivery is published there again without running
+// the handler (while the subscription remembers it, see
+// [WithMaxTrackedMessages]). Default none:
 // the message is acknowledged and logged.
 func WithPoisonTopic(topic string) Option {
 	return func(c *config) error {
@@ -157,6 +180,7 @@ func applyOptions(opts []Option) (config, error) {
 	cfg := config{
 		retryDelay:  DefaultRetryDelay,
 		maxAttempts: DefaultMaxAttempts,
+		maxTracked:  DefaultMaxTrackedMessages,
 		prefix:      DefaultMetadataPrefix,
 	}
 	for _, opt := range opts {
@@ -206,11 +230,17 @@ func (t *Transport) Send(ctx context.Context, env doger.Envelope) error {
 
 // Subscribe builds the subscription's subscriber with the factory,
 // subscribes it to sub.Destination and consumes it in one goroutine,
-// handing each message carrying doger metadata to h. A factory or
-// subscribe error is returned, and a subscriber already built is closed.
-// The returned stop function ends consumption, waits for the handler in
-// flight and closes the subscriber.
+// handing each message carrying doger metadata to h; a panic of h is a
+// handler error. A subscription without a destination or a group, or a
+// nil h, returns an error matching doger.ErrSubscriptionNotSupported
+// without calling the factory. A factory or subscribe error is returned,
+// and a subscriber already built is closed. The returned stop function
+// ends consumption, waits for the handler in flight and closes the
+// subscriber.
 func (t *Transport) Subscribe(ctx context.Context, sub doger.Subscription, h doger.EnvelopeHandler) (func(context.Context) error, error) {
+	if sub.Destination == "" || sub.Group == "" || h == nil {
+		return nil, fmt.Errorf("%w: dogerwatermill: a subscription needs a destination, a group and a handler", doger.ErrSubscriptionNotSupported)
+	}
 	subscriber, err := t.buildSubscriber(ctx, sub)
 	if err != nil {
 		return nil, err
@@ -236,7 +266,7 @@ func (t *Transport) Subscribe(ctx context.Context, sub doger.Subscription, h dog
 		cancelSub:  cancelSub,
 		stopLoop:   stopLoop,
 		done:       make(chan struct{}),
-		attempts:   map[string]int{},
+		attempts:   newAttemptTracker(t.cfg.maxTracked),
 	}
 	go consumer.run(loopCtx)
 
@@ -263,21 +293,22 @@ func (t *Transport) buildSubscriber(ctx context.Context, sub doger.Subscription)
 }
 
 // giveUp ends the deliveries of msg after reason: it publishes msg to the
-// poison topic and acks it, nacking it when that publish fails, or, with
-// no poison topic, logs reason and acks it.
-func (t *Transport) giveUp(msg *message.Message, reason error) {
+// poison topic and acks it, or, with no poison topic, logs reason and acks
+// it. A failed poison publish is logged and returned, msg left unsettled.
+func (t *Transport) giveUp(msg *message.Message, reason error) error {
 	fields := watermill.LogFields{"message_uuid": msg.UUID}
 	if t.cfg.poisonTopic == "" {
 		t.cfg.logger.Error("doger: dogerwatermill: dropped message", reason, fields)
 		msg.Ack()
-		return
+		return nil
 	}
 	if err := t.publish(t.cfg.poisonTopic, msg.Copy()); err != nil {
 		t.cfg.logger.Error("doger: dogerwatermill: poison publish failed", err, fields)
-		msg.Nack()
-		return
+		return err
 	}
 	msg.Ack()
+
+	return nil
 }
 
 // publish publishes msg to topic, returning a publish panic as an error.

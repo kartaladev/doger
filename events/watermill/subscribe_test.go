@@ -234,3 +234,51 @@ func TestForeignMessages(t *testing.T) {
 		})
 	}
 }
+
+func TestSubscribe_Rejected(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		sub     doger.Subscription
+		handler doger.EnvelopeHandler
+	}{
+		{name: "no_group", sub: doger.Subscription{Destination: "orders.placed", Mode: doger.DeliverOnce}, handler: noopHandler},
+		{name: "no_destination", sub: doger.Subscription{Group: "mail", Mode: doger.DeliverOnce}, handler: noopHandler},
+		{name: "nil_handler", sub: mailSubscription},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			factory := &countingFactory{sub: newFakeSubscriber()}
+			transport, err := dogerwatermill.New(&recordingPublisher{}, factory.Build)
+			require.NoError(t, err)
+
+			stop, err := transport.Subscribe(context.Background(), tt.sub, tt.handler)
+
+			if stop != nil {
+				stopNow(t, stop)
+			}
+			require.ErrorIs(t, err, doger.ErrSubscriptionNotSupported)
+			assert.Nil(t, stop)
+			assert.Zero(t, factory.calls.Load(), "factory calls")
+		})
+	}
+}
+
+func TestSubscribe_ChannelClosed(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeSubscriber()
+	logger := watermill.NewCaptureLogger()
+	transport, err := dogerwatermill.New(&recordingPublisher{}, (&countingFactory{sub: fake}).Build, dogerwatermill.WithLogger(logger))
+	require.NoError(t, err)
+	stop, err := transport.Subscribe(context.Background(), mailSubscription, noopHandler)
+	require.NoError(t, err)
+	defer stopNow(t, stop)
+
+	close(fake.out) // the backend gave up on its own
+
+	assert.Eventually(t, func() bool { return errorsLogged(logger) == 1 }, deliverTimeout, 10*time.Millisecond,
+		"the closed message channel was logged")
+}

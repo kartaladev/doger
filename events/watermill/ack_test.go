@@ -180,3 +180,139 @@ func TestAck_PoisonFailure(t *testing.T) {
 	assert.False(t, acked, "message nacked")
 	assert.True(t, errorLogged(logger, errBrokerDown), "logged the publish error")
 }
+
+// failingPoison returns a publisher whose first failures publishes to the
+// "poison" topic fail with errBrokerDown, and the counter of those publishes.
+func failingPoison(failures int64) (*recordingPublisher, *atomic.Int64) {
+	var poisonCalls atomic.Int64
+	pub := &recordingPublisher{publishFn: func(topic string, _ *message.Message) error {
+		if topic == "poison" && poisonCalls.Add(1) <= failures {
+			return errBrokerDown
+		}
+		return nil
+	}}
+
+	return pub, &poisonCalls
+}
+
+func TestAck_PoisonFailureRetry(t *testing.T) {
+	t.Parallel()
+
+	t.Run("waits_the_retry_delay", func(t *testing.T) {
+		t.Parallel()
+		fake := newFakeSubscriber()
+		clock := newFakeClock()
+		pub, _ := failingPoison(1)
+		transport, err := dogerwatermill.New(pub, (&countingFactory{sub: fake}).Build,
+			dogerwatermill.WithLogger(watermill.NopLogger{}), dogerwatermill.WithPoisonTopic("poison"),
+			dogerwatermill.WithClock(clock), dogerwatermill.WithRetryDelay(time.Second))
+		require.NoError(t, err)
+		handler := func(context.Context, doger.Envelope) error { return doger.PermanentError(errBadOrder) }
+		stop, err := transport.Subscribe(context.Background(), mailSubscription, handler)
+		require.NoError(t, err)
+		defer stopNow(t, stop)
+
+		msg := dogerMessage("m-1")
+		settled := make(chan bool, 1)
+		go func() {
+			acked, ok := fake.deliver(msg, deliverTimeout)
+			settled <- ok && !acked
+		}()
+
+		select {
+		case <-msg.Nacked():
+			t.Fatal("nacked at once after the failed poison publish")
+		case d := <-clock.Started:
+			assert.Equal(t, time.Second, d, "scheduled delay")
+		case <-time.After(deliverTimeout):
+			t.Fatal("neither nacked nor delayed")
+		}
+		clock.Advance(time.Second)
+		assert.True(t, <-settled, "message nacked after the delay")
+	})
+
+	t.Run("handler_not_rerun", func(t *testing.T) {
+		t.Parallel()
+		fake := newFakeSubscriber()
+		pub, poisonCalls := failingPoison(3)
+		h := &failingHandler{failures: -1, err: errOutOfStock}
+		transport, err := dogerwatermill.New(pub, (&countingFactory{sub: fake}).Build,
+			dogerwatermill.WithLogger(watermill.NopLogger{}), dogerwatermill.WithPoisonTopic("poison"),
+			dogerwatermill.WithRetryDelay(0), dogerwatermill.WithMaxAttempts(2))
+		require.NoError(t, err)
+		stop, err := transport.Subscribe(context.Background(), mailSubscription, h.handle)
+		require.NoError(t, err)
+		defer stopNow(t, stop)
+
+		nacks, acked := fake.deliverUntilAcked(dogerMessage("m-1"), 50, deliverTimeout)
+
+		require.True(t, acked, "message acked once poisoned")
+		assert.Equal(t, int64(2), h.runs.Load(), "handler runs: the attempts, not rerun after giving up")
+		assert.Equal(t, int64(4), poisonCalls.Load(), "poison publishes: 3 failed, then 1")
+		assert.Equal(t, 4, nacks, "nacks: 1 retry, then 3 failed poison publishes")
+		require.Len(t, pub.Published(), 1)
+	})
+}
+
+func TestAck_HandlerPanic(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeSubscriber()
+	logger := watermill.NewCaptureLogger()
+	transport, err := dogerwatermill.New(&recordingPublisher{}, (&countingFactory{sub: fake}).Build,
+		dogerwatermill.WithLogger(logger), dogerwatermill.WithRetryDelay(0), dogerwatermill.WithMaxAttempts(2))
+	require.NoError(t, err)
+	var runs atomic.Int64
+	stop, err := transport.Subscribe(context.Background(), mailSubscription, func(context.Context, doger.Envelope) error {
+		runs.Add(1)
+		panic("kaboom")
+	})
+	require.NoError(t, err)
+	defer stopNow(t, stop)
+
+	nacks, acked := fake.deliverUntilAcked(dogerMessage("m-1"), 10, deliverTimeout)
+
+	require.True(t, acked, "message given up on after the attempts")
+	assert.Equal(t, 1, nacks, "nacks: a panic is an ordinary error")
+	assert.Equal(t, int64(2), runs.Load(), "handler runs")
+	require.Equal(t, 1, errorsLogged(logger))
+	assert.ErrorContains(t, logger.Captured()[watermill.ErrorLogLevel][0].Err, "kaboom")
+}
+
+func TestAck_MaxTrackedMessages(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		opts      []dogerwatermill.Option
+		wantAcked bool // m-1's second failure exhausts its 2 attempts
+	}{
+		{name: "default_remembers_both", wantAcked: true},
+		{name: "one_forgets_m1", opts: []dogerwatermill.Option{dogerwatermill.WithMaxTrackedMessages(1)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fake := newFakeSubscriber()
+			opts := append([]dogerwatermill.Option{
+				dogerwatermill.WithLogger(watermill.NopLogger{}), dogerwatermill.WithRetryDelay(0), dogerwatermill.WithMaxAttempts(2),
+			}, tt.opts...)
+			transport, err := dogerwatermill.New(&recordingPublisher{}, (&countingFactory{sub: fake}).Build, opts...)
+			require.NoError(t, err)
+			h := &failingHandler{failures: -1, err: errOutOfStock}
+			stop, err := transport.Subscribe(context.Background(), mailSubscription, h.handle)
+			require.NoError(t, err)
+			defer stopNow(t, stop)
+
+			for _, id := range []string{"m-1", "m-2"} { // each fails once
+				acked, settled := fake.deliver(dogerMessage(id), deliverTimeout)
+				require.True(t, settled)
+				require.False(t, acked)
+			}
+			acked, settled := fake.deliver(dogerMessage("m-1"), deliverTimeout)
+
+			require.True(t, settled)
+			assert.Equal(t, tt.wantAcked, acked)
+		})
+	}
+}

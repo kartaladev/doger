@@ -8,9 +8,11 @@ import (
 	"github.com/kartaladev/doger/eventtransporttest"
 )
 
+// The conformance tests are not parallel, so they run before the parallel
+// tests and see a quiet server: on PostgreSQL a new group starts at the
+// readable head, which a transaction another test holds open keeps behind
+// the messages the suite sent before subscribing.
 func TestConformance(t *testing.T) {
-	t.Parallel()
-
 	for _, e := range engines {
 		t.Run(e.name, func(t *testing.T) {
 			t.Parallel()

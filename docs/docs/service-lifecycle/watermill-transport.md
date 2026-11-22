@@ -58,14 +58,15 @@ root := doger.NewWithOpts(&doger.InjectorOpts{EventTransport: transport})
 
 ## Options {#options}
 
-| Behavior                                  | Default                        | Override                                          |
-| ----------------------------------------- | ------------------------------ | ------------------------------------------------- |
-| Wait after a handler error before nacking | 1s                             | `WithRetryDelay(d)`; 0 nacks at once              |
-| Attempts before giving up on a message    | 10, counted per process        | `WithMaxAttempts(n)`; 0 means unlimited           |
-| A message given up on                     | acked and logged               | `WithPoisonTopic(topic)` publishes it there first |
-| Metadata key prefix                       | `doger_`                       | `WithMetadataPrefix(p)`                           |
-| Logger                                    | `watermill.NewSlogLogger(nil)` | `WithLogger(l)`                                   |
-| Clock of the retry wait                   | real clock                     | `WithClock(c)`                                    |
+| Behavior                                                 | Default                        | Override                                                                      |
+| -------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------- |
+| Wait after a handler error before nacking                | 1s                             | `WithRetryDelay(d)`; 0 nacks at once                                          |
+| Attempts before giving up on a message                   | 10, counted per process        | `WithMaxAttempts(n)`; 0 means unlimited                                       |
+| Failing messages whose attempts a subscription remembers | 1000                           | `WithMaxTrackedMessages(n)`; beyond it the least recently failed is forgotten |
+| A message given up on                                    | acked and logged               | `WithPoisonTopic(topic)` publishes it there first                             |
+| Metadata key prefix                                      | `doger_`                       | `WithMetadataPrefix(p)`                                                       |
+| Logger                                                   | `watermill.NewSlogLogger(nil)` | `WithLogger(l)`                                                               |
+| Clock of the retry wait                                  | real clock                     | `WithClock(c)`                                                                |
 
 Each message carries the envelope ID as its UUID and the payload as its payload. The other fields are in its metadata: `doger_event_type`, `doger_version`, `doger_content_type`, `doger_published_at` (RFC 3339, UTC) and `doger_h_<name>` per header. A received message without `doger_event_type` is not doger's: it never reaches a listener and is given up on.
 
@@ -75,13 +76,16 @@ Delivery is **at least once**. Each subscription handles one message at a time, 
 
 - the listener returns nil: the message is acked;
 - it returns an error: the transport waits the retry delay, then nacks, and the backend redelivers it;
-- it returns a `doger.PermanentError`, or the attempts are exhausted: the message goes to the poison topic and is acked (a failed poison publish nacks it), or, with no poison topic, it is logged and acked.
+- it returns a `doger.PermanentError`, or the attempts are exhausted: the message goes to the poison topic and is acked, or, with no poison topic, it is logged and acked. A failed poison publish waits the retry delay, then nacks the message; its redelivery goes to the poison topic again without running the listener;
+- it panics: the panic is an ordinary error.
 
-Attempts are counted per message UUID in the consuming process. They reset when the process restarts, so a process that crashes on a message retries it from one again. Permanent errors and the poison topic are the intended exits. Make listeners idempotent: deduplicate on `doger.EnvelopeFromContext(ctx).ID`, which is also the watermill message UUID, so backend deduplication (for example NATS `TrackMsgID`) agrees with yours.
+`Subscribe` rejects a subscription without a destination or a group, or a nil handler, with an error matching `doger.ErrSubscriptionNotSupported`. When a backend closes its message channel on its own, the transport logs an error: that subscription receives nothing more.
+
+Attempts are counted per message UUID in the consuming process. They reset when the process restarts, so a process that crashes on a message retries it from one again. A subscription remembers at most 1000 failing messages (`WithMaxTrackedMessages`): a message that failed here and was then handled by another member of the group never comes back, so the oldest is forgotten. Permanent errors and the poison topic are the intended exits. Make listeners idempotent: deduplicate on `doger.EnvelopeFromContext(ctx).ID`, which is also the watermill message UUID, so backend deduplication (for example NATS `TrackMsgID`) agrees with yours.
 
 A failing message blocks its subscription until it succeeds or is given up on: at the defaults, about 10 seconds. To handle in parallel, scale through backend partitions or more instances; a worker pool per subscription would break the per-key ordering Kafka users rely on.
 
-Stopping a subscription (container shutdown) stops consuming, waits for the handler in flight until the shutdown context ends, cancels that handler's context, and closes the subscriber.
+Stopping a subscription (container shutdown) stops consuming (a message received meanwhile is nacked, not handled), waits for the handler in flight, and closes the subscriber. If the shutdown context ends first, it cancels that handler's context and returns at once; the subscriber then closes in the background, its error logged.
 
 ## SQL helpers {#sql}
 
@@ -96,9 +100,9 @@ transport, err := dogerwatermill.New(pub, dogerwmsql.PostgresSubscriberFactory(d
 ```
 
 - **Groups.** The subscription's group is the watermill-sql consumer group: members of one group compete, different groups each get every message.
-- **New groups at the latest message.** watermill-sql starts a new group at offset 0. The factories wrap its default offsets adapter so that a group with no stored offset starts after the newest row of the topic. A group with a stored offset resumes after it, and concurrent first subscribers of one group race safely on the offsets table's primary key. If you set your own offsets adapter with `WithSubscriberConfig`, it is used as-is and owns the start position.
+- **New groups at the latest message.** watermill-sql starts a new group at offset 0. The factories wrap its default offsets adapter so that a group with no stored offset starts after the newest row of the topic that watermill-sql can read, the readable head: on PostgreSQL, rows below the oldest transaction still open on the server. A transaction open while the group is created may commit a row ordered before the newest one; starting at the readable head delivers it instead of skipping it, along with the rows committed after that head, which no group has received yet. A group with a stored offset resumes after it, and concurrent first subscribers of one group race safely on the offsets table's primary key. If you set your own offsets adapter with `WithSubscriberConfig`, it is used as-is and owns the start position.
 - **Binary payloads.** `PostgresSchema()` and `MySQLSchema()` are watermill-sql's schema adapters with a `BYTEA` / `LONGBLOB` payload column, the factories' default. Pass the same one to your publisher. watermill-sql's default `JSON` column rejects payloads that are not JSON (a protobuf codec), and MySQL's JSON column rewrites JSON (whitespace, key order). Tables that already exist keep their column type.
-- **Ephemeral groups.** When a `DeliverAll` subscription with a generated instance ID stops, its group's offset row is deleted (the messages stay). `WithKeepEphemeralGroups()` keeps it, for debugging.
+- **Ephemeral groups.** When a `DeliverAll` subscription with a generated instance ID stops, its group's offset row is deleted (the messages stay), within 30s (`WithCleanupTimeout(d)`; a deletion cut short is returned by the stop). `WithKeepEphemeralGroups()` keeps it, for debugging.
 - **Other settings.** `WithSubscriberConfig(func(*sql.SubscriberConfig))` adjusts any watermill-sql subscriber setting (poll interval, ack deadline, schema adapter); the factory then sets the group and the offsets adapter. The factories create the tables they need (`InitializeSchema: true`); turn that off there if a migration tool owns them. `WithLogger(l)` sets the subscribers' logger.
 
 ## Outbox {#outbox}
@@ -118,7 +122,8 @@ err = sqltx.InTx(ctx, db, func(ctx context.Context) error {
 
 - **Transactions** come from the shared `events/sqltx` module: open them with `sqltx.BeginTx` or `sqltx.InTx`, or bind your own `*sql.Tx` with `sqltx.BindTx`. `TxSource()` is `sqltx.Source()`, so after-commit listeners, the SQL transport and the outbox all see the same transaction. `SendTx` without a transaction returns an error matching `doger.ErrNoTransaction`. A transaction on another `*sql.DB` returns `sqltx.ErrForeignTransaction`, since a row written there would lose the atomicity the outbox exists for.
 - **Lifecycle.** Registered as the transport service with `doger.AsStarter()`, the outbox's forwarder starts and stops with the container (the `EventTransport` interface has no `Start` method, hence the option). With `InjectorOpts.EventTransport`, call `outbox.Start(ctx)` and `outbox.Shutdown(ctx)` yourself. Events committed while the forwarder is stopped are relayed once it starts.
-- **Configuration.** `OutboxConfig.ForwarderTopic` (default `doger_outbox`) names the outbox table; `OutboxConfig.Logger` sets the forwarder's logger.
+- **Tables.** The first `SendTx` creates the outbox table in the caller's transaction, on the connection it holds, so a pool of one connection works; `Start` creates it and the forwarder's offsets table.
+- **Configuration.** `OutboxConfig.ForwarderTopic` (default `doger_outbox`) names the outbox topic; `SchemaAdapter` (default `PostgresSchema()`) and `OffsetsAdapter` (default watermill-sql's PostgreSQL one) shape the tables; `Logger` sets the forwarder's logger.
 
 ## Testing {#testing}
 

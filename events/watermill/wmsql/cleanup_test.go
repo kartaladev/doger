@@ -68,8 +68,11 @@ func TestFactory_EphemeralCleanup(t *testing.T) {
 		group     string
 		ephemeral bool
 		kept      bool
+		wantErr   error
 	}{
 		{name: "ephemeral_deleted", group: "cache/7f3a", ephemeral: true},
+		{name: "cleanup_timeout_exceeded", opts: []dogerwmsql.Option{dogerwmsql.WithCleanupTimeout(time.Nanosecond)}, group: "cache/7f3a", ephemeral: true, kept: true, wantErr: context.DeadlineExceeded},
+		{name: "zero_cleanup_timeout_default", opts: []dogerwmsql.Option{dogerwmsql.WithCleanupTimeout(0)}, group: "cache/7f3a", ephemeral: true},
 		{name: "ephemeral_kept_on_request", opts: []dogerwmsql.Option{dogerwmsql.WithKeepEphemeralGroups()}, group: "cache/7f3a", ephemeral: true, kept: true},
 		{name: "durable_kept", group: "mail", kept: true},
 	}
@@ -85,8 +88,9 @@ func TestFactory_EphemeralCleanup(t *testing.T) {
 			sub := doger.Subscription{Destination: topic, Group: tt.group, Mode: mode, Ephemeral: tt.ephemeral}
 			stop := subscribeOne(t, db, sub, tt.opts...)
 
-			require.NoError(t, stop(context.Background()))
+			err := stop(context.Background())
 
+			require.ErrorIs(t, err, tt.wantErr)
 			assert.Equal(t, tt.kept, groupStored(t, db, tt.group), "stored offset of %s", tt.group)
 		})
 	}

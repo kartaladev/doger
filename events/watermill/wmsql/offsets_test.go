@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-sql/v4/pkg/sql"
+	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -23,6 +25,7 @@ const quietPeriod = 500 * time.Millisecond
 // consumer counts and acks the messages of one factory subscriber.
 type consumer struct {
 	handled atomic.Int64
+	uuids   sync.Map // the UUIDs received
 	done    chan struct{}
 	close   func()
 }
@@ -45,6 +48,7 @@ func consume(t *testing.T, e engine, db *stdsql.DB, group string) *consumer {
 	go func() {
 		defer close(c.done)
 		for msg := range messages {
+			c.uuids.Store(msg.UUID, true)
 			c.handled.Add(1)
 			msg.Ack()
 		}
@@ -60,6 +64,24 @@ func consume(t *testing.T, e engine, db *stdsql.DB, group string) *consumer {
 	t.Cleanup(c.close)
 
 	return c
+}
+
+// awaitReadable waits until watermill-sql can read every message of topic
+// on PostgreSQL: until no transaction older than the newest row is open on
+// the server. A new group starts at the readable head, so a parallel test
+// holding a transaction open would otherwise make the existing messages
+// new to it.
+func awaitReadable(t *testing.T, e engine, db *stdsql.DB) {
+	t.Helper()
+	if e.name != "postgres" {
+		return
+	}
+	query := `SELECT COALESCE(MAX(transaction_id) < pg_snapshot_xmin(pg_current_snapshot()), true) FROM ` +
+		postgres.schema.(interface{ MessagesTable(string) string }).MessagesTable(topic)
+	require.Eventually(t, func() bool {
+		var readable bool
+		return db.QueryRowContext(context.Background(), query).Scan(&readable) == nil && readable
+	}, 30*time.Second, 10*time.Millisecond, "the existing messages became readable")
 }
 
 // storeOffset makes group acknowledge the first n messages of topic.
@@ -110,6 +132,9 @@ func TestOffsets_Start(t *testing.T) {
 			if tt.stored > 0 {
 				storeOffset(t, db, "mail", tt.stored)
 			}
+			if tt.existing > 0 {
+				awaitReadable(t, tt.engine, db)
+			}
 
 			c := consume(t, tt.engine, db, "mail")
 			publishN(t, pub, topic, 1)
@@ -127,6 +152,7 @@ func TestOffsets_ConcurrentSeed(t *testing.T) {
 	db := openDB(t, postgres)
 	pub := newPublisher(t, postgres, db)
 	publishN(t, pub, topic, 5)
+	awaitReadable(t, postgres, db)
 
 	consumers := make([]*consumer, 4)
 	var wg sync.WaitGroup
@@ -152,4 +178,32 @@ func TestOffsets_ConcurrentSeed(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, handledBy, "subscribers that handled a message")
+}
+
+// A transaction still open when a new group is seeded may hold a lower
+// transaction ID than a row already committed. watermill-sql reads it once
+// it commits, but only if the group's offset lies below it: the seed must
+// not pass it.
+func TestOffsets_SeedBelowOpenTransaction(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Minute)
+	ctx := context.Background()
+	db := openDB(t, postgres)
+	pub := newPublisher(t, postgres, db)
+	publishN(t, pub, topic, 1)
+
+	tx, err := db.BeginTx(ctx, nil) // the lower transaction ID, still open
+	require.NoError(t, err)
+	defer tx.Rollback()
+	txPub, err := sql.NewPublisher(sql.TxFromStdSQL(tx), sql.PublisherConfig{SchemaAdapter: postgres.schema}, watermill.NopLogger{})
+	require.NoError(t, err)
+	inFlight := message.NewMessage(watermill.NewUUID(), []byte(`{"n":1}`))
+	require.NoError(t, txPub.Publish(topic, inFlight))
+	publishN(t, pub, topic, 1) // committed, with a higher transaction ID
+
+	c := consume(t, postgres, db, "mail") // seeds the new group
+	require.NoError(t, tx.Commit())       // after the group exists
+
+	require.Eventually(t, func() bool { _, ok := c.uuids.Load(inFlight.UUID); return ok }, 10*time.Second, 10*time.Millisecond,
+		"the message committed after the group was seeded is delivered")
 }

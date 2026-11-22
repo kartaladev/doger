@@ -11,8 +11,9 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 
-// cleanupTimeout bounds the deletion of an ephemeral group's offset.
-const cleanupTimeout = 30 * time.Second
+// DefaultCleanupTimeout bounds the deletion of an ephemeral group's
+// offset (see [WithCleanupTimeout]).
+const DefaultCleanupTimeout = 30 * time.Second
 
 // ephemeralSubscriber is the subscriber of an ephemeral group: Close also
 // deletes the group's stored offset for every topic it subscribed to.
@@ -21,6 +22,7 @@ type ephemeralSubscriber struct {
 	db          *stdsql.DB
 	group       string
 	deleteQuery func(topic string) string
+	timeout     time.Duration // bounds the deletion
 
 	mu     sync.Mutex
 	topics []string
@@ -47,7 +49,7 @@ func (s *ephemeralSubscriber) Close() error {
 	s.topics = nil
 	s.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
 	for _, topic := range topics {
 		if _, delErr := s.db.ExecContext(ctx, s.deleteQuery(topic), s.group); delErr != nil {

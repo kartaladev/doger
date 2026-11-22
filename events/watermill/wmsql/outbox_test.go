@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
+	"github.com/ThreeDotsLabs/watermill-sql/v4/pkg/sql"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -346,8 +347,8 @@ func (h txHarness) Rollback(ctx context.Context) error {
 	return tx.Rollback()
 }
 
+// TestOutboxConformance is not parallel, as TestConformance.
 func TestOutboxConformance(t *testing.T) {
-	t.Parallel()
 	testWithTimeout(t, 5*time.Minute)
 	db := openDB(t, postgres)
 
@@ -356,4 +357,86 @@ func TestOutboxConformance(t *testing.T) {
 		startOutbox(t, outbox)
 		return outbox
 	}, eventtransporttest.WithTx(txHarness{db: db}))
+}
+
+// The first SendTx creates the outbox table. With the caller's transaction
+// holding the pool's only connection, it must not wait for another.
+func TestOutbox_SendTxSingleConnection(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 2*time.Minute)
+	db := openDB(t, postgres)
+	db.SetMaxOpenConns(1)
+	outbox := newOutbox(t, db) // not started: no table yet
+
+	done := make(chan error, 1)
+	go func() {
+		done <- sqltx.InTx(context.Background(), db, func(ctx context.Context) error {
+			return outbox.SendTx(ctx, envelope())
+		})
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("SendTx waited for a second connection")
+	}
+	assert.Equal(t, 1, outboxRows(t, db), "committed rows")
+}
+
+func TestOutbox_SendTxConcurrentFirst(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 2*time.Minute)
+	db := openDB(t, postgres)
+	outbox := newOutbox(t, db) // not started: the transactions create the table
+
+	errs := make(chan error, 8)
+	for range cap(errs) {
+		go func() {
+			errs <- sqltx.InTx(context.Background(), db, func(ctx context.Context) error {
+				return outbox.SendTx(ctx, envelope())
+			})
+		}()
+	}
+	for range cap(errs) {
+		require.NoError(t, <-errs)
+	}
+	assert.Equal(t, cap(errs), outboxRows(t, db), "committed rows")
+}
+
+func TestOutbox_Adapters(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 2*time.Minute)
+	ctx := context.Background()
+	db := openDB(t, postgres)
+	schema := dogerwmsql.PostgresSchema()
+	schema.GenerateMessagesTableName = func(topic string) string { return `"custom_` + topic + `"` }
+	offsets := sql.DefaultPostgreSQLOffsetsAdapter{
+		GenerateMessagesOffsetsTableName: func(topic string) string { return `"custom_offsets_` + topic + `"` },
+	}
+	transport := newTestTransport(t, postgres, db)
+	outbox, err := dogerwmsql.NewOutbox(db, transport, dogerwmsql.OutboxConfig{
+		SchemaAdapter: schema, OffsetsAdapter: offsets, Logger: watermill.NopLogger{},
+	})
+	require.NoError(t, err)
+	handled := make(chan struct{}, 1)
+	stop, err := transport.Subscribe(ctx, doger.Subscription{Destination: topic, Group: "mail", Mode: doger.DeliverOnce},
+		func(context.Context, doger.Envelope) error { handled <- struct{}{}; return nil })
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, stop(ctx)) }()
+	startOutbox(t, outbox)
+
+	require.NoError(t, sqltx.InTx(ctx, db, func(ctx context.Context) error { return outbox.SendTx(ctx, envelope()) }))
+
+	select {
+	case <-handled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the envelope was not relayed")
+	}
+	for _, table := range []string{"custom_doger_outbox", "custom_offsets_doger_outbox"} {
+		var exists stdsql.NullString
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regclass($1)::text`, table).Scan(&exists))
+		assert.True(t, exists.Valid, "table %s", table)
+	}
+	assert.Zero(t, outboxRows(t, db), "nothing in the default table")
 }

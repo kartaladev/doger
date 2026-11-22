@@ -12,9 +12,9 @@ type postgresHeadOffsets struct {
 }
 
 // BeforeSubscribingQueries seeds the group's offset with the newest
-// message of the topic, (0, '0') for an empty one. A group with a stored
-// offset keeps it, and concurrent first subscribers race on the primary
-// key.
+// message of the topic that watermill-sql could read now, (0, '0') for
+// none. A group with a stored offset keeps it, and concurrent first
+// subscribers race on the primary key.
 func (a postgresHeadOffsets) BeforeSubscribingQueries(params sql.BeforeSubscribingQueriesParams) ([]sql.Query, error) {
 	return []sql.Query{{
 		Query: postgresSeedQuery(a.MessagesOffsetsTable(params.Topic), a.messagesTable(params.Topic)),
@@ -24,13 +24,18 @@ func (a postgresHeadOffsets) BeforeSubscribingQueries(params sql.BeforeSubscribi
 
 // postgresSeedQuery inserts, unless one exists, the offset of the group
 // $1 in offsetsTable at the newest row of messagesTable, in watermill-sql's
-// (transaction_id, offset) order.
+// (transaction_id, offset) order, among the rows below the snapshot's
+// xmin, the rows watermill-sql reads. A transaction still open may hold a
+// lower ID than a committed row: seeding past that row would skip its
+// messages once it commits, so they are delivered instead, along with the
+// committed rows above xmin.
 func postgresSeedQuery(offsetsTable, messagesTable string) string {
 	return `INSERT INTO ` + offsetsTable + ` (consumer_group, offset_acked, last_processed_transaction_id)
 		SELECT $1, COALESCE(head."offset", 0), COALESCE(head.transaction_id, '0'::xid8)
 		FROM (SELECT 1) AS one
 		LEFT JOIN (
 			SELECT "offset", transaction_id FROM ` + messagesTable + `
+			WHERE transaction_id < pg_snapshot_xmin(pg_current_snapshot())
 			ORDER BY transaction_id DESC, "offset" DESC
 			LIMIT 1
 		) AS head ON true

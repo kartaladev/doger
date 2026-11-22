@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-sql/v4/pkg/sql"
@@ -28,6 +29,15 @@ type OutboxConfig struct {
 	// Logger logs the forwarder's failures. Default
 	// watermill.NewSlogLogger(nil), the slog default logger.
 	Logger watermill.LoggerAdapter
+	// SchemaAdapter shapes the outbox table: its name, payload column and
+	// queries. Default [PostgresSchema](). It must be a PostgreSQL one:
+	// the first SendTx creates the table in the caller's transaction.
+	SchemaAdapter sql.SchemaAdapter
+	// OffsetsAdapter shapes the forwarder's offsets table. Default
+	// watermill-sql's sql.DefaultPostgreSQLOffsetsAdapter{}, whose new
+	// group starts at the oldest message, so the forwarder relays what was
+	// committed before it first ran.
+	OffsetsAdapter sql.OffsetsAdapter
 }
 
 // Outbox is a transactional outbox on PostgreSQL in front of a
@@ -44,10 +54,12 @@ type Outbox struct {
 	transport *dogerwatermill.Transport
 	topic     string
 	logger    watermill.LoggerAdapter
-	schema    sql.DefaultPostgreSQLSchema
+	schema    sql.SchemaAdapter
+	offsets   sql.OffsetsAdapter
 
 	schemaMu    sync.Mutex
-	schemaReady bool
+	schemaReady bool        // both tables exist: Start created them
+	tableReady  atomic.Bool // the outbox table exists
 
 	mu        sync.Mutex
 	forwarder *forwarder.Forwarder
@@ -76,8 +88,17 @@ func NewOutbox(db *stdsql.DB, transport *dogerwatermill.Transport, cfg OutboxCon
 	if cfg.Logger == nil {
 		cfg.Logger = watermill.NewSlogLogger(nil)
 	}
+	if cfg.SchemaAdapter == nil {
+		cfg.SchemaAdapter = PostgresSchema()
+	}
+	if cfg.OffsetsAdapter == nil {
+		cfg.OffsetsAdapter = sql.DefaultPostgreSQLOffsetsAdapter{}
+	}
 
-	return &Outbox{db: db, transport: transport, topic: cfg.ForwarderTopic, logger: cfg.Logger, schema: PostgresSchema()}, nil
+	return &Outbox{
+		db: db, transport: transport, topic: cfg.ForwarderTopic, logger: cfg.Logger,
+		schema: cfg.SchemaAdapter, offsets: cfg.OffsetsAdapter,
+	}, nil
 }
 
 // Send sends env through the transport, outside any transaction.
@@ -119,17 +140,39 @@ func (o *Outbox) SendTx(ctx context.Context, env doger.Envelope) error {
 }
 
 // boundTx returns the transaction sqltx binds to ctx on the outbox's
-// database, its error unchanged, with the outbox tables created.
+// database, its error unchanged, with the outbox table created.
 func (o *Outbox) boundTx(ctx context.Context) (*sqltx.Tx, error) {
 	tx, err := sqltx.FromDB(ctx, o.db)
 	if err != nil {
 		return nil, err
 	}
-	if err := o.ensureSchema(); err != nil {
+	if err := o.ensureTable(ctx, tx); err != nil {
 		return nil, err
 	}
 
 	return tx, nil
+}
+
+// ensureTable creates the outbox table in tx, on the connection tx holds,
+// until Start or a committed transaction created it: the pool may have no
+// other connection to spare. watermill-sql's queries take an advisory
+// transaction lock, so concurrent first transactions create it in turn.
+func (o *Outbox) ensureTable(ctx context.Context, tx *sqltx.Tx) error {
+	if o.tableReady.Load() {
+		return nil
+	}
+	queries, err := o.schema.SchemaInitializingQueries(sql.SchemaInitializingQueriesParams{Topic: o.topic})
+	if err != nil {
+		return fmt.Errorf("doger: dogerwmsql: create the outbox table: %w", err)
+	}
+	for _, q := range queries {
+		if _, err := tx.SQL().ExecContext(ctx, q.Query, q.Args...); err != nil {
+			return fmt.Errorf("doger: dogerwmsql: create the outbox table: %w", err)
+		}
+	}
+	tx.OnCommit(func(context.Context) { o.tableReady.Store(true) })
+
+	return nil
 }
 
 // txPublisher returns a publisher writing enveloped messages to the
@@ -143,8 +186,8 @@ func (o *Outbox) txPublisher(tx *sqltx.Tx) (*forwarder.Publisher, error) {
 	return forwarder.NewPublisher(pub, forwarder.PublisherConfig{ForwarderTopic: o.topic}), nil
 }
 
-// ensureSchema creates the outbox tables once, outside any transaction
-// (watermill-sql cannot create them inside one).
+// ensureSchema creates the outbox tables (the messages and the
+// forwarder's offsets) once, outside any transaction, for Start.
 func (o *Outbox) ensureSchema() error {
 	o.schemaMu.Lock()
 	defer o.schemaMu.Unlock()
@@ -160,6 +203,7 @@ func (o *Outbox) ensureSchema() error {
 		return fmt.Errorf("doger: dogerwmsql: create the outbox tables: %w", err)
 	}
 	o.schemaReady = true
+	o.tableReady.Store(true)
 
 	return nil
 }
@@ -170,7 +214,7 @@ func (o *Outbox) ensureSchema() error {
 func (o *Outbox) newSubscriber() (*sql.Subscriber, error) {
 	sub, err := sql.NewSubscriber(sql.BeginnerFromStdSQL(o.db), sql.SubscriberConfig{
 		SchemaAdapter:    o.schema,
-		OffsetsAdapter:   sql.DefaultPostgreSQLOffsetsAdapter{},
+		OffsetsAdapter:   o.offsets,
 		InitializeSchema: true,
 	}, o.logger)
 	if err != nil {

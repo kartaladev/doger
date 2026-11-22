@@ -59,6 +59,7 @@ var ErrInvalidConfig = errors.New("doger: dogerwatermill: invalid configuration"
 - `dogerwmsql` wraps watermill-sql's `DefaultPostgreSQLOffsetsAdapter` / `DefaultMySQLOffsetsAdapter`, replacing `BeforeSubscribingQueries` with an insert that seeds `offset_acked` and `last_processed_transaction_id` from the newest row of the messages table (`ON CONFLICT DO NOTHING` / `INSERT IGNORE`), so an existing group keeps its offset and concurrent first subscribers race safely on the primary key.
 - *Alternative:* subscribe, then skip messages older than the subscription time. Rejected: it depends on clocks and still acks old rows one by one.
 - *Alternative:* reject SQL for `DeliverAll`. Rejected: SQL is the backend most doger users already have.
+- On PostgreSQL the seed reads only rows below `pg_snapshot_xmin(pg_current_snapshot())`, the rows watermill-sql's select can read. A transaction open at seed time may hold a lower ID than a committed row; seeding past that row skipped its messages forever once it committed (proven by `TestOffsets_SeedBelowOpenTransaction`). So "latest" is the readable head: rows above `xmin` have reached no group yet, and the new group receives them with the others. `xmin` is server-wide, so tests that need an exact count wait for readability, and the conformance tests run before the parallel tests.
 - The seed query is verified against both databases by "New and existing groups" and "Concurrent first subscribers of one group".
 
 ### D4. Ephemeral groups
@@ -74,19 +75,22 @@ var ErrInvalidConfig = errors.New("doger: dogerwatermill: invalid configuration"
 Subscribe: sub := factory(ctx, s); ch := sub.Subscribe(loopCtx, s.Destination); go loop
 loop:  for msg in ch:
          env, ok := decode(msg)            !ok        -> giveUp(msg)
+         pending give-up for msg.UUID      -> giveUp(msg), handler not run
          err := h(msg.Context(), env)      nil        -> Ack, forget(msg.UUID)
+                                           panic      -> an ordinary error
                                            permanent  -> giveUp(msg)
                                            attempts>=max (max>0) -> giveUp(msg)
                                            else       -> wait(retryDelay | loopCtx) ; Nack
-giveUp: poison topic set ? Publish(poison, msg) ok -> Ack ; err -> log, Nack
-                         : log, Ack
+giveUp: poison topic set ? Publish(poison, msg) ok -> Ack, forget ; err -> log, remember reason, wait(retryDelay) ; Nack
+                         : log, Ack, forget
+a message received after the loop was stopped -> Nack, not handled; a channel closed by the subscriber -> log
 stop(ctx): stop consuming ; wait loop done or ctx.Done()
-           ctx ended first -> cancel the handler context (subCtx)
-           sub.Close() ; cancel subCtx ; once
+           ctx ended first -> cancel the handler context (subCtx), close in the background (error logged), return ctx.Err()
+           else sub.Close() ; cancel subCtx ; once
 ```
 - The subscription context (passed to the subscriber's `Subscribe` and parent of the handler contexts) is cancelled after `Close` on a clean stop: cancelling it first made watermill-sql log an `ERROR ... context canceled` for its aborted fetch on every shutdown. When the stop context ends first, the handler context is cancelled before `Close`, so a subscriber waiting for that handler's acknowledgement can close.
 - One goroutine per subscription with a clear owner (the stop function) and exit (`loopCtx` cancel plus the channel closing), per golang-concurrency. A `sync.Once` makes stop idempotent; a `done` channel signals the loop's exit.
-- Attempts live in a `map[string]int` owned by the loop goroutine (no lock), keyed by UUID and deleted on ack or give-up, so memory is bounded by messages in flight. The count resets on restart; the guide says so, and backends with native delivery counts can be added later.
+- Attempts live in an `attemptTracker` owned by the loop goroutine (no lock): a map plus a list keyed by UUID, deleted on ack or a successful give-up, bounded by `WithMaxTrackedMessages` (default 1000) by forgetting the least recently failed message. A plain map grew without bound, since a message that failed here and was then handled by another member of the group never returns. The tracker also holds the reason of a give-up whose poison publish failed, so its redelivery skips the handler. The count resets on restart; the guide says so, and backends with native delivery counts can be added later.
 - The retry wait uses the injected clock (`WithClock`, default real clock) so tests drive it with a fake clock, and selects on `loopCtx.Done()` so stop never waits a full delay.
 - Concurrency per subscription is one message at a time, as watermill delivers. Consumers needing parallelism scale through backend partitions or more instances; a per-subscription worker pool would break per-key ordering that Kafka users expect.
 
@@ -95,7 +99,7 @@ stop(ctx): stop consuming ; wait loop done or ctx.Done()
 - `Outbox.TxSource()` returns `sqltx.Source()`. `Outbox.SendTx` calls `sqltx.FromDB(ctx, outboxDB)` and returns its error unchanged, so every SQL adapter reports a missing transaction as `doger.ErrNoTransaction` and a transaction on another database as `sqltx.ErrForeignTransaction` (a row written there would silently lose the atomicity the outbox exists for). `ErrInvalidConfig` stays for construction errors only. Otherwise it builds `forwarder.NewPublisher(sql.NewPublisher(sql.TxFromStdSQL(tx.SQL()), ...), ForwarderTopic)` and publishes the mapped message to the envelope's destination. One publisher per call, as watermill-sql requires one publisher per transaction.
 - The forwarder (`forwarder.NewForwarder` over a watermill-sql subscriber on the forwarder topic and the transport's publisher) delivers messages after commit.
 - `Outbox` implements `doger.StarterWithContextAndError` / `ShutdownerWithContextAndError`. Registered as the `NameOf[doger.EventTransport]()` service with `doger.AsStarter()`, its forwarder starts and stops with the container: core detects Starters by registered type, and the `EventTransport` interface has no `Start` method.
-- The outbox is PostgreSQL only (its publisher and forwarder subscriber use `PostgresSchema()`), as the specs cover. `OutboxConfig.Logger` defaults to `watermill.NewSlogLogger(nil)`; the transport's logger is not exposed.
+- The outbox is PostgreSQL only, as the specs cover. Its tables follow `OutboxConfig.SchemaAdapter` (default `PostgresSchema()`) and `OffsetsAdapter` (default `sql.DefaultPostgreSQLOffsetsAdapter{}`). Until `Start` or a committed `SendTx` created the outbox table, `SendTx` creates it in the caller's transaction: creating it on another connection deadlocked a pool of one connection. watermill-sql's creation queries take an advisory transaction lock, so concurrent first transactions create it in turn. `OutboxConfig.Logger` defaults to `watermill.NewSlogLogger(nil)`; the transport's logger is not exposed.
 - *Alternative:* a binder private to `dogerwmsql`. Rejected by the maintainer: two binders would let an application bind a transaction the after-commit listeners see but the outbox does not.
 - *Alternative:* leave the outbox to a documented recipe. Rejected: the outbox is the reason teams pick a SQL-backed transport, and the conformance suite can only check it if it is code.
 
@@ -110,6 +114,7 @@ stop(ctx): stop consuming ; wait loop done or ctx.Done()
 - [Attempt counts reset on restart, so a crash loop can retry forever] → documented; permanent errors and poison topics are the intended exits.
 - [Recipes for Kafka, NATS and Redis are not exercised in CI] → each recipe states the exact setting that makes new groups start at the latest event and links the backend source; typed helpers with tests are the follow-up.
 - [The SQL seed query depends on watermill-sql's table layout] → pinned to watermill-sql/v4; the integration tests fail on a layout change, and Dependabot upgrades run them.
+- [On PostgreSQL a new group can receive rows committed shortly before it, when a transaction was open on the server] → those rows are above `xmin` and have reached no group yet; delivery is at least once anyway, and skipping them would lose the open transactions' messages.
 - [CI on macOS and Windows has no database services] → database tests without their DSN fail only when `CI` is set on Linux, and skip otherwise (spec "Missing database configuration").
 
 ## Public API & Defaults
@@ -120,13 +125,13 @@ New modules; no change to doger core. **No breaking change.**
 |---|---|---|
 | `dogerwatermill.New(pub, subs, opts...) (*Transport, error)` | constructor | n/a |
 | `dogerwatermill.SubscriberFactory` | func type | consumer-provided |
-| `WithRetryDelay(d)`, `WithMaxAttempts(n)`, `WithPoisonTopic(t)`, `WithMetadataPrefix(p)`, `WithLogger(l)`, `WithClock(c)` | options | 1s, 10, none (ack and log), `doger_`, slog default, real clock |
+| `WithRetryDelay(d)`, `WithMaxAttempts(n)`, `WithMaxTrackedMessages(n)`, `WithPoisonTopic(t)`, `WithMetadataPrefix(p)`, `WithLogger(l)`, `WithClock(c)` | options | 1s, 10, 1000, none (ack and log), `doger_`, slog default, real clock |
 | `dogerwatermill.ErrInvalidConfig` | sentinel | n/a |
 | `dogerwmsql.PostgresSubscriberFactory(db, opts...)`, `MySQLSubscriberFactory(db, opts...)` | constructors | new groups at head; ephemeral cleanup on |
 | `dogerwatermill.Transport.Publisher()`, `Transport.Message(env)` | methods | n/a (for the outbox) |
-| `dogerwmsql.WithKeepEphemeralGroups()`, `WithSubscriberConfig(func(*sql.SubscriberConfig))`, `WithLogger(l)` | options | off; watermill-sql defaults with `InitializeSchema: true` and the binary schema; slog default |
+| `dogerwmsql.WithKeepEphemeralGroups()`, `WithCleanupTimeout(d)`, `WithSubscriberConfig(func(*sql.SubscriberConfig))`, `WithLogger(l)` | options | off; 30s (`DefaultCleanupTimeout`); watermill-sql defaults with `InitializeSchema: true` and the binary schema; slog default |
 | `dogerwmsql.PostgresSchema()`, `MySQLSchema()` | schema adapters | `BYTEA` / `LONGBLOB` payload column |
-| `dogerwmsql.NewOutbox(db, transport, OutboxConfig) (*Outbox, error)`, `OutboxConfig{ForwarderTopic, Logger}` | outbox (PostgreSQL) | `doger_outbox`, slog default; `TxSource()` is always `sqltx.Source()`; register with `doger.AsStarter()` |
+| `dogerwmsql.NewOutbox(db, transport, OutboxConfig) (*Outbox, error)`, `OutboxConfig{ForwarderTopic, Logger, SchemaAdapter, OffsetsAdapter}` | outbox (PostgreSQL) | `doger_outbox`, slog default, `PostgresSchema()`, watermill-sql's PostgreSQL offsets adapter; `TxSource()` is always `sqltx.Source()`; register with `doger.AsStarter()` |
 
 ## Test Strategy
 
