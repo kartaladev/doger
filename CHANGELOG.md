@@ -2,14 +2,63 @@
 
 All notable changes to the doger modules are recorded here. The root module
 (`github.com/kartaladev/doger`) and every adapter module (`http/*`,
-`scheduler/*`, `clock/*`) are released together under the same version.
-doger is pre-1.0: a minor release may break the API, and every break is
-listed under **BREAKING** with its migration.
+`scheduler/*`, `clock/*`, `events/*`) are released together under the same
+version. doger is pre-1.0: a minor release may break the API, and every
+break is listed under **BREAKING** with its migration.
 
 ## Unreleased
 
+## v0.3.0 - 2026-11-22
+
+Events: in-process publishing, transport-neutral delivery between
+processes, and SQL and watermill transports. No exported API of v0.2.0
+changed: everything below is additive.
+
 ### Added
 
+- In-process events (OpenSpec `add-eventing`): any Go value is an event.
+  `Publish` delivers it to every reachable listener whose declared type it
+  is assignable to (`PublishLocal` keeps it in the publishing scope).
+  Listeners opt in at registration with `AsListener[E]()` or `ListenMethod`,
+  or register a function with `Listen`; `ListenerOrder`, `ListenerFilter`,
+  `ListenerAsync` and `ListenerID` tune them. Errors stop dispatch as a
+  `*ListenerError` (`EventErrorMode`, `EventContinue` joins them instead),
+  panics are recovered, and errors without a caller go to
+  `InjectorOpts.HookEventError`. Async delivery runs on a bounded,
+  replaceable executor (`EventAsyncParallelism`, `EventExecutor`,
+  `NewBoundedEventExecutor`) drained at shutdown. The root publishes
+  `ContainerStarting`, `ContainerStarted`, `ContainerReady`,
+  `ContainerFailed`, `ContainerClosing` and `ContainerClosed`.
+- Delivery between processes (OpenSpec `add-event-transport`):
+  `RegisterEventType` gives an event type a wire name (`EventVersion`,
+  `EventDestination`, `EventAlias`); externalized events travel as an
+  `Envelope` through an `EventTransport`, with a replaceable codec (JSON),
+  ID generator (UUIDv7) and propagator. Externalization is opt-in per type
+  (`EventExternalized`, `EventExternalize`) with the strategies
+  `ExternalizeAuto` (default), `ExternalizeImmediate`,
+  `ExternalizeAfterCommit` and `ExternalizeOutbox`; an outbox publish
+  without a transaction fails with `ErrNoTransaction` unless
+  `EventOutboxFallback` allows it. Remote listeners use
+  `ListenerDelivery(DeliverOnce)` or `ListenerDelivery(DeliverAll)`, and
+  `PermanentError` stops redelivery. Transaction-bound listeners use
+  `Tx`, `TxSource`, `ListenerTxPhase` and `ListenerTxFallback`.
+  `NewMemoryEventTransport` is an in-memory transport, `PublisherFor` an
+  application publishing port, and package `eventtransporttest` the
+  conformance suite every transport runs.
+- New module `events/sqltx` (package `sqltx`, OpenSpec
+  `add-sql-event-transport`): binds a `database/sql` transaction to a
+  context with commit and rollback callbacks (`BeginTx`, `InTx`, `BindTx`,
+  `From`, `FromDB`, `Source`); a transaction on another `*sql.DB` fails with
+  `ErrForeignTransaction`.
+- New module `events/sql` (package `eventsql`): a `doger.EventTransport`
+  and `TxEventSender` storing events in PostgreSQL 13+ or MySQL 8.0+
+  (dialects in `events/sql/postgres` and `events/sql/mysql`, no driver
+  imported). Consumers claim rows with a lease and `FOR UPDATE SKIP
+  LOCKED`; retries back off exponentially with jitter, then dead-letter
+  (`ListDeadLetters`, `Resubmit`, `DropGroup`). Ephemeral groups are removed
+  on stop and reaped after a crash. The caller owns the schema (`DDL`,
+  optional `EnsureSchema`, `CheckSchema`). `make test-sql` runs the database
+  tests in Docker.
 - New module `events/watermill` (package `dogerwatermill`, OpenSpec
   `add-watermill-event-transport`): a `doger.EventTransport` over any
   watermill publisher and a `SubscriberFactory` building one subscriber
@@ -33,7 +82,7 @@ listed under **BREAKING** with its migration.
 
 ### Changed
 
-- `scheduler/gocron` requires `github.com/go-co-op/gocron/v2` v2.23.1
+- `scheduler/gocron` requires `github.com/go-co-op/gocron/v2` v2.23.2
   (was v2.23.0).
 
 ## v0.2.0 - 2026-11-20
