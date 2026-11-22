@@ -49,8 +49,23 @@ jobs:
         go-version-file: 'go.work'
         cache-dependency-path: '**/go.sum'
 
+    # make test-all runs the database tests of events/watermill/wmsql,
+    # which fail in CI on Linux without their DSNs: start the events/sql
+    # compose services and export the DSNs, as test.yml does
+    - name: Start the databases
+      run: |
+          make watermill-db-up
+          {
+            echo "DOGER_TEST_POSTGRES_DSN=$(make -s watermill-postgres-dsn)"
+            echo "DOGER_TEST_MYSQL_DSN=$(make -s watermill-mysql-dsn)"
+          } >> "$GITHUB_ENV"
+
     - name: Test
       run: make test-all
+
+    - name: Stop the databases
+      if: always()
+      run: make watermill-db-down
 
     - name: Install govulncheck
       run: make govulncheck-install
