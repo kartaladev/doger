@@ -55,6 +55,10 @@ The `events/sql` module (package `eventsql`) is the supported transport for prod
 
 Each send stores the event once and a delivery row per group registered for its destination, so a new group starts at the latest event and a durable group keeps the events sent while no member runs. Members claim deliveries with a lease and `FOR UPDATE SKIP LOCKED`: one member of a `DeliverOnce` group handles each event, every `DeliverAll` group gets a copy, and a crashed member's claims return when the lease expires (`Lease`, 30s). A failing handler is retried with exponential backoff (1s to 5m) up to `MaxAttempts` (10), then dead-lettered, at once for a `PermanentError`; `ListDeadLetters`, `Resubmit` and `DropGroup` are the operator's tools. Ephemeral groups are removed when their subscription stops, or `EphemeralTTL` (5m) after a crash. A group registered after an outbox transaction wrote its event does not receive that event; this holds under READ COMMITTED, while a PostgreSQL outbox transaction at REPEATABLE READ or SERIALIZABLE can also miss a group registered after its snapshot. Every default (`PollInterval`, `BatchSize`, `Workers`, `TablePrefix`, `KeepDelivered`, `MaxPayloadBytes`, `Backoff`, `Logger`) is an option of `New`; see the module README for the full table and the operations runbook.
 
+## Watermill transport {#watermill-transport}
+
+The `events/watermill` module (package `dogerwatermill`) carries events over any [watermill](https://watermill.io) backend: watermill-sql, Kafka, NATS JetStream or Redis Streams. Its `wmsql` helpers add PostgreSQL and MySQL subscriber factories and a PostgreSQL outbox on `sqltx`. See [Watermill transport](./watermill-transport.md) for setup, backend recipes and the delivery rules.
+
 ## Externalization strategies {#strategies}
 
 `Publish` first runs the in-process listeners, then hands the event to the transport. When is decided per publish by the first of `PublishExternalize(s)`, the type's `EventExternalize(s)` and `InjectorOpts.EventExternalize`:

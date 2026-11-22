@@ -135,12 +135,17 @@ fi
 # test-only requirements: testify, goleak and the SQL drivers in no
 # released module;
 # clockwork only where non-test code uses it (clock/clockwork and
-# scheduler/gocron), which "runtime dependency that must stay" checks
+# scheduler/gocron), and pgx in events/watermill/wmsql, whose
+# watermill-sql dependency imports it at run time; "runtime dependency
+# that must stay" checks those
 for dir in $released; do
 	for dep in github.com/stretchr/testify go.uber.org/goleak github.com/jonboulle/clockwork \
 		github.com/jackc/pgx/v5 github.com/go-sql-driver/mysql; do
 		if [ "$dep" = github.com/jonboulle/clockwork ] &&
 			{ [ "$dir" = clock/clockwork ] || [ "$dir" = scheduler/gocron ]; }; then
+			continue
+		fi
+		if [ "$dep" = github.com/jackc/pgx/v5 ] && [ "$dir" = events/watermill/wmsql ]; then
 			continue
 		fi
 		if have="$(requires "$dir" "$dep")"; then
@@ -156,7 +161,8 @@ for row in \
 	". github.com/samber/go-type-to-string" \
 	"scheduler/gocron github.com/go-co-op/gocron/v2" \
 	"clock/clockwork github.com/jonboulle/clockwork" \
-	"scheduler/gocron github.com/jonboulle/clockwork"; do
+	"scheduler/gocron github.com/jonboulle/clockwork" \
+	"events/watermill/wmsql github.com/jackc/pgx/v5"; do
 	read -r dir dep <<<"$row"
 	if [ ! -f "$src/$dir/go.mod" ] || ! grep -qw "$dir" <<<"$released"; then
 		fail "$dir is not released"

@@ -51,6 +51,8 @@ func TestToolchain_GoDirective(t *testing.T) {
 		"clock/clockwork/go.mod",
 		"events/sql/go.mod",
 		"events/sqltx/go.mod",
+		"events/watermill/go.mod",
+		"events/watermill/wmsql/go.mod",
 		"examples/dag/go.mod",
 		"examples/eager-loading/go.mod",
 		"examples/event-driven/go.mod",

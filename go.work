@@ -7,6 +7,8 @@ use (
 
 	./events/sql
 	./events/sqltx
+	./events/watermill
+	./events/watermill/wmsql
 
 	./examples/dag
 	./examples/eager-loading
