@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -62,31 +63,37 @@ func TestScope_Shutdown_ReportFields(t *testing.T) {
 	is.True(ok)
 }
 
+// TestScope_ShutdownWithContext_ReportTimings runs in a synctest bubble: the
+// shutdowner's delay and the deadline are fake time, so a loaded machine that
+// starves the shutdown goroutine cannot push it past the deadline, and the
+// recorded timing is exactly the shutdowner's delay.
 func TestScope_ShutdownWithContext_ReportTimings(t *testing.T) {
 	t.Parallel()
-	is := assert.New(t)
 
-	i := New()
-	// Create a slow shutdowner (100ms)
-	slow := newScopeTestSlowShutdowner(50 * time.Millisecond)
-	ProvideNamedValue(i, "slow", slow)
-	_, _ = InvokeNamed[*scopeTestSlowShutdowner](i, "slow")
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+		const delay = 50 * time.Millisecond
 
-	// Use a generous timeout to allow shutdown to complete
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
+		i := New()
+		slow := newScopeTestSlowShutdowner(delay)
+		ProvideNamedValue(i, "slow", slow)
+		_, err := InvokeNamed[*scopeTestSlowShutdowner](i, "slow")
+		require.NoError(t, err)
 
-	rep := i.ShutdownWithContext(ctx)
+		// the deadline is well past the shutdowner's delay
+		ctx, cancel := context.WithTimeout(t.Context(), 4*delay)
+		defer cancel()
 
-	is.NotNil(rep)
-	is.True(rep.Succeed)
-	// One service
-	is.Len(rep.Services, 1)
-	// Per-service timing should be recorded and > 0
-	desc := ServiceDescription{ScopeID: i.self.id, ScopeName: i.self.name, Service: "slow"}
-	dt, ok := rep.ServiceShutdownTime[desc]
-	is.True(ok)
-	is.Greater(dt, time.Duration(0))
+		rep := i.ShutdownWithContext(ctx)
+
+		require.NotNil(t, rep)
+		is.True(rep.Succeed)
+		is.Len(rep.Services, 1)
+		desc := ServiceDescription{ScopeID: i.self.id, ScopeName: i.self.name, Service: "slow"}
+		dt, ok := rep.ServiceShutdownTime[desc]
+		is.True(ok, "per-service timing recorded")
+		is.Equal(delay, dt, "per-service timing is the shutdowner's delay")
+	})
 }
 
 func TestMergeShutdownReports_Succeed(t *testing.T) {

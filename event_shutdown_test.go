@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -394,30 +395,36 @@ func TestScopeShutdown_RefusesDeliveryAdmittedAfter(t *testing.T) {
 	}
 }
 
+// TestShutdown_DrainHonoursDeadline runs in a synctest bubble: the 20ms
+// context and the measured elapsed time are fake time, which passes only while
+// every goroutine is blocked, so a loaded machine cannot stretch the elapsed
+// time past the bound.
 func TestShutdown_DrainHonoursDeadline(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, 3*time.Second)
 
-	root := New()
-	release := make(chan struct{})
-	defer close(release)
-	started := make(chan struct{}, 1)
-	Listen(root, func(context.Context, OrderPlaced) error { // ignores its context's cancellation
-		started <- struct{}{}
-		<-release
-		return nil
-	}, ListenerAsync())
-	require.NoError(t, Publish(context.Background(), root, OrderPlaced{ID: "1"}))
-	<-started
+	synctest.Test(t, func(t *testing.T) {
+		root := New()
+		release := make(chan struct{})
+		defer close(release)
+		started := make(chan struct{}, 1)
+		Listen(root, func(context.Context, OrderPlaced) error { // ignores its context's cancellation
+			started <- struct{}{}
+			<-release
+			return nil
+		}, ListenerAsync())
+		require.NoError(t, Publish(context.Background(), root, OrderPlaced{ID: "1"}))
+		<-started
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	begin := time.Now()
-	report := root.ShutdownWithContext(ctx)
-	elapsed := time.Since(begin)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		begin := time.Now()
+		report := root.ShutdownWithContext(ctx)
+		elapsed := time.Since(begin)
 
-	require.ErrorIs(t, report, context.DeadlineExceeded)
-	assert.Less(t, elapsed, 500*time.Millisecond, "ShutdownWithContext overran its 20ms context")
+		require.ErrorIs(t, report, context.DeadlineExceeded)
+		assert.Less(t, elapsed, 500*time.Millisecond, "ShutdownWithContext overran its 20ms context")
+	})
 }
 
 func TestScopeShutdown_PublishingDelivery(t *testing.T) {

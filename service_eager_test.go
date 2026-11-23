@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/kartaladev/doger/stacktrace"
@@ -348,62 +349,74 @@ func TestServiceEager_isHealthchecker(t *testing.T) {
 	}
 }
 
+// TestServiceEager_healthcheck builds each case's context inside the case's
+// synctest bubble, where time stands still while the case runs: the
+// "unexpired_deadline" context cannot expire before the health check reads
+// it, however loaded the machine is.
 func TestServiceEager_healthcheck(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
-	ctx := context.Background()
-
 	// healthcheck ko
 	service3 := newServiceEager("foobar", &eagerTestHeathcheckerKO{foobar: "foobar"})
-	err3 := service3.healthcheck(ctx)
+	err3 := service3.healthcheck(context.Background())
 	is.ErrorIs(err3, assert.AnError)
 	is.ErrorIs(err3, assert.AnError)
 	is.Equal(err3, assert.AnError)
 
+	background := func(*testing.T) context.Context { return context.Background() }
 	// Test with canceled context
-	canceledCtx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
+	canceled := func(*testing.T) context.Context {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+		return ctx
+	}
 	// Test with timeout context that expires
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-	defer cancel()
-	<-timeoutCtx.Done()
-
+	expired := func(t *testing.T) context.Context {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		t.Cleanup(cancel)
+		<-ctx.Done()
+		return ctx
+	}
 	// Test with context that has deadline but hasn't expired
-	futureCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	unexpired := func(t *testing.T) context.Context {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		t.Cleanup(cancel)
+		return ctx
+	}
 
 	tests := []struct {
 		name    string
 		service serviceWrapperAny
-		ctx     context.Context
+		ctx     func(t *testing.T) context.Context
 		wantErr error
 	}{
-		{name: "no_healthcheck", service: newServiceEager("foobar", &eagerTest{foobar: "foobar"}), ctx: ctx},
-		{name: "healthcheck_ok", service: newServiceEager("foobar", &eagerTestHeathcheckerOK{foobar: "foobar"}), ctx: ctx},
-		{name: "canceled_context", service: newServiceEager("foobar", &eagerTestHeathcheckerOK{foobar: "foobar"}), ctx: canceledCtx, wantErr: context.Canceled},
-		{name: "expired_timeout", service: newServiceEager("foobar", &eagerTestHeathcheckerOK{foobar: "foobar"}), ctx: timeoutCtx, wantErr: context.DeadlineExceeded},
+		{name: "no_healthcheck", service: newServiceEager("foobar", &eagerTest{foobar: "foobar"}), ctx: background},
+		{name: "healthcheck_ok", service: newServiceEager("foobar", &eagerTestHeathcheckerOK{foobar: "foobar"}), ctx: background},
+		{name: "canceled_context", service: newServiceEager("foobar", &eagerTestHeathcheckerOK{foobar: "foobar"}), ctx: canceled, wantErr: context.Canceled},
+		{name: "expired_timeout", service: newServiceEager("foobar", &eagerTestHeathcheckerOK{foobar: "foobar"}), ctx: expired, wantErr: context.DeadlineExceeded},
 		// Should succeed since context hasn't expired
-		{name: "unexpired_deadline", service: newServiceEager("foobar", &eagerTestHeathcheckerOK{foobar: "foobar"}), ctx: futureCtx},
+		{name: "unexpired_deadline", service: newServiceEager("foobar", &eagerTestHeathcheckerOK{foobar: "foobar"}), ctx: unexpired},
 		// Test HealthcheckerWithContext interface: should work with normal context
-		{name: "healthchecker_with_context", service: newServiceEager("foobar", &eagerTestHeathcheckerWithContext{foobar: "test", shouldFail: false}), ctx: ctx},
+		{name: "healthchecker_with_context", service: newServiceEager("foobar", &eagerTestHeathcheckerWithContext{foobar: "test", shouldFail: false}), ctx: background},
 		// Test context error handling with canceled context and error healthchecker: context error takes precedence
-		{name: "healthcheck_ko_canceled_context", service: newServiceEager("foobar", &eagerTestHeathcheckerKO{foobar: "foobar"}), ctx: canceledCtx, wantErr: context.Canceled},
+		{name: "healthcheck_ko_canceled_context", service: newServiceEager("foobar", &eagerTestHeathcheckerKO{foobar: "foobar"}), ctx: canceled, wantErr: context.Canceled},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			is := assert.New(t)
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
 
-			err := tt.service.healthcheck(tt.ctx)
-			if tt.wantErr == nil {
-				is.NoError(err)
-				return
-			}
-			is.ErrorIs(err, tt.wantErr)
-			is.Equal(tt.wantErr, err)
+				err := tt.service.healthcheck(tt.ctx(t))
+				if tt.wantErr == nil {
+					is.NoError(err)
+					return
+				}
+				is.ErrorIs(err, tt.wantErr)
+				is.Equal(tt.wantErr, err)
+			})
 		})
 	}
 }
@@ -429,32 +442,42 @@ func TestServiceEager_isShutdowner(t *testing.T) {
 	}
 }
 
+// TestServiceEager_shutdown builds each case's context inside the case's
+// synctest bubble, where time stands still while the case runs: the
+// "unexpired_deadline" context cannot expire before shutdown checks it,
+// however loaded the machine is.
 func TestServiceEager_shutdown(t *testing.T) {
 	t.Parallel()
 	testWithTimeout(t, 100*time.Millisecond)
 	is := assert.New(t)
 
-	ctx := context.Background()
-
 	// shutdown ko
 	service3 := newServiceEager("foobar", &eagerTestShutdownerKO{foobar: "foobar"})
-	err3 := service3.shutdown(ctx)
+	err3 := service3.shutdown(context.Background())
 	is.ErrorIs(err3, assert.AnError)
 	is.ErrorIs(err3, assert.AnError)
 	is.Equal(err3, assert.AnError)
 
+	background := func(*testing.T) context.Context { return context.Background() }
 	// Test with canceled context
-	canceledCtx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
+	canceled := func(*testing.T) context.Context {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+		return ctx
+	}
 	// Test with timeout context that expires
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-	defer cancel()
-	<-timeoutCtx.Done()
-
+	expired := func(t *testing.T) context.Context {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		t.Cleanup(cancel)
+		<-ctx.Done()
+		return ctx
+	}
 	// Test with context that has deadline but hasn't expired
-	futureCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
+	unexpired := func(t *testing.T) context.Context {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		t.Cleanup(cancel)
+		return ctx
+	}
 
 	shutdownerWithCtx := &eagerTestShutdownerWithContext{foobar: "test"}
 	shutdownerVoid := &eagerTestShutdownerVoid{foobar: "test"}
@@ -462,38 +485,40 @@ func TestServiceEager_shutdown(t *testing.T) {
 	tests := []struct {
 		name    string
 		service serviceWrapperAny
-		ctx     context.Context
+		ctx     func(t *testing.T) context.Context
 		wantErr error
 	}{
-		{name: "no_shutdown", service: newServiceEager("foobar", &eagerTest{foobar: "foobar"}), ctx: ctx},
-		{name: "shutdown_ok", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: ctx},
-		{name: "canceled_context", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: canceledCtx, wantErr: context.Canceled},
-		{name: "expired_timeout", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: timeoutCtx, wantErr: context.DeadlineExceeded},
+		{name: "no_shutdown", service: newServiceEager("foobar", &eagerTest{foobar: "foobar"}), ctx: background},
+		{name: "shutdown_ok", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: background},
+		{name: "canceled_context", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: canceled, wantErr: context.Canceled},
+		{name: "expired_timeout", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: expired, wantErr: context.DeadlineExceeded},
 		// Should succeed since context hasn't expired
-		{name: "unexpired_deadline", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: futureCtx},
+		{name: "unexpired_deadline", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: unexpired},
 		// Test ShutdownerWithContextAndError (already tested above)
-		{name: "shutdowner_with_context_and_error", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: ctx},
+		{name: "shutdowner_with_context_and_error", service: newServiceEager("foobar", &eagerTestShutdownerOK{foobar: "foobar"}), ctx: background},
 		// Test ShutdownerWithError with canceled context: context error takes precedence
-		{name: "shutdowner_with_error_canceled_context", service: newServiceEager("foobar", &eagerTestShutdownerKO{foobar: "foobar"}), ctx: canceledCtx, wantErr: context.Canceled},
+		{name: "shutdowner_with_error_canceled_context", service: newServiceEager("foobar", &eagerTestShutdownerKO{foobar: "foobar"}), ctx: canceled, wantErr: context.Canceled},
 		// Test ShutdownerWithContext type (void return): should work with normal context
-		{name: "shutdowner_with_context", service: newServiceEager("foobar", shutdownerWithCtx), ctx: ctx},
+		{name: "shutdowner_with_context", service: newServiceEager("foobar", shutdownerWithCtx), ctx: background},
 		// Test Shutdowner type (void return, no context)
-		{name: "shutdowner", service: newServiceEager("foobar", shutdownerVoid), ctx: ctx},
+		{name: "shutdowner", service: newServiceEager("foobar", shutdownerVoid), ctx: background},
 		// Test context error handling with canceled context and different shutdowner types: context error takes precedence
-		{name: "shutdowner_with_context_canceled_context", service: newServiceEager("foobar", shutdownerWithCtx), ctx: canceledCtx, wantErr: context.Canceled},
+		{name: "shutdowner_with_context_canceled_context", service: newServiceEager("foobar", shutdownerWithCtx), ctx: canceled, wantErr: context.Canceled},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			is := assert.New(t)
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
 
-			err := tt.service.shutdown(tt.ctx)
-			if tt.wantErr == nil {
-				is.NoError(err)
-				return
-			}
-			is.ErrorIs(err, tt.wantErr)
-			is.Equal(tt.wantErr, err)
+				err := tt.service.shutdown(tt.ctx(t))
+				if tt.wantErr == nil {
+					is.NoError(err)
+					return
+				}
+				is.ErrorIs(err, tt.wantErr)
+				is.Equal(tt.wantErr, err)
+			})
 		})
 	}
 }
