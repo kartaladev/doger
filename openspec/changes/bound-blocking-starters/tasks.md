@@ -144,10 +144,10 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 25. A still-running step is skipped with its dependents; the rest starts (code review F2)
 
-- [ ] 25.1 RED: add `TestStartTimeout_RefreshSkipsStillRunning` with the seven rows of scenario "Refresh starts what does not depend on a still-running step" (root and tenant, sequential and parallel, `root.Refresh()` over the tenant, and two AsRunnable rows); verify `go test -race -run TestStartTimeout_RefreshSkipsStillRunning .` fails on the sequential rows ("worker" is not started; the parallel rows may pass on arrival, as triage B observed, which is the inconsistency this group removes)
-- [ ] 25.2 GREEN: the claim skips a still-running step and keeps its error as pending, the run skips candidates that depend on a skipped service (sequential and parallel scheduler, Starters and kind handlers), and returns its first failure or else the first pending error (design D5, D6); verify the test passes, `TestStartTimeout_AbandonedNotRestarted` and `TestStartTimeout_Parallel` stay green, and `make test` is green
-- [ ] 25.3 REFACTOR: Extract Function for the dependents check shared by the sequential loop, the parallel scheduler and `runStage`; verify `make test` and `make lint` pass
-- [ ] 25.4 Docs: `StartTimeout` godoc and `options.md`: a covering Refresh or Scope.Start skips a still-running step and its dependents and reports it; verify `make lint` passes
+- [x] 25.1 RED: add `TestStartTimeout_RefreshSkipsStillRunning` with the seven rows of scenario "Refresh starts what does not depend on a still-running step" (root and tenant, sequential and parallel, `root.Refresh()` over the tenant, and two AsRunnable rows); verify `go test -race -run TestStartTimeout_RefreshSkipsStillRunning .` fails on the sequential rows ("worker" is not started; the parallel rows may pass on arrival, as triage B observed, which is the inconsistency this group removes)
+- [x] 25.2 GREEN: the claim skips a still-running step and keeps its error as pending, the run skips candidates that depend on a skipped service (sequential and parallel scheduler, Starters and kind handlers), and returns its first failure or else the first pending error (design D5, D6); verify the test passes, `TestStartTimeout_AbandonedNotRestarted` and `TestStartTimeout_Parallel` stay green, and `make test` is green
+- [x] 25.3 REFACTOR: Extract Function for the dependents check shared by the sequential loop, the parallel scheduler and `runStage`; verify `make test` and `make lint` pass
+- [x] 25.4 Docs: `StartTimeout` godoc and `options.md`: a covering Refresh or Scope.Start skips a still-running step and its dependents and reports it; verify `make lint` passes
 
 ## 26. After root Start abandons a step, only Shutdown follows (code review F3)
 
@@ -181,7 +181,7 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 32. Dependents of a still-running step are skipped in any scope (triage B, I3)
 
-- [ ] 32.1 RED: add `TestStartTimeout_AncestorStillRunningSkipsDependent/{depends_on,invoke,refresh}` (scenario "A dependent of a still-running step in an ancestor scope is skipped"); verify `go test -race -run TestStartTimeout_AncestorStillRunningSkipsDependent .` fails on the `tenant.Start()` rows ("dep" is started)
+- [ ] 32.1 RED: add `TestStartTimeout_AncestorStillRunningSkipsDependent/{depends_on,invoke,refresh}` (scenario "A dependent of a still-running step in an ancestor scope is skipped") plus two same-scope rows from the group 25 verification (requirement "An abandoned step is not started again while it runs": "every candidate that depends on its service, directly or through others"): `earlier_stage_starter` (StartTimeout 5s, "stuck" AsRunnable abandoned by a first `root.Refresh()`, Starter "dep" with `DependsOnNamed("stuck")` registered after it; the second Refresh does not call "dep"'s Start) and `earlier_stage_component` ("stuck" a Starter abandoned by a first Refresh, "dep" a component of a custom `StageBeforeStart` kind depending on "stuck"; the second Refresh does not call its handler); verify `go test -race -run TestStartTimeout_AncestorStillRunningSkipsDependent .` fails on the `tenant.Start()` rows and on both new rows ("dep" is started or handled)
 - [ ] 32.2 GREEN: the dependents check consults the abandoned state of every dependency in the graph, in the candidate's own or an ancestor scope, not only the run's skipped set (design D5); verify the test passes, the group 25 tests stay green, and `make test` is green
 - [ ] 32.3 REFACTOR: none expected beyond reusing group 25's dependents check; verify `make test` and `make lint` pass
 

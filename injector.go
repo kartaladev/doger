@@ -583,8 +583,11 @@ type InjectorOpts struct {
 	// lifetime it has without this option: it ends when the run ends, and
 	// also when the step is abandoned. It reports no deadline, since a step
 	// that returns in time keeps it past the timeout. While it runs, the container never
-	// calls it again (a covering Refresh or Scope.Start fails fast with
-	// ErrStartTimeout); once it returns nil it is recorded as started (or
+	// calls it again: a covering Refresh or Scope.Start skips it, with no
+	// hooks, and skips every candidate of the run that depends on its service,
+	// directly or through others; it starts everything else, then returns its
+	// first failure, or else a [*StartError] naming the still-running step
+	// that matches ErrStartTimeout. Once it returns nil it is recorded as started (or
 	// handled) unless its scope is shutting down or no longer holds it, and
 	// once it fails the next run tries it again. Shutdown still calls the
 	// service's Shutdowner, its stop path. The guarantee is per container: a

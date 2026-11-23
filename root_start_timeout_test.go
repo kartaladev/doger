@@ -770,6 +770,166 @@ type startOnly struct{ p *stepProbe }
 func (s startOnly) Start(ctx context.Context) error { return s.p.call(ctx) }
 func (s startOnly) Run(ctx context.Context) error   { return s.p.call(ctx) }
 
+// TestStartTimeout_RefreshSkipsStillRunning pins container-start "Refresh
+// starts what does not depend on a still-running step": a covering run
+// skips the still-running step and its dependents, starts the rest and
+// reports the still-running step.
+func TestStartTimeout_RefreshSkipsStillRunning(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		parallelism uint
+		runnable    bool // the services are opted in with AsRunnable, not AsStarter
+		child       bool // the services live in child scope "tenant"
+		viaRoot     bool // with child: the operation is root.Refresh(), not tenant.Start()
+	}{
+		{name: "sequential/root/refresh"},
+		{name: "parallel/root/refresh", parallelism: 4},
+		{name: "sequential/tenant/scope_start", child: true},
+		{name: "parallel/tenant/scope_start", parallelism: 4, child: true},
+		{name: "sequential/tenant/refresh", child: true, viaRoot: true},
+		{name: "runnable/root/refresh", runnable: true},
+		{name: "runnable/tenant/scope_start", runnable: true, child: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				var depBefores, depAfters atomic.Int32
+				root := NewWithOpts(&InjectorOpts{
+					StartTimeout:     5 * time.Second,
+					StartParallelism: tt.parallelism,
+					HookBeforeStart: []func(context.Context, *Scope, string){func(_ context.Context, _ *Scope, name string) {
+						if name == "dep" {
+							depBefores.Add(1)
+						}
+					}},
+					HookAfterStart: []func(context.Context, *Scope, string, time.Duration, error){func(_ context.Context, _ *Scope, name string, _ time.Duration, _ error) {
+						if name == "dep" {
+							depAfters.Add(1)
+						}
+					}},
+				})
+				require.NoError(t, root.Start())
+
+				scope := root.self
+				operation := root.Refresh
+				if tt.child {
+					scope = root.Scope("tenant")
+					if !tt.viaRoot {
+						operation = scope.Start
+					}
+				}
+				opt := AsStarter
+				if tt.runnable {
+					opt = AsRunnable
+				}
+				provide := func(name string, probe *stepProbe, opts ...ProvideOption) {
+					ProvideNamed(scope, name, func(Injector) (startOnly, error) { return startOnly{probe}, nil }, append(opts, opt())...)
+				}
+				recorded := func(name string) bool {
+					wrapper, ok := scope.serviceGet(name)
+					require.True(t, ok, "service %q is not registered", name)
+					if tt.runnable {
+						return root.isHandled(wrapper, runnableKind.id)
+					}
+					return root.isStarted(wrapper)
+				}
+
+				stuck := newStepProbe(0)
+				provide("stuck", stuck)
+				defer func() {
+					stuck.unblock()
+					<-stuck.ended
+					root.Shutdown()
+				}()
+				require.ErrorIs(t, operation(), ErrStartTimeout)
+
+				// worker and dep return at once
+				worker, dep := newStepProbe(0), newStepProbe(0)
+				worker.unblock()
+				dep.unblock()
+				provide("worker", worker)
+				provide("dep", dep, DependsOnNamed("stuck"))
+
+				err := operation()
+
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.Equal(t, "stuck", startErr.Service)
+				require.ErrorIs(t, err, ErrStartTimeout)
+				assert.Equal(t, int32(1), worker.calls.Load(), "calls of worker")
+				assert.True(t, recorded("worker"), "worker is recorded as started")
+				assert.Zero(t, dep.calls.Load(), "calls of dep, which depends on stuck")
+				assert.False(t, recorded("dep"), "dep is not recorded as started")
+				assert.Zero(t, depBefores.Load(), "HookBeforeStart calls for dep, a skipped dependent")
+				assert.Zero(t, depAfters.Load(), "HookAfterStart calls for dep, a skipped dependent")
+				assert.Equal(t, int32(1), stuck.calls.Load(), "calls of stuck")
+			})
+		})
+	}
+}
+
+// TestStartTimeout_FailureWinsOverStillRunning pins container-start "An
+// abandoned step is not started again while it runs": when a covering run
+// skips a still-running step and another step of the run fails, that
+// failure is the run's error.
+func TestStartTimeout_FailureWinsOverStillRunning(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		parallelism uint
+	}{
+		{name: "sequential"},
+		{name: "parallel", parallelism: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second, StartParallelism: tt.parallelism})
+				require.NoError(t, root.Start())
+				provide := func(name string, probe *stepProbe) {
+					ProvideNamed(root, name, func(Injector) (startOnly, error) { return startOnly{probe}, nil }, AsStarter())
+				}
+
+				stuck := newStepProbe(0)
+				provide("stuck", stuck)
+				defer func() {
+					stuck.unblock()
+					<-stuck.ended
+					root.Shutdown()
+				}()
+				require.ErrorIs(t, root.Refresh(), ErrStartTimeout)
+
+				// failing returns errBoom at once; it is registered after
+				// stuck, so the run skips stuck first
+				errBoom := errors.New("boom")
+				failing := newStepProbe(0)
+				failing.outcome = func(int32) error { return errBoom }
+				failing.unblock()
+				provide("failing", failing)
+
+				err := root.Refresh()
+
+				require.ErrorIs(t, err, errBoom)
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.Equal(t, "failing", startErr.Service)
+				assert.NotErrorIs(t, err, ErrStartTimeout, "the failure, not the still-running step, is the run's error")
+				assert.Equal(t, int32(1), failing.calls.Load(), "calls of failing")
+				assert.Equal(t, int32(1), stuck.calls.Load(), "calls of stuck")
+			})
+		})
+	}
+}
+
 // TestStartTimeout_LateReturnRacesRun pins container-start "A late return
 // races a covering run": the abandoned call returns nil while a second
 // Refresh is between discovering "late" and starting it.
