@@ -127,58 +127,59 @@ func (s *RootScope) armSlowStartWarning(step startStep) (stop func()) {
 	return func() { timer.Stop() }
 }
 
-// awaitStep runs call in its own goroutine with a context bounded by
-// StartTimeout on the container clock, and waits for it until that context
-// is done. A call still running then is abandoned: it keeps running, its
-// step is recorded as abandoned until it ends, and the timeout error is
-// returned. A call that ended meanwhile is never abandoned. stopWarning,
-// the step's slow warning disarm, is called as soon as the wait ends, so no
+// awaitStep runs call in its own goroutine with a child of the run's
+// context ctx, and waits until the call returns or a StartTimeout timer on
+// the container clock times it out (see timeOut). An ended ctx cancels the
+// call's context but does not end the wait. A timed-out call is abandoned:
+// it keeps running, its step stays registered as abandoned until it ends,
+// and the timeout error is returned. A call that returned in time keeps its
+// context until the run ends, which reports no deadline. stopWarning, the
+// step's slow warning disarm, is called as soon as the wait ends, so no
 // warning is logged once the step is abandoned.
 func (s *RootScope) awaitStep(ctx context.Context, step startStep, call func(context.Context) error, stopWarning func()) error {
 	clock := step.candidate.scope.clock()
-	stepCtx, timedOut, stopTimer, abandon := newStepContext(ctx, clock, s.opts.StartTimeout)
-	defer stopTimer()
+	stepCtx, cancel := context.WithCancelCause(ctx)
+	c := &stepCall{returned: make(chan struct{}), timedOut: make(chan struct{}), clock: clock, begin: clock.Now()}
+	timer := clock.AfterFunc(s.opts.StartTimeout, func() { s.timeOut(step, c, cancel) })
+	defer timer.Stop()
 
-	c := &stepCall{returned: make(chan struct{}), clock: clock, begin: clock.Now()}
 	go s.runStepCall(stepCtx, step, c, call)
 
 	// only the timer abandons: an ended run context has cancelled stepCtx,
 	// its child, and the run keeps waiting for a step that honours it
 	select {
 	case <-c.returned:
-	case <-timedOut:
+	case <-c.timedOut:
 	}
 	stopWarning()
 	s.seamAfterStepDone(step)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.done {
+	if !c.abandoned {
 		return c.outcome.err
 	}
-	c.abandoned = true
-	abandon()
-	s.markAbandoned(step)
 
 	return libErrorf("%w after %s: %w", ErrStartTimeout, s.opts.StartTimeout, context.DeadlineExceeded)
 }
 
-// newStepContext returns the context of a step run under StartTimeout,
-// derived from the run's context runCtx: a timer on clock cancels it with
-// errStepTimedOut once timeout elapsed, and then closes timedOut. A step
-// that returns in time keeps it as long as it would without a timeout:
-// stopTimer only stops the timer, and the run's context releases it when
-// the run ends. abandon cancels it. It reports no deadline, since a step
-// that returns in time outlives one.
-func newStepContext(runCtx context.Context, clock Clock, timeout time.Duration) (ctx context.Context, timedOut <-chan struct{}, stopTimer, abandon func()) {
-	ctx, cancel := context.WithCancelCause(runCtx)
-	fired := make(chan struct{})
-	timer := clock.AfterFunc(timeout, func() {
-		cancel(errStepTimedOut)
-		close(fired)
-	})
+// timeOut is the StartTimeout timer callback of call c of step. It and the
+// end of the call are ordered by c's mutex, so the timeout is decided once:
+// a call that ended first is not timed out and keeps its context; otherwise
+// the step is registered as abandoned before its context is cancelled with
+// cancel, and the call's end, even one that comes before the run notices,
+// is its late outcome.
+func (s *RootScope) timeOut(step startStep, c *stepCall, cancel context.CancelCauseFunc) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	return ctx, fired, func() { timer.Stop() }, func() { cancel(errStepTimedOut) }
+	if c.done {
+		return
+	}
+	c.abandoned = true
+	s.markAbandoned(step)
+	cancel(errStepTimedOut)
+	close(c.timedOut)
 }
 
 // errStepTimedOut is the cancellation cause of the context of a step that
@@ -189,13 +190,14 @@ var errStepTimedOut = errors.New("doger: start step timed out")
 // stepCall is one call of user start code run on its own goroutine.
 type stepCall struct {
 	returned chan struct{} // closed once the call ended
+	timedOut chan struct{} // closed once the timer abandoned the call
 	clock    Clock
 	begin    time.Time // when the call began, on clock
 
 	mu        sync.Mutex
 	done      bool        // the call ended
 	outcome   stepOutcome // its outcome, once done
-	abandoned bool        // the run stopped waiting before it ended
+	abandoned bool        // the timer fired before it ended: the run stops waiting
 }
 
 // runStepCall makes the call of c with ctx and records its outcome. When

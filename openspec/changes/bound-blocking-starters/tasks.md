@@ -138,9 +138,9 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 24. A step returning at the timeout is either started with a live context or abandoned (code review F4)
 
-- [ ] 24.1 RED: add `TestStartTimeout_ReturnAtTimeout/{root_start,root_refresh,tenant_start}` (scenario "A step that returns exactly at the timeout"; triage B reproduced it in all three); verify `go test -race -count=200 -run TestStartTimeout_ReturnAtTimeout .` fails at least once (Start returns nil while "b" saw "a"'s context cancelled)
-- [ ] 24.2 GREEN: order the timer callback and the call's end under the call's mutex: the callback does nothing once the call ended; otherwise it marks the call timed out, registers the step as abandoned, cancels the context and closes `timedOut`, and the call's end becomes its late outcome (design D4, D5); verify `-count=200` passes, every `TestStartTimeout_*` and `TestStart_RemovalBeforeRecord` stays green, and `make test` is green
-- [ ] 24.3 REFACTOR: Move Function for the abandoned mark into the timer callback's helper if it is still split across `awaitStep`; verify `make test` and `make lint` pass
+- [x] 24.1 RED: add `TestStartTimeout_ReturnAtTimeout/{root_start,root_refresh,tenant_start}` (scenario "A step that returns exactly at the timeout"; triage B reproduced it in all three); verify `go test -race -count=200 -run TestStartTimeout_ReturnAtTimeout .` fails at least once (Start returns nil while "b" saw "a"'s context cancelled)
+- [x] 24.2 GREEN: order the timer callback and the call's end under the call's mutex: the callback does nothing once the call ended; otherwise it marks the call timed out, registers the step as abandoned, cancels the context and closes `timedOut`, and the call's end becomes its late outcome (design D4, D5); verify `-count=200` passes, every `TestStartTimeout_*` and `TestStart_RemovalBeforeRecord` stays green, and `make test` is green
+- [x] 24.3 REFACTOR: Move Function for the abandoned mark into the timer callback's helper if it is still split across `awaitStep`; verify `make test` and `make lint` pass
 
 ## 25. A still-running step is skipped with its dependents; the rest starts (code review F2)
 

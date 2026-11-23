@@ -1002,3 +1002,58 @@ func TestStartTimeout_TimeoutWinsOverLateCancel(t *testing.T) {
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
+
+// exactKeeper is a Starter whose Start keeps its context, sleeps d and
+// returns nil.
+type exactKeeper struct {
+	ctxKeeper
+	d time.Duration
+}
+
+func (k *exactKeeper) Start(ctx context.Context) error {
+	k.ctx.Store(&ctx)
+	time.Sleep(k.d)
+	return nil
+}
+
+// TestStartTimeout_ReturnAtTimeout pins container-start "A step that
+// returns exactly at the timeout": "a" returns at the very instant its 5s
+// timer fires. Run it with -count=200: each run either starts "a" with a
+// live context or abandons it, never returns nil with "a"'s context
+// cancelled by the timeout.
+func TestStartTimeout_ReturnAtTimeout(t *testing.T) {
+	t.Parallel()
+
+	for _, where := range []string{"root_start", "root_refresh", "tenant_start"} {
+		t.Run(where, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				scope, op := root.self, root.Start
+				switch where {
+				case "root_refresh":
+					require.NoError(t, root.Start())
+					op = root.Refresh
+				case "tenant_start":
+					require.NoError(t, root.Start())
+					scope = root.Scope("tenant")
+					op = scope.Start
+				}
+				a := provideCounted(scope, "a", &exactKeeper{d: 5 * time.Second}, AsStarter())
+				b := provideCounted(scope, "b", &ctxObserver{keeper: &a.ctxKeeper}, AsStarter())
+
+				err := op()
+				synctest.Wait() // a late return is handled
+
+				if err == nil {
+					assert.NoError(t, b.err, "a step that returned in time keeps a live context")
+				} else {
+					require.ErrorIs(t, err, ErrStartTimeout)
+					assert.True(t, startedNamed(t, root, scope, "a"), "the abandoned step is recorded once its late return was handled")
+				}
+				root.Shutdown()
+			})
+		})
+	}
+}
