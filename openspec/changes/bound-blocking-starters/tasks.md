@@ -1,6 +1,6 @@
 # Tasks
 
-Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decisions D1–D11 are in design.md. Every timing test runs in `synctest.Test` (fake-clock tests in `testWithTimeout`), releases its blocking user code before it ends (the goleak check in TestMain), and runs with `-race`. A RED test whose Starter blocks until released fails before the feature exists as a synctest deadlock report ("all goroutines are durably blocked"), or as a `testWithTimeout` failure; both count as the expected RED.
+Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decisions D1–D14 are in design.md. Every timing test runs in `synctest.Test` (fake-clock tests in `testWithTimeout`), releases its blocking user code before it ends (the goleak check in TestMain), and runs with `-race`. A RED test whose Starter blocks until released fails before the feature exists as a synctest deadlock report ("all goroutines are durably blocked"), or as a `testWithTimeout` failure; both count as the expected RED.
 
 ## 1. Public API scaffolding (no behaviour)
 
@@ -131,20 +131,20 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 23. An ended run context waits for the step up to its timeout (code review F1)
 
-- [ ] 23.1 RED: rewrite `TestStartTimeout_RunContextEnds/{deadline,cancel,shutdown}` to the scenario "An ended run context waits for a step that ignores it" (StartTimeout 5s, return at 5s, the exact "after 5s … (start aborted: <cause>)" messages, matching context.DeadlineExceeded too) and `TestStartTimeout_ShutdownDuringWait` to "Shutdown during a stuck step shuts the service down" (StartTimeout 5s, Shutdown bound 10s); add `TestStartTimeout_ShutdownAwaitsHonouringStart` ("A Start that honours its context is awaited when Shutdown cancels it"); verify `go test -race -run 'TestStartTimeout_(RunContextEnds|ShutdownDuringWait|ShutdownAwaitsHonouringStart)' .` fails: the rows return at 100ms with the bare "start timeout (start aborted: …)" message, and the honouring Start is abandoned at 100ms with its Shutdown method called before its cleanup finished
+- [ ] 23.1 RED: rewrite `TestStartTimeout_RunContextEnds/{deadline,cancel,shutdown}` to the scenario "An ended run context waits for a step that ignores it" (StartTimeout 5s, return at 5s, the exact "after 5s … (start aborted: <cause>)" messages, matching context.DeadlineExceeded too) and `TestStartTimeout_ShutdownDuringWait` to "Shutdown during a stuck step shuts the service down" (StartTimeout 5s, Shutdown bound 10s); add `TestStartTimeout_ShutdownAwaitsHonouringStart` ("A Start that honours its context is awaited when Shutdown cancels it") and `TestStartTimeout_ShutdownBoundedBelowTimeout` ("A Shutdown bounded below the start timeout"); verify `go test -race -run 'TestStartTimeout_(RunContextEnds|ShutdownDuringWait|ShutdownAwaitsHonouringStart|ShutdownBoundedBelowTimeout)' .` fails: the rows return at 100ms with the bare "start timeout (start aborted: …)" message, the honouring Start is abandoned at 100ms with its Shutdown method called before its cleanup finished, and the bounded Shutdown calls "srv"'s Shutdown method
 - [ ] 23.2 GREEN: wait on `returned` or a `timedOut` channel closed by the timer callback, never on `stepCtx.Done()` (design D4); verify the tests pass, every `TestStartTimeout_*` and `TestSlowStart_*` stays green (TimeoutWinsOverLateCancel included), and `make test` is green
 - [ ] 23.3 REFACTOR: Remove Dead Code: the bare-sentinel branch of `timeoutCause` once only the timer abandons (Inline Function if one branch remains); verify `make test` and `make lint` pass
-- [ ] 23.4 Docs: godoc of `StartTimeout`, `StartWithContext` and `ErrStartTimeout`: an ended context cancels the step's context at once and the run waits up to the timeout; a Shutdown bounded below StartTimeout can run a service's Shutdowner while its stuck Start still runs; update `docs/docs/container/options.md` and the `StartTimeout` lines of `docs/docs/service-lifecycle/starter.md`; verify `go doc` renders, `go test -run 'TestDocs_|TestReadme_SnippetsCompiled' .` and `make lint` pass
+- [ ] 23.4 Docs: godoc of `StartTimeout`, `StartWithContext` and `ErrStartTimeout`: an ended context cancels the step's context at once and the run waits up to the timeout; a Shutdown bounded below StartTimeout stops waiting when its context ends and skips the services it then reaches, so a stuck step keeps running until its call returns, as without the option; update `docs/docs/container/options.md` and the `StartTimeout` lines of `docs/docs/service-lifecycle/starter.md`; verify `go doc` renders, `go test -run 'TestDocs_|TestReadme_SnippetsCompiled' .` and `make lint` pass
 
 ## 24. A step returning at the timeout is either started with a live context or abandoned (code review F4)
 
-- [ ] 24.1 RED: add `TestStartTimeout_ReturnAtTimeout` (scenario "A step that returns exactly at the timeout"); verify `go test -race -count=200 -run TestStartTimeout_ReturnAtTimeout .` fails at least once (Start returns nil while "b" saw "a"'s context cancelled)
+- [ ] 24.1 RED: add `TestStartTimeout_ReturnAtTimeout/{root_start,root_refresh,tenant_start}` (scenario "A step that returns exactly at the timeout"; triage B reproduced it in all three); verify `go test -race -count=200 -run TestStartTimeout_ReturnAtTimeout .` fails at least once (Start returns nil while "b" saw "a"'s context cancelled)
 - [ ] 24.2 GREEN: order the timer callback and the call's end under the call's mutex: the callback does nothing once the call ended; otherwise it marks the call timed out, registers the step as abandoned, cancels the context and closes `timedOut`, and the call's end becomes its late outcome (design D4, D5); verify `-count=200` passes, every `TestStartTimeout_*` and `TestStart_RemovalBeforeRecord` stays green, and `make test` is green
 - [ ] 24.3 REFACTOR: Move Function for the abandoned mark into the timer callback's helper if it is still split across `awaitStep`; verify `make test` and `make lint` pass
 
 ## 25. A still-running step is skipped with its dependents; the rest starts (code review F2)
 
-- [ ] 25.1 RED: add `TestStartTimeout_RefreshSkipsStillRunning/{sequential,parallel}` (scenario "Refresh starts what does not depend on a still-running step"); verify `go test -race -run TestStartTimeout_RefreshSkipsStillRunning .` fails ("worker" is not started)
+- [ ] 25.1 RED: add `TestStartTimeout_RefreshSkipsStillRunning` with the seven rows of scenario "Refresh starts what does not depend on a still-running step" (root and tenant, sequential and parallel, `root.Refresh()` over the tenant, and two AsRunnable rows); verify `go test -race -run TestStartTimeout_RefreshSkipsStillRunning .` fails on the sequential rows ("worker" is not started; the parallel rows may pass on arrival, as triage B observed, which is the inconsistency this group removes)
 - [ ] 25.2 GREEN: the claim skips a still-running step and keeps its error as pending, the run skips candidates that depend on a skipped service (sequential and parallel scheduler, Starters and kind handlers), and returns its first failure or else the first pending error (design D5, D6); verify the test passes, `TestStartTimeout_AbandonedNotRestarted` and `TestStartTimeout_Parallel` stay green, and `make test` is green
 - [ ] 25.3 REFACTOR: Extract Function for the dependents check shared by the sequential loop, the parallel scheduler and `runStage`; verify `make test` and `make lint` pass
 - [ ] 25.4 Docs: `StartTimeout` godoc and `options.md`: a covering Refresh or Scope.Start skips a still-running step and its dependents and reports it; verify `make lint` passes
@@ -166,14 +166,62 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 - [ ] 29.1 Bound the wait for Start in `TestWrap_SlowStartWarning` with a `select` on `time.After`, as `TestWrap_StartTimeout` does; verify `(cd clock/clockwork && go test -race ./...)` and its lint pass
 
-## 30. Release checks after the code review fixes
+## 30. A late return during root Shutdown is not recorded (triage E, E1)
 
-- [ ] 30.1 Run `make test`, `make lint`, and `go test -race ./...` in every `go.work` module; verify all green
-- [ ] 30.2 Run `make test-sql` and `make test-watermill`; verify both green and that `go test -v` in `events/sql` and `events/watermill/wmsql` reports no test skipped for a missing database or DSN; then `make test-sql-down`
-- [ ] 30.3 Run `openspec validate bound-blocking-starters` (without `--strict`) and cross-check the Test Strategy table; verify valid and every scenario maps to a passing test
+- [ ] 30.1 RED: add `TestStartTimeout_LateReturnDuringShutdown/{root_starter,root_runnable,tenant_own,tenant_root}` (scenario "A late return during a shutdown is not recorded"); verify `go test -race -run TestStartTimeout_LateReturnDuringShutdown .` fails on the two root rows (recorded as started or handled) and passes on the tenant rows
+- [ ] 30.2 GREEN: `finishAbandoned` also refuses the record while the root is closing (`closePhase != closeOpen`) (design D5); verify the test passes, `TestStartTimeout_LateReturnAfterScopeShutdown` stays green, and `make test` is green
+- [ ] 30.3 REFACTOR: Extract Function `scopeShuttingDown(scope)` for `closingInLine || root closing` if it is used in more than one place (D12 also needs it); verify `make test` and `make lint` pass
+
+## 31. A child scope Shutdown cancels the running start steps of its subtree (triage A/C, I1)
+
+- [ ] 31.1 RED: add `TestChildShutdown_CancelsSubtreeSteps/{timeout_0,timeout_5s}/{root_start,root_refresh,tenant_start}` (scenario "Child shutdown cancels the running start steps of its subtree"; the timeout_5s/root_start row is not in the scenario and is omitted) and `TestChildShutdown_StuckStepWaitsTimeout` ("Child shutdown waits for a stuck step up to the start timeout"); verify `go test -race -run 'TestChildShutdown_' .` fails: with no timeout tenant.Shutdown() never returns (synctest deadlock), with 5s it returns at the timeout and the Shutdown method runs before the cleanup finished
+- [ ] 31.2 GREEN: register every running step's context with its scope (D3 inline child ctx, D4 awaited ctx); `joinClose` cancels the steps of its subtree with a cause matching `ErrShutdown`; the run treats a step of a closing scope as skipped (not recorded, not the run's error) and checks for a closing scope before each later step (design D12); verify the tests pass, `TestScopeShutdown_WaitsForStart`, `TestScopeShutdown_ExportingChildWaitsForStart`, `TestPhase_ClosingWhileShutdownWaitsForStart` and every `TestStartTimeout_*` stay green, and `make test` is green
+- [ ] 31.3 REFACTOR: Extract Function for the step-context registry (register, unregister, cancel subtree) out of `runStartStep`; verify `make test`, `make lint` and `go vet ./...` pass
+- [ ] 31.4 Docs: godoc of `Scope.Shutdown`/`ShutdownWithContext` (it cancels its subtree's running start steps, then waits bounded by its context) and of the Starter variants (the context also ends when the service's scope shuts down); verify `go doc` renders and `make lint` passes
+
+## 32. Dependents of a still-running step are skipped in any scope (triage B, I3)
+
+- [ ] 32.1 RED: add `TestStartTimeout_AncestorStillRunningSkipsDependent/{depends_on,invoke,refresh}` (scenario "A dependent of a still-running step in an ancestor scope is skipped"); verify `go test -race -run TestStartTimeout_AncestorStillRunningSkipsDependent .` fails on the `tenant.Start()` rows ("dep" is started)
+- [ ] 32.2 GREEN: the dependents check consults the abandoned state of every dependency in the graph, in the candidate's own or an ancestor scope, not only the run's skipped set (design D5); verify the test passes, the group 25 tests stay green, and `make test` is green
+- [ ] 32.3 REFACTOR: none expected beyond reusing group 25's dependents check; verify `make test` and `make lint` pass
+
+## 33. The no-overlap guarantee holds per instance, across overrides and clones (triage D, I5)
+
+- [ ] 33.1 RED: add `TestStartTimeout_InstanceNotCalledAgain/{clone,override}` (scenario "A still-running instance is not called again through an override or a clone"); verify `go test -race -run TestStartTimeout_InstanceNotCalledAgain .` fails ("inst"'s Start is called 2 times)
+- [ ] 33.2 GREEN: an instance-keyed tracker of abandoned calls, shared by pointer by `Clone`/`CloneWithOpts`, filled with the abandoned mark and cleared by the late outcome; the claim skips a step whose comparable instance is tracked (design D14); verify the test passes, the clone tests (`TestRootScope_Clone*`, container-lifecycle-hooks clone tests) stay green, and `make test` is green
+- [ ] 33.3 REFACTOR: Move Function for the tracker into its own file `root_start_instances.go` if it grew beyond a few lines; verify `make test` and `make lint` pass
+- [ ] 33.4 Docs: `StartTimeout` godoc: the guarantee is per instance across overrides and clones; a non-comparable instance is tracked per registration only; verify `go doc` renders and `make lint` passes
+
+## 34. Health reports check a service only once its start is complete (triage D, I4)
+
+- [ ] 34.1 RED: add `TestHealthReport_ComponentCheckedOnceHandled/{runnable_returned,runnable_running,runnable_late_return}` (health-reports scenario "A component is checked only once its kind handlers handled it"); verify `go test -race -run TestHealthReport_ComponentCheckedOnceHandled .` fails on `runnable_running` (the entry is HealthHealthy and the check ran)
+- [ ] 34.2 GREEN: `eligibleForReport` also requires every kind of the service with a registered handler to have handled it (design D13); verify the test passes, every `TestHealthReport_*` and `TestHealthScheduler_*` stays green, and `make test` is green
+- [ ] 34.3 REFACTOR: none expected; verify `make test` and `make lint` pass
+- [ ] 34.4 Docs: the godoc of `HealthReport` (and the health docs page under `docs/docs/`) states the rule for Starters and kind components alike, and that a Refresh which abandons a step leaves that service unknown until its call returns; verify `go test -run 'TestDocs_' .` and `make lint` pass
+
+## 35. Late-outcome logging is consistent and the Logger godoc is correct (triage E)
+
+- [ ] 35.1 RED: add the AsRunnable panic row to `TestStartTimeout_LateOutcomeLogged` and `step=start` to its panic rows (container-logging scenario "Late outcome of an abandoned step"); verify `go test -race -run TestStartTimeout_LateOutcomeLogged .` fails (the panic records have no `step`/`kind`)
+- [ ] 35.2 GREEN: the late panic records carry `step` and `kind` (handle only) (design D8); verify the test passes, `TestLogging_Events` stays green, and `make test` is green
+- [ ] 35.3 REFACTOR: reuse `startStep.attrs()` for the panic records instead of a local attribute list; verify `make test` and `make lint` pass
+- [ ] 35.4 Docs: `InjectorOpts.Logger` godoc lists "start step is slow", "abandoned start step returned" and "abandoned start step error", states that a handler panic on the container's background goroutines (the warning timer, an abandoned call's late outcome) is dropped, and that these records can come after Start returned or the container closed; verify `go doc doger.InjectorOpts` renders and `make lint` passes
+
+## 36. Undocumented production behaviour is documented (triages D, E)
+
+- [ ] 36.1 Docs: `StartTimeout` godoc and `docs/docs/container/options.md`: a successful Shutdown report can come back while an abandoned Start still runs (after root Start abandoned it, nothing is in flight); `Invoke` of a service whose Start was abandoned returns its instance, which may be half started; a Starter that calls Refresh or Scope.Start synchronously deadlocks without the option and ends in an `ErrStartTimeout` pair with it (still never do it); verify `go doc` renders, `go test -run 'TestDocs_' .` and `make lint` pass
+- [ ] 36.2 Docs: `HookScopeStarting` godoc: the hooks run on every Scope.Start attempt that passes its phase check, including one that then reports a still-running step; verify `go doc` renders and `make lint` passes
+
+## 37. Release checks after the code review and consistency fixes
+
+- [ ] 37.1 Run `make test`, `make lint`, and `go test -race ./...` in every `go.work` module; verify all green
+- [ ] 37.2 Run `make test-sql` and `make test-watermill`; verify both green and that `go test -v` in `events/sql` and `events/watermill/wmsql` reports no test skipped for a missing database or DSN; then `make test-sql-down`
+- [ ] 37.3 Run `openspec validate bound-blocking-starters` (without `--strict`) and cross-check the Test Strategy table; verify valid and every scenario maps to a passing test
+- [ ] 37.4 Re-run the root/child and lifecycle-phase triage matrix (triages A–E, scratch tests kept under the session scratchpad) against the finished code; verify every row is CONSISTENT or documented, and report any remaining difference before archiving
 
 ## Workflow follow-up
 
 - Propose separate changes for the sweep findings in proposal.md "Out of scope": (1) hardening, so that doger abandons a remote subscription stop that ignores ctx (not a defect: the transport contract requires stop to honour ctx); (2) bounding or warning on Closing/Closed hooks and sync ContainerClosing listeners; (3) logging abandoned service Shutdowns and naming the listener in the drain error.
 - Propose a separate change for a `runtime.Goexit` in a Start method or kind handler without `StartTimeout`: it ends the goroutine that called Start, so Start never returns (reproduced on the base commit; code review F7).
+- Propose a separate change for a child-scope start-failure observer matching `HookContainerFailed` (a failed `Scope.Start` is visible only through its return value; triage C).
+- Propose a separate change to report one "waiting for start" error, not one per scope, when a root Shutdown bounded by its context covers a child scope a run is starting (triages A, E).
 - Archive this change after review, once `make test`, `make lint`, `make test-sql` and `make test-watermill` pass.

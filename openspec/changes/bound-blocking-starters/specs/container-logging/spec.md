@@ -83,7 +83,7 @@ And the handler recorded exactly 8000 "service invoked" records
 ## ADDED Requirements
 
 ### Requirement: A slow start step is logged at Warn level
-With a `Logger` set, a Starter `Start` method or kind-handler call still running once `InjectorOpts.SlowStartThreshold` elapsed on the container clock SHALL emit exactly one `WARN` record, "start step is slow", with `scope`, `service`, `step` (`start` or `handle`), `kind` (handle only) and `threshold`. Zero means `DefaultSlowStartThreshold` (10s); a negative value, or one at or above a set `StartTimeout`, arms nothing.
+With a `Logger` set, a Starter `Start` method or kind-handler call still running once `InjectorOpts.SlowStartThreshold` elapsed on the container clock SHALL emit exactly one `WARN` record, "start step is slow", with `scope`, `service`, `step` (`start` or `handle`), `kind` (handle only) and `threshold`. Zero means `DefaultSlowStartThreshold` (10s); a negative value, or one at or above a set `StartTimeout`, arms nothing. The record SHALL be emitted while the step still runs, also when the container finished shutting down meanwhile (a Shutdown bounded by its context stops waiting for a running start).
 
 #### Scenario: Slow step warning per threshold
 ```gherkin
@@ -206,7 +206,7 @@ And "srv" is recorded as started
 <!-- cases: 10 compatibility: no record and no timer unless a Logger at Warn or below is set, so "Logging is off by default" holds -->
 
 ### Requirement: An abandoned start step that ends is logged
-With a `Logger` set, when a step abandoned under `InjectorOpts.StartTimeout` later returns, the container SHALL emit one `WARN` record "abandoned start step returned" with `scope`, `service`, `step`, `kind` (handle only) and `elapsed`, and, if it returned an error, a `DEBUG` record "abandoned start step error" with the same attributes plus `error`. When it panics, it SHALL emit the existing "panic recovered" records with the step's own scope.
+With a `Logger` set, when a step abandoned under `InjectorOpts.StartTimeout` later returns, the container SHALL emit one `WARN` record "abandoned start step returned" with `scope`, `service`, `step`, `kind` (handle only) and `elapsed`, and, if it returned an error, a `DEBUG` record "abandoned start step error" with the same attributes plus `error`. When it panics, it SHALL emit the existing "panic recovered" records with the step's own scope, plus `step` and `kind` (handle only), as the other late records carry them. These records SHALL be emitted whenever the call ends, also after Start returned and after the container or the step's scope finished shutting down.
 
 #### Scenario: Late outcome of an abandoned step
 ```gherkin
@@ -220,8 +220,9 @@ Examples:
   | DEBUG | the root                                  | Start()        | returns nil                        | WARN "abandoned start step returned" scope=[root] service=srv step=start elapsed=1m                                                           |
   | DEBUG | the root                                  | Start()        | returns errors.New("bind: in use") | WARN "abandoned start step returned" scope=[root] service=srv step=start elapsed=1m; DEBUG "abandoned start step error" scope=[root] service=srv step=start elapsed=1m error=bind: in use |
   | INFO  | the root                                  | Start()        | returns errors.New("bind: in use") | WARN "abandoned start step returned" scope=[root] service=srv step=start elapsed=1m                                                           |
-  | DEBUG | the root                                  | Start()        | panics with "boom"                 | ERROR "panic recovered" scope=[root] service=srv point=start panic_type=string; DEBUG "panic value" scope=[root] service=srv point=start value=boom |
-  | DEBUG | child scope "tenant", created after Start | tenant.Start() | panics with "boom"                 | ERROR "panic recovered" scope=tenant service=srv point=start panic_type=string; DEBUG "panic value" scope=tenant service=srv point=start value=boom |
+  | DEBUG | the root                                  | Start()        | panics with "boom"                 | ERROR "panic recovered" scope=[root] service=srv point=start step=start panic_type=string; DEBUG "panic value" scope=[root] service=srv point=start step=start value=boom |
+  | DEBUG | child scope "tenant", created after Start | tenant.Start() | panics with "boom"                 | ERROR "panic recovered" scope=tenant service=srv point=start step=start panic_type=string; DEBUG "panic value" scope=tenant service=srv point=start step=start value=boom |
+  | DEBUG | the root, "srv" opted in with AsRunnable() instead | Start() | panics with "boom" in Run   | ERROR "panic recovered" scope=[root] service=srv point=start step=handle kind=runnable panic_type=string; DEBUG "panic value" scope=[root] service=srv point=start step=handle kind=runnable value=boom |
 ```
 
 <!-- cases: 1 happy path: late nil return -->
@@ -230,7 +231,8 @@ Examples:
 <!-- cases: N/A 4 boundaries: one outcome per abandoned call -->
 <!-- cases: 5 errors: error text stays at Debug, as health-check error text does -->
 <!-- cases: N/A 6 duplicates: an abandoned call ends once -->
-<!-- cases: 7 lifecycle: the late return may come after Start returned or after Shutdown; logging still uses the container Logger; the child scope row names the step's own scope -->
+<!-- cases: 7 lifecycle: the late return may come after Start returned or after Shutdown, even after the container closed; logging still uses the container Logger, and the records are emitted then too (stated in the requirement and the Logger godoc); the child scope row names the step's own scope -->
+<!-- cases: 11 consistency: the panic records carry step and kind like the other late records (triage E) -->
 <!-- cases: 8 concurrency: the late outcome is logged on the abandoned goroutine; the test synchronizes on its end -->
 <!-- cases: 9 panics: the panic rows; the panic is never re-raised, since nothing waits for it; a panicking handler here is covered by "A panicking log handler does not crash the process" -->
 <!-- cases: 10 compatibility: only reachable with StartTimeout set -->

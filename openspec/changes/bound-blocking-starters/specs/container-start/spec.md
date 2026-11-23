@@ -117,6 +117,101 @@ Examples:
 <!-- cases: 9 panics: a panicking Start method is recovered as for Start -->
 <!-- cases: N/A 10 compatibility: new API -->
 
+### Requirement: Child scope shutdown waits for a start that is starting its services
+A child scope's `Shutdown`/`ShutdownWithContext` that begins while a `Start`, `Refresh` or `Scope.Start` is running with services of this scope or its descendants among its candidates SHALL cancel the contexts of their running start steps with a cause matching `ErrShutdown`, as root Shutdown does for a whole run, then wait for that run to return, bounded by its context, before shutting anything down. Those steps SHALL NOT fail the run or be recorded, and the run SHALL skip the rest of that subtree and continue. A run that begins while the scope shuts down SHALL NOT start or handle services of that scope or of its descendant scopes. A descendant scope cannot be created under it then: `Scope()` panics with an error matching `ErrShutdown` (container-shutdown, "A closed scope stays closed"). Shutting such a scope down synchronously from code running in that run deadlocks, as for root Shutdown.
+
+#### Scenario: Child shutdown waits for a running start
+```gherkin
+Given a root container and child scope "tenant" with lazy Starter "w" whose Start blocks until released
+And the consumer has <before>
+And <run> is running in another goroutine and "w" has entered Start
+When the consumer calls tenant.Shutdown() in another goroutine
+Then tenant.Shutdown() has not returned while "w" is blocked
+When "w" is released
+Then <run> returns nil
+And tenant.Shutdown() returns a successful report
+And "w" was shut down 1 time, after its Start returned
+And the start bookkeeping holds no entry for "w"
+
+Examples:
+  | before                                          | run            |
+  | done nothing                                    | root.Start()   |
+  | called Start(), then registered "w" in "tenant" | root.Refresh() |
+  | called Start(), then registered "w" in "tenant" | tenant.Start() |
+```
+
+#### Scenario: Child shutdown cancels the running start steps of its subtree
+```gherkin
+Given a root container created with InjectorOpts{StartTimeout: <timeout>}, inside synctest.Test, and child scope "tenant"
+And lazy Starter "w" in "tenant" whose Start(ctx) error waits for ctx.Done(), then cleans up for 100ms of virtual time and returns ctx.Err(), and whose Shutdown() error records whether that cleanup had finished
+And the consumer has <before>
+And <run> is running in another goroutine and "w" has entered Start
+When the consumer calls tenant.Shutdown() 100ms later
+Then "w"'s Start context ends with a cause matching ErrShutdown
+And tenant.Shutdown() returns a successful report after 100ms of virtual time
+And <run> returns nil
+And "w"'s Shutdown method was called exactly once, after its Start cleanup finished
+And the start bookkeeping holds no entry for "w"
+
+Examples:
+  | timeout | before                                          | run            |
+  | 0       | done nothing                                    | root.Start()   |
+  | 0       | called Start(), then registered "w" in "tenant" | root.Refresh() |
+  | 0       | called Start(), then registered "w" in "tenant" | tenant.Start() |
+  | 5s      | called Start(), then registered "w" in "tenant" | root.Refresh() |
+  | 5s      | called Start(), then registered "w" in "tenant" | tenant.Start() |
+```
+
+#### Scenario: Child shutdown waits for a stuck step up to the start timeout
+```gherkin
+Given a started root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test, and child scope "tenant"
+And lazy Starter "w" in "tenant", registered after Start, whose Start(ctx) error ignores ctx and blocks until its Shutdown() error method is called
+And tenant.Start() is running in another goroutine and "w" has entered Start
+When the consumer calls tenant.Shutdown() 100ms later
+Then tenant.Shutdown() returns a successful report after 4.9s of virtual time
+And tenant.Start() returns nil
+And "w"'s Shutdown method was called exactly once
+And the start bookkeeping holds no entry for "w" once its Start call returned
+```
+
+#### Scenario: A start that begins during a child shutdown skips the scope
+```gherkin
+Given a started root container and child scope "tenant" with lazy Starter "w" registered after Start
+And tenant.Shutdown() is running in another goroutine, blocked in a HookScopeClosing hook
+When the consumer calls root.Refresh()
+Then Refresh returns nil
+And "w" was started 0 times
+```
+
+#### Scenario: A scope created under a shutting-down scope is skipped
+```gherkin
+Given a started root container and child scope "tenant"
+And tenant.Shutdown() is running in another goroutine, blocked in a HookScopeClosing hook
+When the consumer creates grandchild "jobs" under "tenant"
+Then the call panics with an error matching ErrShutdown
+And root.Refresh() returns nil
+And once tenant.Shutdown() returned a successful report, tenant.Children() is empty
+```
+
+#### Scenario: A scope created during a running start does not wait
+```gherkin
+Given a root container with lazy Starter "a" whose provider creates child scope "tmp", registers and invokes lazy "x" in it, and calls tmp.Shutdown()
+When the consumer calls Start()
+Then Start returns nil
+And tmp.Shutdown() returned a successful report while Start was running
+```
+
+<!-- cases: 1 default: waiting and cancelling are not configurable -->
+<!-- cases: 2 overrides: the context bounds the wait ("A child shutdown wait is bounded by its context"); StartTimeout bounds a step that ignores its cancelled context -->
+<!-- cases: N/A 3 zero values: a nil context means context.Background(), as for every Shutdown -->
+<!-- cases: 4 boundaries: a run with no candidate in the scope (a scope created during the run) does not wait; a step that honours its context returns before the wait ends; one that ignores it is abandoned at its StartTimeout -->
+<!-- cases: N/A 5 errors: the context error has its own requirement; a cancelled step is not a run failure -->
+<!-- cases: N/A 6 duplicates: a second Shutdown of the same scope finds no running run with candidates in it -->
+<!-- cases: 7 lifecycle: Start, Refresh and Scope.Start rows; a run that begins during the shutdown; the run continues with scopes outside the closing subtree -->
+<!-- cases: 8 concurrency: the subject; runs under -race with goleak -->
+<!-- cases: N/A 9 panics: hook panics during the wait follow scope-lifecycle-hooks -->
+<!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - a child scope Shutdown now cancels the running start steps of its subtree, as root Shutdown cancels a whole run, so it no longer waits forever on a Start that stops only when its context ends; a step so cancelled no longer fails the run. Earlier: a child scope Shutdown no longer races a running start; Start-time code that shuts down a scope the run is starting deadlocks; a grandchild created under a closing scope is refused with ErrShutdown -->
+
 ## ADDED Requirements
 
 ### Requirement: Start waits for every step by default
@@ -303,19 +398,31 @@ And Shutdown returns a report with no error before its deadline
 And "srv" is not recorded as started once its Start call returned
 ```
 
+#### Scenario: A Shutdown bounded below the start timeout
+```gherkin
+Given a root scope created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test
+And lazy Starter "srv" whose Start(ctx) error ignores ctx and blocks until its Shutdown() error method is called
+When another goroutine calls root.ShutdownWithContext(ctx with a 1s deadline) at 100ms of virtual time
+Then Shutdown returns after 1s with a failed report
+And the report has an error keyed by the root scope with an empty service name, matching context.DeadlineExceeded
+And the report has an error for "srv", matching context.DeadlineExceeded, and "srv"'s Shutdown method was not called
+And Start returns after 5s of virtual time with an error matching ErrStartTimeout and ErrShutdown
+And "srv" is not recorded as started once the test released its Start call
+```
+
 <!-- cases: N/A 1 happy path: the requirement is an error path -->
 <!-- cases: 2 overrides: deadline, cancellation and Shutdown triggers; a Start that honours its context -->
 <!-- cases: N/A 3 zero values: a nil ctx is context.Background(), which never ends -->
 <!-- cases: 4 boundaries: the run returns at the step's StartTimeout at the latest, however early the context ended; a step that returns earlier ends the wait -->
 <!-- cases: 5 errors: each cause row, with the exact message; the context's cause appears once, after the timeout, as "An aborted run matches ErrShutdown when the caller cancelled first" requires -->
 <!-- cases: N/A 6 duplicates: not applicable -->
-<!-- cases: 7 lifecycle: root Shutdown waits for the run, bounded by its own context, before it shuts services down, so a Start that honours its context never overlaps its service's Shutdowner. A Shutdown bounded below StartTimeout stops waiting and can run the Shutdowner while the Start still runs; StartTimeout's godoc states it. The late nil return after removal is not recorded -->
+<!-- cases: 7 lifecycle: root Shutdown waits for the run, bounded by its own context, before it shuts services down, so a Start that honours its context never overlaps its service's Shutdowner. A Shutdown bounded below StartTimeout stops waiting when its context ends and proceeds with that ended context, skipping the services it reaches as shutdown-context specifies, exactly as without the option ("A Shutdown bounded below the start timeout"); the stuck step keeps running until its call returns, and StartTimeout's godoc states it. The late nil return after removal is not recorded -->
 <!-- cases: 8 concurrency: Shutdown from another goroutine; synctest -->
 <!-- cases: N/A 9 panics: as in "A start timeout abandons a stuck step" -->
 <!-- cases: 10 compatibility: without StartTimeout an ended context still waits without bound, see "Start waits for every step by default" -->
 
 ### Requirement: An abandoned step is not started again while it runs
-While an abandoned Starter `Start` call or kind-handler call runs, its service or component SHALL NOT be recorded as started or handled, and a covering Refresh or Scope.Start SHALL NOT call it again: it SHALL skip that step, without hook calls, and skip the services that depend on its service, directly or through others, start everything else, and then fail with a `*StartError` naming the step that matches `ErrStartTimeout`. When another step of the run fails, that failure SHALL be the run's error instead. Once the call returns nil it SHALL be recorded, unless its scope is shutting down or no longer holds it; once it errs or panics, the next run SHALL try it again. When root Start is the run that abandoned the step, Start has failed, so no later run follows: Refresh and Scope.Start return `ErrNotStarted` and Start returns `ErrAlreadyStarted`; the late outcome is still recorded or logged, and Shutdown is the way on.
+While an abandoned Starter `Start` call or kind-handler call runs, its service or component SHALL NOT be recorded as started or handled, and no run SHALL call it again: a run SHALL skip that step, without hook calls, and skip every candidate that depends on its service, directly or through others, whether that service lives in the run's scopes or in an ancestor scope, start everything else, and then fail with a `*StartError` naming the step that matches `ErrStartTimeout`. When another step of the run fails, that failure SHALL be the run's error instead. The guarantee SHALL hold per instance: a step whose instance (when it is comparable, such as a pointer) has an abandoned call still running SHALL be skipped the same way, in this container and in its clones, also after an override registers the same instance. Once the call returns nil it SHALL be recorded, unless its scope is shutting down (by its own, an ancestor's or root Shutdown) or no longer holds it; once it errs or panics, the next run SHALL try it again. When root Start is the run that abandoned the step, Start has failed, so no later run follows: Refresh and Scope.Start return `ErrNotStarted` and Start returns `ErrAlreadyStarted`; the late outcome is still recorded or logged, and Shutdown is the way on.
 
 #### Scenario: Re-running while the abandoned call runs, and after it returns
 ```gherkin
@@ -341,18 +448,73 @@ Examples:
 #### Scenario: Refresh starts what does not depend on a still-running step
 ```gherkin
 Given a started root container created with InjectorOpts{StartTimeout: 5s, StartParallelism: <parallelism>}, inside synctest.Test
-And lazy Starter "stuck", registered after Start, whose first Start call blocks until the test releases it
-And root.Refresh() returned an error naming "stuck" matching ErrStartTimeout
-And then lazy Starters "worker" (depending on nothing) and "dep" (registered with DependsOnNamed("stuck")) were registered
-When the consumer calls root.Refresh() before the test releases "stuck"
-Then Refresh returns an error naming "stuck" that matches ErrStartTimeout
+And <kind> "stuck" in <scope>, registered after Start, whose first call blocks until the test releases it
+And <operation> returned an error naming "stuck" matching ErrStartTimeout
+And then, in the same scope, <kind> "worker" (depending on nothing) and <kind> "dep" (registered with DependsOnNamed("stuck")) were registered
+When the consumer calls <operation> before the test releases "stuck"
+Then it returns an error naming "stuck" that matches ErrStartTimeout
 And "worker" was started and "dep" was not
-And "stuck"'s Start was called 1 time in total
+And "stuck" was called 1 time in total
 
 Examples:
-  | parallelism |
-  | 0           |
-  | 4           |
+  | parallelism | kind                         | scope                                     | operation      |
+  | 0           | lazy Starter                 | the root                                  | root.Refresh() |
+  | 4           | lazy Starter                 | the root                                  | root.Refresh() |
+  | 0           | lazy Starter                 | child scope "tenant", created after Start | tenant.Start() |
+  | 4           | lazy Starter                 | child scope "tenant", created after Start | tenant.Start() |
+  | 0           | lazy Starter                 | child scope "tenant", created after Start | root.Refresh() |
+  | 0           | lazy service with AsRunnable() | the root                                | root.Refresh() |
+  | 0           | lazy service with AsRunnable() | child scope "tenant", created after Start | tenant.Start() |
+```
+
+#### Scenario: A dependent of a still-running step in an ancestor scope is skipped
+```gherkin
+Given a started root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test
+And lazy Starter "stuck" in the root, registered after Start, whose first Start call blocks until the test releases it
+And root.Refresh() returned an error naming "stuck" matching ErrStartTimeout
+And then child scope "tenant" with lazy Starters "worker" (depending on nothing) and "dep", whose provider depends on "stuck" by <declaration>
+When the consumer calls <operation> before the test releases "stuck"
+Then it returns an error naming "stuck" that matches ErrStartTimeout
+And "worker" was started and "dep" was not
+And once the test released "stuck" and its call returned, tenant.Start() returns nil and "dep" was started
+
+Examples:
+  | declaration                        | operation      |
+  | DependsOnNamed("stuck")            | tenant.Start() |
+  | invoking it in its provider        | tenant.Start() |
+  | DependsOnNamed("stuck")            | root.Refresh() |
+```
+
+#### Scenario: A still-running instance is not called again through an override or a clone
+```gherkin
+Given a root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test
+And a Starter instance "inst" (a pointer) whose first Start call blocks until the test releases it
+And "inst" is registered as eager value "srv" and <first> returned an error matching ErrStartTimeout
+When <second> before the test releases "inst"
+Then <second-op> returns an error naming "srv" that matches ErrStartTimeout
+And "inst"'s Start was called 1 time in total
+
+Examples:
+  | first          | second                                                                              | second-op     |
+  | root.Start()   | the consumer calls clone := root.Clone() and clone.Start()                          | clone.Start() |
+  | Start(), then root.Refresh() for "srv" registered after Start | the consumer overrides "srv" with OverrideNamedValue(root, "srv", inst) and calls root.Refresh() | root.Refresh() |
+```
+
+#### Scenario: A late return during a shutdown is not recorded
+```gherkin
+Given a started root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test
+And <kind> "srv" in <scope>, registered after Start and abandoned by <operation>, whose first call blocks until the test releases it, then returns nil
+And service "gate" in the same scope depends on "srv" and its Shutdown() error blocks until the test releases it
+When the consumer calls <shutdown> in another goroutine, and the test releases "srv" while that shutdown is blocked in "gate"'s Shutdown
+Then "srv" is not recorded as started or handled
+And once "gate" is released, <shutdown> returns
+
+Examples:
+  | kind                           | scope                                     | operation      | shutdown          |
+  | lazy Starter                   | the root                                  | root.Refresh() | root.Shutdown()   |
+  | lazy service with AsRunnable() | the root                                  | root.Refresh() | root.Shutdown()   |
+  | lazy Starter                   | child scope "tenant", created after Start | tenant.Start() | tenant.Shutdown() |
+  | lazy Starter                   | child scope "tenant", created after Start | tenant.Start() | root.Shutdown()   |
 ```
 
 #### Scenario: After root Start abandons a step, only Shutdown follows
@@ -394,7 +556,9 @@ And the start bookkeeping holds no entry for "late"
 <!-- cases: 7 lifecycle: Refresh and Scope.Start rows; a child scope shutting down before the late return. A child scope Shutdown waits for a running run ("Child scope shutdown waits for a start that is starting its services"), and an abandoned run has returned, so it does not wait for the abandoned call -->
 <!-- cases: 8 concurrency: the late return races the next run; the rows pin it with release channels; runs under -race with goleak -->
 <!-- cases: 9 panics: the late panic row -->
-<!-- cases: 10 compatibility: a failed (not abandoned) Starter or handler is still retried as in "Refresh starts what is not started yet" and component-kinds "Handlers run for new components on incremental start". The guarantee is per container: a clone shares eager instances and starts them independently, so a clone's Start can overlap an abandoned call of its source -->
+<!-- cases: 10 compatibility: a failed (not abandoned) Starter or handler is still retried as in "Refresh starts what is not started yet" and component-kinds "Handlers run for new components on incremental start". The guarantee is per instance: a clone shares eager instances and otherwise starts them independently, but never calls an instance whose abandoned call, made by its source or by another clone, still runs; nor does an override that registers the same instance. A non-comparable instance (a struct value holding a slice or map) is tracked per registration only -->
+<!-- cases: 11 cross-scope: a dependent of a still-running step in an ancestor scope is skipped by Scope.Start as by Refresh; an ancestor that merely failed or never started keeps the rule that Scope.Start does not start ancestors -->
+<!-- cases: 12 shutdown: a late nil return during root Shutdown is not recorded, as during a child scope shutdown ("A late return during a shutdown is not recorded") -->
 
 ### Requirement: Start hooks for an abandoned step
 For an abandoned Starter, `HookAfterStart` SHALL be called exactly once, on the run's goroutine when the step is abandoned, with `elapsed` equal to the time waited on the container clock and an `err` matching `ErrStartTimeout`. It SHALL NOT be called again when the abandoned call returns.
