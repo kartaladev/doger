@@ -534,7 +534,11 @@ type InjectorOpts struct {
 	// Set a controllable Clock to drive time in tests, such as
 	// dogerclockwork.Wrap(clockwork.NewFakeClock()) from the
 	// github.com/kartaladev/doger/clock/clockwork module, or any type with
-	// the Clock methods.
+	// the Clock methods. With a Logger that keeps Warn records, each start
+	// step arms at most one SlowStartThreshold warning timer on the Clock
+	// while it runs, and a positive StartTimeout arms one more; a fake
+	// clock's BlockUntil counts them. SlowStartThreshold: -1 removes the
+	// warning timer.
 	Clock Clock
 
 	// EnableStarterAutoDetection makes Start also start every non-transient,
@@ -563,7 +567,10 @@ type InjectorOpts struct {
 	// timeout is reported by its abandonment instead, and a step abandoned
 	// before the threshold never warns.
 	// Default: 0, which means DefaultSlowStartThreshold (10s). A negative
-	// value disables the warning. Measured on Clock.
+	// value disables the warning. Measured on Clock: when armed, the warning
+	// is one timer on the Clock per start step while the step runs, so with
+	// a Warn-enabled Logger it counts toward a fake clock's BlockUntil;
+	// -1 removes it.
 	SlowStartThreshold time.Duration
 
 	// StartTimeout bounds each Starter Start method and each kind-handler

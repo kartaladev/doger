@@ -156,7 +156,7 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 27. The default warning timer on a fake clock is documented (code review F6)
 
-- [ ] 27.1 Docs: `InjectorOpts.Clock` and `SlowStartThreshold` godoc and `docs/docs/container/options.md`: with a Warn-enabled Logger each start step arms one timer on the Clock, which counts toward a fake clock's `BlockUntil`; `SlowStartThreshold: -1` removes it; verify `go doc` renders, `go test -run 'TestDocs_' .` and `make lint` pass
+- [x] 27.1 Docs: `InjectorOpts.Clock` and `SlowStartThreshold` godoc and `docs/docs/container/options.md`: with a Warn-enabled Logger each start step arms one timer on the Clock, which counts toward a fake clock's `BlockUntil`; `SlowStartThreshold: -1` removes it; verify `go doc` renders, `go test -run 'TestDocs_' .` and `make lint` pass
 
 ## 28. The Goexit difference under StartTimeout is documented (code review F7)
 
