@@ -210,16 +210,25 @@ func TestSlowStart_StopsAtAbandonment(t *testing.T) {
 
 // TestSlowStart_NoTimerWithoutLogger pins container-logging "No warning
 // timer without a Warn-enabled logger". Not parallel: it replaces the
-// default slog logger.
+// default slog logger. The timeout rows pin the Clock godoc: a positive
+// StartTimeout arms one timer per step, and the warning at most one more.
 func TestSlowStart_NoTimerWithoutLogger(t *testing.T) { //nolint:paralleltest // replaces the default slog logger
+	warnLogger := func() *slog.Logger { return newLogRecorder(slog.LevelWarn).logger() }
 	tests := []struct {
-		name   string
-		logger func() *slog.Logger // nil: no Logger
-		calls  int32
+		name      string
+		logger    func() *slog.Logger // nil: no Logger
+		timeout   time.Duration       // StartTimeout
+		threshold time.Duration       // SlowStartThreshold
+		runs      time.Duration       // how long the step runs; 0: one hour
+		calls     int32
 	}{
 		{name: "no_logger"},
 		{name: "error_level", logger: func() *slog.Logger { return newLogRecorder(slog.LevelError).logger() }},
-		{name: "warn_level", logger: func() *slog.Logger { return newLogRecorder(slog.LevelWarn).logger() }, calls: 1},
+		{name: "warn_level", logger: warnLogger, calls: 1},
+		{name: "warn_level_timeout", logger: warnLogger, timeout: 20 * time.Second, threshold: time.Second, runs: 2 * time.Second, calls: 2},
+		{name: "warn_level_threshold_at_timeout", logger: warnLogger, timeout: 5 * time.Second, threshold: 5 * time.Second, runs: 2 * time.Second, calls: 1},
+		{name: "warn_level_threshold_above_timeout", logger: warnLogger, timeout: 5 * time.Second, threshold: 10 * time.Second, runs: 2 * time.Second, calls: 1},
+		{name: "no_logger_timeout", timeout: 20 * time.Second, runs: 2 * time.Second, calls: 1},
 	}
 
 	for _, tt := range tests {
@@ -228,12 +237,16 @@ func TestSlowStart_NoTimerWithoutLogger(t *testing.T) { //nolint:paralleltest //
 
 			synctest.Test(t, func(t *testing.T) {
 				clock := &countingClock{Clock: RealClock()}
-				opts := &InjectorOpts{Clock: clock}
+				opts := &InjectorOpts{Clock: clock, StartTimeout: tt.timeout, SlowStartThreshold: tt.threshold}
 				if tt.logger != nil {
 					opts.Logger = tt.logger()
 				}
+				runs := tt.runs
+				if runs == 0 {
+					runs = time.Hour
+				}
 				root := NewWithOpts(opts)
-				provideCounted(root, "srv", newStepProbe(time.Hour), AsStarter())
+				provideCounted(root, "srv", newStepProbe(runs), AsStarter())
 
 				require.NoError(t, root.Start())
 
