@@ -589,9 +589,14 @@ type InjectorOpts struct {
 	// first failure, or else a [*StartError] naming the still-running step
 	// that matches ErrStartTimeout. Once it returns nil it is recorded as started (or
 	// handled) unless its scope is shutting down or no longer holds it, and
-	// once it fails the next run tries it again. Shutdown still calls the
-	// service's Shutdowner, its stop path. The guarantee is per container: a
-	// clone shares eager instances and starts them independently.
+	// once it fails a later Refresh or Scope.Start tries it again. Those
+	// runs exist only when the abandoning run was not root Start: after root
+	// Start abandoned a step, Start has failed, so Refresh and Scope.Start
+	// return [ErrNotStarted] and Start returns [ErrAlreadyStarted]. The late
+	// return is still recorded or logged, and Shutdown is the way on.
+	// Shutdown still calls the service's Shutdowner, its stop path. The
+	// guarantee is per container: a clone shares eager instances and starts
+	// them independently.
 	// Default: 0, no bound: Start waits for every step, however long, and an
 	// ended context is noticed only between steps. A negative value is the
 	// same as 0. Measured on Clock.

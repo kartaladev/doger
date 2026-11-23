@@ -151,8 +151,8 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 26. After root Start abandons a step, only Shutdown follows (code review F3)
 
-- [ ] 26.1 RED: add `TestStartTimeout_RootStartAbandonsThenOnlyShutdown` (scenario "After root Start abandons a step, only Shutdown follows"); it pins existing behaviour and should pass on arrival, so prove it can fail by temporarily setting `startStarted` instead of `startFailed` in `finishStart` (not committed, backup kept); verify `go test -race -run TestStartTimeout_RootStartAbandonsThenOnlyShutdown .`
-- [ ] 26.2 Docs: `StartTimeout` godoc: a late return is recorded and a late failure retried only by a later Refresh or Scope.Start, which exist only when the abandoning run was not root Start; after root Start abandoned a step, Shutdown is the way on; verify `go doc doger.InjectorOpts` renders and `make lint` passes
+- [x] 26.1 RED: add `TestStartTimeout_RootStartAbandonsThenOnlyShutdown` (scenario "After root Start abandons a step, only Shutdown follows"); it pins existing behaviour and should pass on arrival, so prove it can fail by temporarily setting `startStarted` instead of `startFailed` in `finishStart` (not committed, backup kept); verify `go test -race -run TestStartTimeout_RootStartAbandonsThenOnlyShutdown .`
+- [x] 26.2 Docs: `StartTimeout` godoc: a late return is recorded and a late failure retried only by a later Refresh or Scope.Start, which exist only when the abandoning run was not root Start; after root Start abandoned a step, Shutdown is the way on; verify `go doc doger.InjectorOpts` renders and `make lint` passes
 
 ## 27. The default warning timer on a fake clock is documented (code review F6)
 

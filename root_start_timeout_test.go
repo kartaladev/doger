@@ -930,6 +930,37 @@ func TestStartTimeout_FailureWinsOverStillRunning(t *testing.T) {
 	}
 }
 
+// TestStartTimeout_RootStartAbandonsThenOnlyShutdown pins container-start
+// "After root Start abandons a step, only Shutdown follows": the late nil
+// return is recorded, but Start has failed, so Refresh and Scope.Start
+// return ErrNotStarted, Start returns ErrAlreadyStarted, and Shutdown is
+// the way on.
+func TestStartTimeout_RootStartAbandonsThenOnlyShutdown(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		root := NewWithOpts(&InjectorOpts{StartTimeout: 10 * time.Millisecond})
+		tenant := root.Scope("tenant")
+		srv := provideCounted(root, "srv", newStepProbe(50*time.Millisecond), AsStarter())
+
+		require.ErrorIs(t, root.Start(), ErrStartTimeout)
+		time.Sleep(time.Second)
+		synctest.Wait() // the abandoned call's late outcome is handled
+
+		assert.Equal(t, int32(1), srv.calls.Load(), "calls of srv")
+		assert.True(t, startedNamed(t, root, root.self, "srv"), "the late nil return is recorded")
+		assert.ErrorIs(t, root.Refresh(), ErrNotStarted)
+		assert.ErrorIs(t, tenant.Start(), ErrNotStarted)
+		assert.ErrorIs(t, root.Start(), ErrAlreadyStarted)
+		assert.Equal(t, int32(1), srv.calls.Load(), "no later run calls srv")
+
+		report := root.Shutdown()
+
+		assert.True(t, report.Succeed, "report errors: %v", report.Errors)
+		assert.Equal(t, int32(1), srv.shutdowns.Load(), "Shutdown shuts srv down")
+	})
+}
+
 // TestStartTimeout_LateReturnRacesRun pins container-start "A late return
 // races a covering run": the abandoned call returns nil while a second
 // Refresh is between discovering "late" and starting it.
