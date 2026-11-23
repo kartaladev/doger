@@ -208,7 +208,7 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 36. Undocumented production behaviour is documented (triages D, E)
 
-- [ ] 36.1 Docs: `StartTimeout` godoc and `docs/docs/container/options.md`: a successful Shutdown report can come back while an abandoned Start still runs (after root Start abandoned it, nothing is in flight); `Invoke` of a service whose Start was abandoned returns its instance, which may be half started; a Starter that calls Refresh or Scope.Start synchronously deadlocks without the option and ends in an `ErrStartTimeout` pair with it (still never do it); verify `go doc` renders, `go test -run 'TestDocs_' .` and `make lint` pass
+- [ ] 36.1 Docs: `StartTimeout` godoc and `docs/docs/container/options.md`: a successful Shutdown report can come back while an abandoned Start still runs (after root Start abandoned it, nothing is in flight); `Invoke` of a service whose Start was abandoned returns its instance, which may be half started; a Starter that calls Refresh or Scope.Start synchronously deadlocks without the option and ends in an `ErrStartTimeout` pair with it (still never do it); also bring the `options.md` `StartTimeout` bullet level with the godoc (the root-Start-abandoned rule of 26.2 and the Goexit difference of 28.1, groups 26–29 verification); verify `go doc` renders, `go test -run 'TestDocs_' .` and `make lint` pass
 - [ ] 36.2 Docs: `HookScopeStarting` godoc: the hooks run on every Scope.Start attempt that passes its phase check, including one that then reports a still-running step; verify `go doc` renders and `make lint` passes
 
 ## 37. Release checks after the code review and consistency fixes

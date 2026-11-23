@@ -534,9 +534,9 @@ type InjectorOpts struct {
 	// Set a controllable Clock to drive time in tests, such as
 	// dogerclockwork.Wrap(clockwork.NewFakeClock()) from the
 	// github.com/kartaladev/doger/clock/clockwork module, or any type with
-	// the Clock methods. With a Logger that keeps Warn records, each start
-	// step arms at most one SlowStartThreshold warning timer on the Clock
-	// while it runs, and a positive StartTimeout arms one more; a fake
+	// the Clock methods. While a start step runs, a positive StartTimeout
+	// arms one timer on the Clock for it, and with a Logger that keeps Warn
+	// records the SlowStartThreshold warning may arm one more; a fake
 	// clock's BlockUntil counts them. SlowStartThreshold: -1 removes the
 	// warning timer.
 	Clock Clock
@@ -568,9 +568,8 @@ type InjectorOpts struct {
 	// before the threshold never warns.
 	// Default: 0, which means DefaultSlowStartThreshold (10s). A negative
 	// value disables the warning. Measured on Clock: when armed, the warning
-	// is one timer on the Clock per start step while the step runs, so with
-	// a Warn-enabled Logger it counts toward a fake clock's BlockUntil;
-	// -1 removes it.
+	// is one timer on the Clock per running step, which a fake clock's
+	// BlockUntil counts.
 	SlowStartThreshold time.Duration
 
 	// StartTimeout bounds each Starter Start method and each kind-handler
@@ -586,28 +585,27 @@ type InjectorOpts struct {
 	// below StartTimeout stops waiting at its deadline and skips the
 	// services it then reaches, so a stuck step keeps running until its call
 	// returns, as without this option. Go cannot stop the call: it keeps
-	// running in its goroutine with a cancelled context. Since the call runs
-	// in its own goroutine, a runtime.Goexit in a Start method or kind
-	// handler ends only that goroutine and is reported as a [*StartError]
-	// for the step; without this option the call runs on the caller's
-	// goroutine, which Goexit ends, as before. The step's context keeps the
-	// lifetime it has without this option: it ends when the run ends, and
-	// also when the step is abandoned. It reports no deadline, since a step
-	// that returns in time keeps it past the timeout. While it runs, the container never
-	// calls it again: a covering Refresh or Scope.Start skips it, with no
-	// hooks, and skips every candidate of the run that depends on its service,
-	// directly or through others; it starts everything else, then returns its
-	// first failure, or else a [*StartError] naming the still-running step
-	// that matches ErrStartTimeout. Once it returns nil it is recorded as started (or
-	// handled) unless its scope is shutting down or no longer holds it, and
-	// once it fails a later Refresh or Scope.Start tries it again. Those
-	// runs exist only when the abandoning run was not root Start: after root
-	// Start abandoned a step, Start has failed, so Refresh and Scope.Start
-	// return [ErrNotStarted] and Start returns [ErrAlreadyStarted]. The late
-	// return is still recorded or logged, and Shutdown is the way on.
-	// Shutdown still calls the service's Shutdowner, its stop path. The
-	// guarantee is per container: a clone shares eager instances and starts
-	// them independently.
+	// running in its own goroutine with a cancelled context. So a
+	// runtime.Goexit in a Start method or kind handler ends only that
+	// goroutine and, before the timeout, is reported as a [*StartError] for
+	// the step (after it, it is logged as the late outcome); without this
+	// option the call runs on the caller's goroutine, which Goexit ends. The step's context keeps the lifetime it has without this
+	// option: it ends when the run ends, and also when the step is
+	// abandoned. It reports no deadline, since a step that returns in time
+	// keeps it past the timeout. While it runs, the container never calls it
+	// again: a covering Refresh or Scope.Start skips it, with no hooks, and
+	// skips every candidate of the run that depends on its service, directly
+	// or through others; it starts everything else, then returns its first
+	// failure, or else a [*StartError] naming the still-running step that
+	// matches ErrStartTimeout. Once it returns nil it is recorded as started
+	// (or handled) unless its scope is shutting down or no longer holds it,
+	// and once it fails a later Refresh or Scope.Start tries it again. After
+	// root Start abandoned a step, no such run follows: Start has failed, so
+	// Refresh and Scope.Start return [ErrNotStarted] and Start returns
+	// [ErrAlreadyStarted]; the late return is still recorded or logged, and
+	// Shutdown is the way on. Shutdown still calls the service's Shutdowner,
+	// its stop path. The guarantee is per container: a clone shares eager
+	// instances and starts them independently.
 	// Default: 0, no bound: Start waits for every step, however long, and an
 	// ended context is noticed only between steps. A negative value is the
 	// same as 0. Measured on Clock.
