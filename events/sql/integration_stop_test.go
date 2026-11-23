@@ -17,9 +17,16 @@ import (
 	eventsql "github.com/kartaladev/doger/events/sql"
 )
 
-// TestStop is not parallel with the other tests: it asserts that the
-// release takes well under a second, which a loaded machine can stretch.
+// TestStop checks what a stop leaves to another member: the claims it
+// never handed over, released, and the running handler's delivery, acked
+// when stop waited for it or requeued when stop cancelled it. Nothing in
+// it depends on how fast the machine is: the running handler returns only
+// when the test lets it or its context ends, and i2 receives the
+// deliveries within the wait timeout, shorter than the lease, so through
+// the release and never through an expired lease.
 func TestStop(t *testing.T) {
+	const lease = 30 * time.Second // longer than waitTimeout
+	const leased = "SELECT COUNT(*) FROM doger_event_deliveries WHERE lease_token IS NOT NULL"
 	tests := []struct {
 		name        string
 		stopTimeout time.Duration // 0: context.Background()
@@ -35,7 +42,7 @@ func TestStop(t *testing.T) {
 			forEachEngine(t, func(t *testing.T, db *testDB) {
 				testWithTimeout(t, time.Minute)
 				const dest = "orders.placed"
-				opts := fast(eventsql.Lease(30*time.Second), eventsql.BatchSize(8), eventsql.Workers(1))
+				opts := fast(eventsql.Lease(lease), eventsql.BatchSize(8), eventsql.Workers(1))
 				i1 := schemaTransport(t, db, opts...)
 				i2 := db.Transport(t, opts...)
 				seedGroup(t, db, dest, "mail", false)
@@ -44,11 +51,14 @@ func TestStop(t *testing.T) {
 				}
 
 				running := make(chan struct{}, 8)
+				finish := make(chan struct{}) // closed to let the running handler return
+				letFinish := sync.OnceFunc(func() { close(finish) })
 				var finished, cancelled atomic.Bool
+				beforeClaim := time.Now()
 				stop := subscribe(t, i1, group(dest, "mail"), func(ctx context.Context, _ doger.Envelope) error {
 					running <- struct{}{}
 					select {
-					case <-time.After(100 * time.Millisecond):
+					case <-finish:
 						finished.Store(true)
 						return nil
 					case <-ctx.Done():
@@ -56,10 +66,11 @@ func TestStop(t *testing.T) {
 						return ctx.Err()
 					}
 				})
+				t.Cleanup(letFinish) // before the stop of the cleanup, on a failure
 				<-running
 				// the 8 were claimed in one transaction, committed before the
 				// first handler started
-				require.Equal(t, 8, db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries WHERE lease_token IS NOT NULL"))
+				require.Equal(t, 8, db.Count(t, leased))
 
 				ctx := context.Background()
 				if tt.stopTimeout > 0 {
@@ -67,21 +78,31 @@ func TestStop(t *testing.T) {
 					ctx, cancel = context.WithTimeout(ctx, tt.stopTimeout)
 					defer cancel()
 				}
-				stopped := time.Now()
-				_ = stop(ctx)
-				stopTook := time.Since(stopped)
+				stopped := make(chan error, 1)
+				go func() { stopped <- stop(ctx) }()
 
 				if tt.stopTimeout == 0 {
+					// stop releases the 7 claims it never handed over, then
+					// waits for the running handler
+					waitFor(t, func() bool { return db.Count(t, leased) == 1 }, "stop releasing the claims not handed over")
+					select {
+					case err := <-stopped:
+						t.Fatalf("stop returned %v while the handler was running", err)
+					default:
+					}
+					letFinish()
+					require.NoError(t, <-stopped)
 					assert.True(t, finished.Load(), "stop returned before the running handler finished")
 				} else {
-					assert.Less(t, stopTook, time.Second)
-					assert.True(t, cancelled.Load(), "the running handler's context was not cancelled")
+					// the handler returns only once its context ends: stop
+					// returns once its own context ended, cancelling it
+					assert.ErrorIs(t, <-stopped, context.DeadlineExceeded)
+					assert.Eventually(t, cancelled.Load, waitTimeout, time.Millisecond, "the running handler's context was not cancelled")
 				}
-				released := time.Now()
 				c := newCollector()
 				subscribe(t, i2, group(dest, "mail"), c.handle)
 				assert.Len(t, distinct(c.expect(t, tt.wantI2)), tt.wantI2)
-				assert.Less(t, time.Since(released), time.Second, "i2 waited for the lease instead of the release")
+				assert.Less(t, time.Since(beforeClaim), lease, "i2 waited for the lease instead of the release")
 				c.quiet(t)
 			})
 		})
