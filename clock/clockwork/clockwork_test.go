@@ -266,6 +266,11 @@ func TestWrap_SlowStartWarning(t *testing.T) {
 		"one warning once the clock reached the threshold, before srv is released")
 
 	release()
-	require.NoError(t, <-done)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return once srv was released")
+	}
 	assert.Equal(t, 1, recorder.count(slowStart), "exactly one warning")
 }

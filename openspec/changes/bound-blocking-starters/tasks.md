@@ -164,7 +164,7 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 29. TestWrap_SlowStartWarning never hangs (code review F8)
 
-- [ ] 29.1 Bound the wait for Start in `TestWrap_SlowStartWarning` with a `select` on `time.After`, as `TestWrap_StartTimeout` does; verify `(cd clock/clockwork && go test -race ./...)` and its lint pass
+- [x] 29.1 Bound the wait for Start in `TestWrap_SlowStartWarning` with a `select` on `time.After`, as `TestWrap_StartTimeout` does; verify `(cd clock/clockwork && go test -race ./...)` and its lint pass
 
 ## 30. A late return during root Shutdown is not recorded (triage E, E1)
 
