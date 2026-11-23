@@ -281,20 +281,23 @@ func (s *RootScope) markAbandoned(step startStep) {
 
 // finishAbandoned handles the end of an abandoned call of step with
 // outcome err. A nil outcome records step as started or handled, unless
-// its scope is shutting down or no longer holds the service: a scope
-// shutdown marks its scope closing under lifecycleMu before it removes
-// services, so a record made here is either cleared by that shutdown's
-// forget or not made at all, and recordIfHeld covers the removers that do
-// not take lifecycleMu. The step stops being abandoned only after that.
+// its scope or the root is shutting down, or its scope no longer holds the
+// service: a scope shutdown marks its scope closing, and a root shutdown
+// leaves closeOpen, under lifecycleMu before it removes services, so a
+// record made here is either cleared by that shutdown's forget or not made
+// at all, and recordIfHeld covers the removers that do not take
+// lifecycleMu. The step stops being abandoned only after that.
 func (s *RootScope) finishAbandoned(step startStep, err error) {
 	candidate := step.candidate
 
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 
+	shuttingDown := closingInLine(candidate.scope) || s.closePhase != closeOpen
+
 	// recorded before it stops being abandoned, so a run never sees it as
 	// neither recorded nor abandoned while its scope still holds it
-	if err == nil && !closingInLine(candidate.scope) {
+	if err == nil && !shuttingDown {
 		s.recordIfHeld(step)
 	}
 

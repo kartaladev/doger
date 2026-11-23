@@ -168,9 +168,9 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 30. A late return during root Shutdown is not recorded (triage E, E1)
 
-- [ ] 30.1 RED: add `TestStartTimeout_LateReturnDuringShutdown/{root_starter,root_runnable,tenant_own,tenant_root}` (scenario "A late return during a shutdown is not recorded"); verify `go test -race -run TestStartTimeout_LateReturnDuringShutdown .` fails on the two root rows (recorded as started or handled) and passes on the tenant rows
-- [ ] 30.2 GREEN: `finishAbandoned` also refuses the record while the root is closing (`closePhase != closeOpen`) (design D5); verify the test passes, `TestStartTimeout_LateReturnAfterScopeShutdown` stays green, and `make test` is green
-- [ ] 30.3 REFACTOR: Extract Function `scopeShuttingDown(scope)` for `closingInLine || root closing` if it is used in more than one place (D12 also needs it); verify `make test` and `make lint` pass
+- [x] 30.1 RED: add `TestStartTimeout_LateReturnDuringShutdown/{root_starter,root_runnable,tenant_own,tenant_root}` (scenario "A late return during a shutdown is not recorded"); verify `go test -race -run TestStartTimeout_LateReturnDuringShutdown .` fails on the two root rows (recorded as started or handled) and passes on the tenant rows
+- [x] 30.2 GREEN: `finishAbandoned` also refuses the record while the root is closing (`closePhase != closeOpen`) (design D5); verify the test passes, `TestStartTimeout_LateReturnAfterScopeShutdown` stays green, and `make test` is green
+- [x] 30.3 REFACTOR: Extract Function `scopeShuttingDown(scope)` for `closingInLine || root closing` if it is used in more than one place (D12 also needs it); verify `make test` and `make lint` pass
 
 ## 31. A child scope Shutdown cancels the running start steps of its subtree (triage A/C, I1)
 

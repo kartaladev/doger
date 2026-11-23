@@ -1030,6 +1030,119 @@ func TestStartTimeout_LateReturnAfterScopeShutdown(t *testing.T) {
 	})
 }
 
+// shutdownGate is a service whose Shutdown signals entered, then blocks
+// until release is closed: it holds a shutdown open at a known point.
+type shutdownGate struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newShutdownGate() *shutdownGate {
+	return &shutdownGate{entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (g *shutdownGate) Shutdown() error {
+	close(g.entered)
+	<-g.release
+	return nil
+}
+
+// unblock releases a blocked Shutdown.
+func (g *shutdownGate) unblock() {
+	select {
+	case <-g.release:
+	default:
+		close(g.release)
+	}
+}
+
+// TestStartTimeout_LateReturnDuringShutdown pins container-start "A late
+// return during a shutdown is not recorded". The window is held open by
+// "gate", a dependent of "srv" whose Shutdown blocks: the shutdown removes
+// dependents first, so while "gate"'s Shutdown blocks, "srv" is still
+// registered and only the closing state can refuse the late record. The
+// gate's entered channel makes the window deterministic, unlike a hook or
+// the seam, which run outside the shutdown.
+func TestStartTimeout_LateReturnDuringShutdown(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		runnable     bool // "srv" is opted in with AsRunnable, not AsStarter
+		child        bool // "srv" and "gate" live in child scope "tenant"
+		rootShutdown bool // with child: the shutdown is root.Shutdown(), not tenant.Shutdown()
+	}{
+		{name: "root_starter"},
+		{name: "root_runnable", runnable: true},
+		{name: "tenant_own", child: true},
+		{name: "tenant_root", child: true, rootShutdown: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				require.NoError(t, root.Start())
+
+				scope, operation := root.self, root.Refresh
+				shutdown := func() { root.Shutdown() }
+				if tt.child {
+					scope = root.Scope("tenant")
+					operation = scope.Start
+					if !tt.rootShutdown {
+						shutdown = func() { _ = scope.Shutdown() }
+					}
+				}
+				opt := AsStarter
+				if tt.runnable {
+					opt = AsRunnable
+				}
+
+				probe := newStepProbe(0)
+				ProvideNamed(scope, "srv", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, opt())
+				wrapper, ok := scope.serviceGet("srv")
+				require.True(t, ok)
+				recorded := func() bool {
+					if tt.runnable {
+						return root.isHandled(wrapper, runnableKind.id)
+					}
+					return root.isStarted(wrapper)
+				}
+
+				gate := newShutdownGate()
+				shutdownDone := make(chan struct{})
+				defer func() {
+					probe.unblock()
+					<-probe.ended
+					gate.unblock()
+					root.Shutdown()
+				}()
+				require.ErrorIs(t, operation(), ErrStartTimeout)
+				ProvideNamedValue(scope, "gate", gate, DependsOnNamed("srv"))
+				_, err := InvokeNamed[*shutdownGate](scope, "gate")
+				require.NoError(t, err)
+
+				go func() {
+					defer close(shutdownDone)
+					shutdown()
+				}()
+				<-gate.entered
+
+				probe.unblock()
+				<-probe.ended
+				synctest.Wait() // the late outcome is handled
+
+				assert.False(t, recorded(), "a late return during the shutdown is not recorded")
+
+				gate.unblock()
+				<-shutdownDone
+			})
+		})
+	}
+}
+
 // TestStart_RemovalBeforeRecord pins container-start "A removal between the
 // registration check and the record": the startSeam's beforeRecord runs
 // ShutdownNamed inside the window between the check that the root still
