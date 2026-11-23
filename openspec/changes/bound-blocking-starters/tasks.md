@@ -160,7 +160,7 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 28. The Goexit difference under StartTimeout is documented (code review F7)
 
-- [ ] 28.1 Docs: `StartTimeout` godoc: under the option a `runtime.Goexit` in a Start method or kind handler is reported as a step error; without it the call runs on the caller's goroutine, which Goexit ends, as before this change; verify `go doc` renders and `make lint` passes
+- [x] 28.1 Docs: `StartTimeout` godoc: under the option a `runtime.Goexit` in a Start method or kind handler is reported as a step error; without it the call runs on the caller's goroutine, which Goexit ends, as before this change; verify `go doc` renders and `make lint` passes
 
 ## 29. TestWrap_SlowStartWarning never hangs (code review F8)
 

@@ -585,8 +585,12 @@ type InjectorOpts struct {
 	// Shutdown waits for the run within its own context: a Shutdown bounded
 	// below StartTimeout stops waiting at its deadline and skips the
 	// services it then reaches, so a stuck step keeps running until its call
-	// returns, as without this option. Go cannot stop the call: it keeps running in its
-	// goroutine with a cancelled context. The step's context keeps the
+	// returns, as without this option. Go cannot stop the call: it keeps
+	// running in its goroutine with a cancelled context. Since the call runs
+	// in its own goroutine, a runtime.Goexit in a Start method or kind
+	// handler ends only that goroutine and is reported as a [*StartError]
+	// for the step; without this option the call runs on the caller's
+	// goroutine, which Goexit ends, as before. The step's context keeps the
 	// lifetime it has without this option: it ends when the run ends, and
 	// also when the step is abandoned. It reports no deadline, since a step
 	// that returns in time keeps it past the timeout. While it runs, the container never
