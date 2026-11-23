@@ -886,6 +886,319 @@ func TestStartTimeout_RefreshSkipsStillRunning(t *testing.T) {
 	}
 }
 
+// TestStartTimeout_AncestorStillRunningSkipsDependent pins container-start
+// "A dependent of a still-running step in an ancestor scope is skipped": a
+// run that does not claim the still-running step, since it lives in an
+// ancestor scope, still skips its dependents. The earlier_stage_* rows are
+// same-scope rows of "An abandoned step is not started again while it runs"
+// (group 25 verification): the dependent's own step runs in an earlier stage
+// than the still-running step, so the run reaches it before it claims that
+// step.
+func TestStartTimeout_AncestorStillRunningSkipsDependent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		stuckRunnable bool // "stuck" is opted in with AsRunnable, not AsStarter
+		sameScope     bool // "worker" and "dep" live in the root, not in child "tenant"
+		depComponent  bool // "dep" is a component of a StageBeforeStart kind, not a Starter
+		invoke        bool // "dep"'s provider invokes "stuck" instead of DependsOnNamed("stuck")
+		viaRoot       bool // the operation is root.Refresh(), not tenant.Start()
+	}{
+		{name: "depends_on"},
+		{name: "invoke", invoke: true},
+		{name: "refresh", viaRoot: true},
+		{name: "earlier_stage_starter", stuckRunnable: true, sameScope: true, viaRoot: true},
+		{name: "earlier_stage_component", sameScope: true, depComponent: true, viaRoot: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				early := NewKind[Runner, struct{}]("early")
+				early.Handle(root, StageBeforeStart, func(ctx context.Context, c Component[Runner, struct{}]) error {
+					return c.Instance.Run(ctx)
+				})
+				require.NoError(t, root.Start())
+
+				stuck := newStepProbe(0)
+				stuckOpt := AsStarter
+				if tt.stuckRunnable {
+					stuckOpt = AsRunnable
+				}
+				ProvideNamed(root, "stuck", func(Injector) (startOnly, error) { return startOnly{stuck}, nil }, stuckOpt())
+				defer func() {
+					stuck.unblock()
+					<-stuck.ended
+					root.Shutdown()
+				}()
+				require.ErrorIs(t, root.Refresh(), ErrStartTimeout)
+
+				scope := root.self
+				operation := root.Refresh
+				if !tt.sameScope {
+					scope = root.Scope("tenant")
+					if !tt.viaRoot {
+						operation = scope.Start
+					}
+				}
+
+				// worker and dep return at once
+				worker, dep := newStepProbe(0), newStepProbe(0)
+				worker.unblock()
+				dep.unblock()
+				ProvideNamed(scope, "worker", func(Injector) (startOnly, error) { return startOnly{worker}, nil }, AsStarter())
+				depOpts := []ProvideOption{AsStarter()}
+				if tt.depComponent {
+					depOpts = []ProvideOption{early.With(struct{}{})}
+				}
+				if !tt.invoke {
+					depOpts = append(depOpts, DependsOnNamed("stuck"))
+				}
+				ProvideNamed(scope, "dep", func(i Injector) (startOnly, error) {
+					if tt.invoke {
+						if _, err := InvokeNamed[startOnly](i, "stuck"); err != nil {
+							return startOnly{}, err
+						}
+					}
+					return startOnly{dep}, nil
+				}, depOpts...)
+
+				err := operation()
+
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.Equal(t, "stuck", startErr.Service)
+				require.ErrorIs(t, err, ErrStartTimeout)
+				assert.Equal(t, int32(1), worker.calls.Load(), "calls of worker")
+				assert.Zero(t, dep.calls.Load(), "calls of dep, which depends on stuck")
+				assert.Equal(t, int32(1), stuck.calls.Load(), "calls of stuck")
+
+				// once stuck's call returned nil, it is recorded and dep starts
+				stuck.unblock()
+				<-stuck.ended
+				synctest.Wait()
+				again := scope.Start
+				if tt.sameScope {
+					again = root.Refresh
+				}
+				require.NoError(t, again())
+				assert.Equal(t, int32(1), dep.calls.Load(), "calls of dep once stuck returned")
+				assert.Equal(t, int32(1), stuck.calls.Load(), "calls of stuck")
+			})
+		})
+	}
+}
+
+// registeringStarter is a Starter whose Start calls register.
+type registeringStarter struct{ register func() }
+
+func (s *registeringStarter) Start() error {
+	s.register()
+	return nil
+}
+
+// TestStartTimeout_LateRegistrationSkipsDependent pins that the dependents
+// check reads the registrations as they are now: in tenant.Start(), Starter
+// "gate" registers, while the run runs, a service that makes the DependsOn
+// name "cache" of Starter "dep" lead to "stuck", whose abandoned call still
+// runs, so "dep" is skipped. In the parallel rows the run walked "dep"'s
+// dependencies before "gate" started.
+func TestStartTimeout_LateRegistrationSkipsDependent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		parallelism uint
+		override    bool // gate overrides root "cache", instead of registering "cache" in tenant
+	}{
+		{name: "register_nearer/sequential"},
+		{name: "register_nearer/parallel", parallelism: 4},
+		{name: "override/sequential", override: true},
+		{name: "override/parallel", parallelism: 4, override: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second, StartParallelism: tt.parallelism})
+				require.NoError(t, root.Start())
+				stuck := newStepProbe(0)
+				ProvideNamed(root, "stuck", func(Injector) (startOnly, error) { return startOnly{stuck}, nil }, AsStarter())
+				defer func() {
+					stuck.unblock()
+					<-stuck.ended
+					root.Shutdown()
+				}()
+				require.ErrorIs(t, root.Refresh(), ErrStartTimeout, "a first run abandons stuck")
+
+				newCache := func(Injector) (*CleanupJob, error) { return &CleanupJob{name: "cache"}, nil }
+				ProvideNamed(root, "cache", newCache) // what "cache" names at first
+				tenant := root.Scope("tenant")
+				starts := &countingStarters{}
+				ProvideNamed(tenant, "gate", func(Injector) (*registeringStarter, error) {
+					return &registeringStarter{register: func() {
+						starts.record("gate")
+						if tt.override {
+							OverrideNamed(root, "cache", newCache, DependsOnNamed("stuck"))
+							return
+						}
+						ProvideNamed(tenant, "cache", newCache, DependsOnNamed("stuck"))
+					}}, nil
+				}, AsStarter())
+				provideCountedStarter(tenant, starts, "dep", DependsOnNamed("gate"), DependsOnNamed("cache"))
+
+				err := tenant.Start()
+
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.Equal(t, "stuck", startErr.Service)
+				require.ErrorIs(t, err, ErrStartTimeout)
+				assert.Equal(t, 1, starts.count("gate"), "starts of gate")
+				assert.Zero(t, starts.count("dep"), "starts of dep, whose cache now leads to stuck")
+			})
+		})
+	}
+}
+
+// provideStarterShape registers n Starters s0…s{n-1} in root: in a chain
+// each depends on the previous one, in a tree s_i depends on s_((i-1)/2).
+func provideStarterShape(root *RootScope, starts *countingStarters, shape string, n int) {
+	for i := range n {
+		var opts []ProvideOption
+		switch {
+		case i == 0:
+		case shape == "chain":
+			opts = append(opts, DependsOnNamed(fmt.Sprintf("s%d", i-1)))
+		default:
+			opts = append(opts, DependsOnNamed(fmt.Sprintf("s%d", (i-1)/2)))
+		}
+		provideCountedStarter(root, starts, fmt.Sprintf("s%d", i), opts...)
+	}
+}
+
+// TestStartTimeout_SkippedLeafWalkCost pins the cost of the dependents
+// check: a Refresh that skips an unrelated still-running leaf reads the
+// dependency graph at most 3 times as often as the same Refresh without it,
+// sequential and parallel, over a chain and a tree of Starters.
+func TestStartTimeout_SkippedLeafWalkCost(t *testing.T) {
+	t.Parallel()
+
+	const n = 100
+	// reads counts the dependencyNeighbors calls of a Refresh that starts
+	// the shape, after a first run abandoned leaf "stuck" when skipLeaf
+	reads := func(t *testing.T, shape string, parallelism uint, skipLeaf bool) int64 {
+		t.Helper()
+		var count int64
+		synctest.Test(t, func(t *testing.T) {
+			root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second, StartParallelism: parallelism})
+			require.NoError(t, root.Start())
+			stuck := newStepProbe(0)
+			defer func() {
+				stuck.unblock()
+				if skipLeaf {
+					<-stuck.ended
+				}
+				root.Shutdown()
+			}()
+			if skipLeaf {
+				ProvideNamed(root, "stuck", func(Injector) (startOnly, error) { return startOnly{stuck}, nil }, AsStarter())
+				require.ErrorIs(t, root.Refresh(), ErrStartTimeout)
+			}
+			starts := &countingStarters{}
+			provideStarterShape(root, starts, shape, n)
+
+			var calls atomic.Int64
+			root.startSeam.dependencyNeighbors = func(ServiceDescription) { calls.Add(1) }
+			err := root.Refresh()
+			root.startSeam.dependencyNeighbors = nil
+
+			if skipLeaf {
+				require.ErrorIs(t, err, ErrStartTimeout)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Len(t, starts.list(), n, "every Starter of the shape starts")
+			count = calls.Load()
+		})
+		return count
+	}
+
+	tests := []struct {
+		name        string
+		shape       string
+		parallelism uint
+	}{
+		{name: "chain/par_1", shape: "chain", parallelism: 1},
+		{name: "chain/par_8", shape: "chain", parallelism: 8},
+		{name: "tree/par_1", shape: "tree", parallelism: 1},
+		{name: "tree/par_8", shape: "tree", parallelism: 8},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			without := reads(t, tt.shape, tt.parallelism, false)
+			with := reads(t, tt.shape, tt.parallelism, true)
+			t.Logf("dependencyNeighbors calls: %d without a skipped leaf, %d with one", without, with)
+			assert.LessOrEqual(t, with, 3*without, "graph reads with a skipped leaf")
+		})
+	}
+}
+
+// BenchmarkRefresh_SkippedLeaf measures a Refresh that starts a chain or a
+// tree of Starters, with ("leaf") and without ("none") an unrelated leaf
+// whose abandoned call still runs, so that the run skips it.
+func BenchmarkRefresh_SkippedLeaf(b *testing.B) {
+	for _, shape := range []string{"chain", "tree"} {
+		for _, n := range []int{250, 500} {
+			for _, parallelism := range []uint{1, 8} {
+				for _, leaf := range []bool{false, true} {
+					name := fmt.Sprintf("%s_%d/par_%d/none", shape, n, parallelism)
+					if leaf {
+						name = fmt.Sprintf("%s_%d/par_%d/leaf", shape, n, parallelism)
+					}
+					b.Run(name, func(b *testing.B) {
+						for b.Loop() {
+							b.StopTimer()
+							root := NewWithOpts(&InjectorOpts{StartTimeout: 20 * time.Millisecond, StartParallelism: parallelism})
+							require.NoError(b, root.Start())
+							stuck := newStepProbe(0)
+							if leaf {
+								ProvideNamed(root, "stuck", func(Injector) (startOnly, error) { return startOnly{stuck}, nil }, AsStarter())
+								require.ErrorIs(b, root.Refresh(), ErrStartTimeout)
+							}
+							provideStarterShape(root, &countingStarters{}, shape, n)
+							b.StartTimer()
+
+							err := root.Refresh()
+
+							b.StopTimer()
+							if leaf {
+								require.ErrorIs(b, err, ErrStartTimeout)
+							} else {
+								require.NoError(b, err)
+							}
+							stuck.unblock()
+							if leaf {
+								<-stuck.ended
+							}
+							root.Shutdown()
+							b.StartTimer()
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
 // TestStartTimeout_FailureWinsOverStillRunning pins container-start "An
 // abandoned step is not started again while it runs": when a covering run
 // skips a still-running step and another step of the run fails, that
@@ -2034,105 +2347,18 @@ func TestChildShutdown_StillRunningStepOfClosingScope(t *testing.T) {
 // returns for a dependent that reaches several skipped services of a
 // closing scope: a still-running one wins over a closing-only one, and
 // among the same reason the first by scope, then service name. Each row
-// repeats the run 50 times and expects the same error every time.
+// repeats the run 50 times and expects the same error every time. The
+// still_running_sorts_last row pins that the reason decides before the
+// names: its closing-only "aaa" sorts before the still-running "cache".
 func TestChildShutdown_SkippedDependencyErrorIsStable(t *testing.T) {
 	t.Parallel()
 
-	// mixedRun: "dep" in the root declares edges to the exports of "redis"
-	// "cache" and "cacheC", whose abandoned calls still run, and "cacheB"
-	// and "cacheD", skipped only because redis begins shutting down in
-	// gate2's HookBeforeStart.
-	mixedRun := func(t *testing.T) error {
-		t.Helper()
-		root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
-		require.NoError(t, root.Start())
-		redis := root.Scope("redis")
-		starts := &countingStarters{}
-		provideCountedStarter(root, starts, "gate")
-		cache := provideCounted(redis, "cache", newStepProbe(0), AsStarter(), DependsOnNamed("gate"))
-		require.NoError(t, ExportNamed[*stepProbe](redis, "cache"))
-		cacheC := newStepProbe(0)
-		defer func() {
-			cache.unblock()
-			cacheC.unblock()
-			<-cache.ended
-			<-cacheC.ended
-			root.Shutdown()
-		}()
-		require.ErrorIs(t, root.Refresh(), ErrStartTimeout, "a first run abandons cache")
-		provideCounted(redis, "cacheC", cacheC, AsStarter())
-		require.NoError(t, ExportNamed[*stepProbe](redis, "cacheC"))
-		require.ErrorIs(t, root.Refresh(), ErrStartTimeout, "a second run abandons cacheC")
-
-		for _, name := range []string{"cacheB", "cacheD"} {
-			provideCountedStarter(redis, starts, name)
-			require.NoError(t, ExportNamed[*countedStarter](redis, name))
+	mixedRunWith := func(closing ...string) func(t *testing.T) error {
+		return func(t *testing.T) error {
+			t.Helper()
+			return mixedRun(t, closing)
 		}
-		provideCountedStarter(root, starts, "gate2")
-		provideCountedStarter(root, starts, "dep")
-		for _, name := range []string{"cache", "cacheC"} {
-			_, err := InvokeNamed[*stepProbe](root, name) // builds the export
-			require.NoError(t, err)
-		}
-		for _, name := range []string{"cacheB", "cacheD"} {
-			_, err := InvokeNamed[*countedStarter](root, name)
-			require.NoError(t, err)
-		}
-		for _, name := range []string{"cache", "cacheB", "cacheC", "cacheD"} {
-			require.NoError(t, DeclareDependency(root, "dep", name))
-		}
-		reports := make(chan *ShutdownReport, 1)
-		root.AddBeforeStartHook(func(_ context.Context, _ *Scope, name string) {
-			if name == "gate2" {
-				go func() { reports <- redis.Shutdown() }()
-				synctest.Wait() // redis is closing and waits for the run
-			}
-		})
-
-		err := root.Refresh()
-		<-reports
-		assert.Equal(t, 0, starts.count("dep"), "dep is skipped")
-		return err
 	}
-	// closingRun: "server" in the root declares edges to the exports
-	// "cacheD", "cacheB", "cacheC" and "cacheA" of "redis", all skipped only
-	// because redis.Shutdown() cancelled "blk"'s handler first.
-	closingRun := func(t *testing.T) error {
-		t.Helper()
-		root := New()
-		require.NoError(t, root.Start())
-		redis := root.Scope("redis")
-		starts := &countingStarters{}
-		entered := make(chan struct{})
-		block := NewKind[Job, Spec]("block")
-		ProvideNamed(redis, "blk", func(Injector) (*CleanupJob, error) { return &CleanupJob{name: "blk"}, nil }, block.With(Spec{}))
-		block.Handle(root, StageBeforeStart, func(ctx context.Context, _ Component[Job, Spec]) error {
-			close(entered)
-			<-ctx.Done()
-			return ctx.Err()
-		})
-		names := []string{"cacheD", "cacheB", "cacheC", "cacheA"}
-		for _, name := range names {
-			provideCountedStarter(redis, starts, name)
-			require.NoError(t, ExportNamed[*countedStarter](redis, name))
-		}
-		provideCountedStarter(root, starts, "server")
-		for _, name := range names {
-			require.NoError(t, DeclareDependency(root, "server", name))
-			_, err := InvokeNamed[*countedStarter](root, name) // builds the export
-			require.NoError(t, err)
-		}
-		defer root.Shutdown()
-
-		runErr := make(chan error, 1)
-		go func() { runErr <- root.Refresh() }()
-		<-entered
-		redis.Shutdown()
-		err := <-runErr
-		assert.Equal(t, 0, starts.count("server"), "server is skipped")
-		return err
-	}
-
 	tests := []struct {
 		name        string
 		run         func(t *testing.T) error
@@ -2140,8 +2366,11 @@ func TestChildShutdown_SkippedDependencyErrorIsStable(t *testing.T) {
 		wantService string // the service the run's *StartError names
 		wantText    string // in the error's message
 	}{
-		{name: "mixed", run: mixedRun, wantErr: ErrStartTimeout, wantService: "cache", wantText: "start timeout"},
-		{name: "closing_only", run: closingRun, wantErr: ErrShutdown, wantService: "server", wantText: "dependency `cacheA` was not started"},
+		{name: "mixed", run: mixedRunWith("cacheB", "cacheD"), wantErr: ErrStartTimeout, wantService: "cache", wantText: "start timeout"},
+		// "aaa" sorts before the still-running "cache" by name: the reason
+		// decides first
+		{name: "still_running_sorts_last", run: mixedRunWith("aaa", "cacheD"), wantErr: ErrStartTimeout, wantService: "cache", wantText: "start timeout"},
+		{name: "closing_only", run: closingOnlyRun, wantErr: ErrShutdown, wantService: "server", wantText: "dependency `cacheA` was not started"},
 	}
 
 	for _, tt := range tests {
@@ -2163,6 +2392,105 @@ func TestChildShutdown_SkippedDependencyErrorIsStable(t *testing.T) {
 			assert.Len(t, seen, 1, "the run returns the same error every time: %v", seen)
 		})
 	}
+}
+
+// mixedRun is a run of TestChildShutdown_SkippedDependencyErrorIsStable:
+// "dep" in the root reaches the exports "cache" and "cacheC" of "redis",
+// whose abandoned calls still run, and the exports named closing, skipped
+// only because redis begins shutting down in gate2's HookBeforeStart.
+func mixedRun(t *testing.T, closing []string) error {
+	t.Helper()
+
+	root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+	require.NoError(t, root.Start())
+	redis := root.Scope("redis")
+	starts := &countingStarters{}
+	provideCountedStarter(root, starts, "gate")
+	cache := provideCounted(redis, "cache", newStepProbe(0), AsStarter(), DependsOnNamed("gate"))
+	require.NoError(t, ExportNamed[*stepProbe](redis, "cache"))
+	cacheC := newStepProbe(0)
+	defer func() {
+		cache.unblock()
+		cacheC.unblock()
+		<-cache.ended
+		<-cacheC.ended
+		root.Shutdown()
+	}()
+	require.ErrorIs(t, root.Refresh(), ErrStartTimeout, "a first run abandons cache")
+	provideCounted(redis, "cacheC", cacheC, AsStarter())
+	require.NoError(t, ExportNamed[*stepProbe](redis, "cacheC"))
+	require.ErrorIs(t, root.Refresh(), ErrStartTimeout, "a second run abandons cacheC")
+
+	for _, name := range closing {
+		provideCountedStarter(redis, starts, name)
+		require.NoError(t, ExportNamed[*countedStarter](redis, name))
+	}
+	provideCountedStarter(root, starts, "gate2")
+	provideCountedStarter(root, starts, "dep")
+	for _, name := range []string{"cache", "cacheC"} {
+		_, err := InvokeNamed[*stepProbe](root, name) // builds the export
+		require.NoError(t, err)
+	}
+	for _, name := range closing {
+		_, err := InvokeNamed[*countedStarter](root, name)
+		require.NoError(t, err)
+	}
+	for _, name := range append([]string{"cache", "cacheC"}, closing...) {
+		require.NoError(t, DeclareDependency(root, "dep", name))
+	}
+	reports := make(chan *ShutdownReport, 1)
+	root.AddBeforeStartHook(func(_ context.Context, _ *Scope, name string) {
+		if name == "gate2" {
+			go func() { reports <- redis.Shutdown() }()
+			synctest.Wait() // redis is closing and waits for the run
+		}
+	})
+
+	err := root.Refresh()
+	<-reports
+	assert.Equal(t, 0, starts.count("dep"), "dep is skipped")
+	return err
+}
+
+// closingOnlyRun is a run of TestChildShutdown_SkippedDependencyErrorIsStable:
+// "server" in the root declares edges to the exports "cacheD", "cacheB",
+// "cacheC" and "cacheA" of "redis", all skipped only because
+// redis.Shutdown() cancelled "blk"'s handler first.
+func closingOnlyRun(t *testing.T) error {
+	t.Helper()
+
+	root := New()
+	require.NoError(t, root.Start())
+	redis := root.Scope("redis")
+	starts := &countingStarters{}
+	entered := make(chan struct{})
+	block := NewKind[Job, Spec]("block")
+	ProvideNamed(redis, "blk", func(Injector) (*CleanupJob, error) { return &CleanupJob{name: "blk"}, nil }, block.With(Spec{}))
+	block.Handle(root, StageBeforeStart, func(ctx context.Context, _ Component[Job, Spec]) error {
+		close(entered)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	names := []string{"cacheD", "cacheB", "cacheC", "cacheA"}
+	for _, name := range names {
+		provideCountedStarter(redis, starts, name)
+		require.NoError(t, ExportNamed[*countedStarter](redis, name))
+	}
+	provideCountedStarter(root, starts, "server")
+	for _, name := range names {
+		require.NoError(t, DeclareDependency(root, "server", name))
+		_, err := InvokeNamed[*countedStarter](root, name) // builds the export
+		require.NoError(t, err)
+	}
+	defer root.Shutdown()
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- root.Refresh() }()
+	<-entered
+	redis.Shutdown()
+	err := <-runErr
+	assert.Equal(t, 0, starts.count("server"), "server is skipped")
+	return err
 }
 
 // TestChildShutdown_RecordedBeforeClosingClaim pins that a step recorded as

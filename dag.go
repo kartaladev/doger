@@ -3,6 +3,7 @@ package doger
 import (
 	"maps"
 	"sync"
+	"sync/atomic"
 )
 
 // newServiceDescription creates a new ServiceDescription with the provided scope ID, scope name, and service name.
@@ -141,6 +142,15 @@ type DAG struct {
 	mu           sync.RWMutex
 	dependencies map[ServiceDescription]map[ServiceDescription]DependencySource
 	dependents   map[ServiceDescription]map[ServiceDescription]DependencySource
+	// changes counts the edges added and the services removed, so that a
+	// reader can tell whether the graph changed since it last read it
+	changes atomic.Uint64
+}
+
+// changeCount returns how many times the graph changed: an edge added, or a
+// service removed. A source change of an existing edge does not count.
+func (d *DAG) changeCount() uint64 {
+	return d.changes.Load()
 }
 
 // addDependency adds a dependency relationship from one service to another in the DAG.
@@ -173,6 +183,8 @@ func (d *DAG) addDependency(fromScopeID, fromScopeName, fromServiceName, toScope
 	}
 	if current, ok := dependencies[to]; ok {
 		source = min(source, current)
+	} else {
+		d.changes.Add(1)
 	}
 	dependencies[to] = source
 
@@ -231,6 +243,7 @@ func (d *DAG) removeService(scopeID, scopeName, serviceName string) {
 
 	delete(d.dependencies, desc)
 	delete(d.dependents, desc)
+	d.changes.Add(1)
 }
 
 // listServicesHavingNoDependent returns the subset of the provided service names

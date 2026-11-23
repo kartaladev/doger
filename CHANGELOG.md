@@ -38,6 +38,10 @@ break is listed under **BREAKING** with its migration.
   it could return while that delivery still ran. A custom executor,
   including one wrapping `NewBoundedEventExecutor`, keeps the previous
   rule; see the events docs, "Shutdown".
+- Start order now follows a dependency declared with `DeclareDependency` on
+  an export to the export's source, even when nothing has resolved the
+  export yet. Before, the dependent could start before the export's source,
+  and a source skipped by its scope's shutdown did not skip it.
 
 ## v0.3.0 - 2026-11-22
 

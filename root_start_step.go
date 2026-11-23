@@ -34,6 +34,16 @@ type startSeam struct {
 	// afterStepDone runs in awaitStep between the end of its wait and the
 	// decision of the step's outcome.
 	afterStepDone func(step startStep)
+	// dependencyNeighbors runs at each dependencyNeighbors call, so that a
+	// test can count the graph reads of a run.
+	dependencyNeighbors func(desc ServiceDescription)
+}
+
+// seamDependencyNeighbors runs the dependencyNeighbors seam, if set.
+func (s *RootScope) seamDependencyNeighbors(desc ServiceDescription) {
+	if s.startSeam.dependencyNeighbors != nil {
+		s.startSeam.dependencyNeighbors(desc)
+	}
 }
 
 // seamBeforeRecord runs the beforeRecord seam, if set.

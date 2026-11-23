@@ -476,7 +476,9 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // abandoned call still runs, otherwise with a [*StartError] naming the
 // dependent that matches [ErrShutdown]. When the dependent depends on
 // several skipped services, a still-running one decides the error, then
-// the first by scope name and service name.
+// the first by scope name, service name and scope ID (scope IDs are
+// random, so between same-named scopes the choice is stable within a
+// container only).
 // A run that begins while the scope shuts down skips it and its descendants.
 // If ctx ends first, the report fails with an error keyed by this scope with
 // an empty service name, wrapping ctx.Err(), and the shutdown proceeds with
@@ -1266,6 +1268,7 @@ func (s *Scope) storeLocked(name string, replaced, service any) {
 	s.services[name] = service
 	s.typeMatches = nil
 	s.version++
+	s.RootScope().registrations.Add(1)
 }
 
 // countDefault adds delta to the count of default registrations when service

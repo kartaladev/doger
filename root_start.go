@@ -1,14 +1,12 @@
 package doger
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
 )
 
@@ -504,7 +502,9 @@ type startRun struct {
 
 	mu      sync.Mutex
 	skipped map[ServiceDescription]stepSkip
-	pending error
+	// skipCount is how many times skipped changed
+	skipCount uint64
+	pending   error
 }
 
 // stepSkip is why the run skipped a step of a service: an abandoned call
@@ -553,6 +553,7 @@ func (r *startRun) skip(candidate *startCandidate, skip stepSkip) {
 	}
 	skip.service = candidate.name
 	r.skipped[desc] = skip
+	r.skipCount++
 }
 
 // skipCancelled records a step that a scope shutdown cancelled, which
@@ -583,68 +584,6 @@ func (r *startRun) pendingError() error {
 	defer r.mu.Unlock()
 
 	return r.pending
-}
-
-// dependsOnSkipped reports whether the run skipped a step of the
-// candidate of step, or of a candidate it depends on, directly or through
-// others, because an abandoned call of that step still runs or because its
-// scope is shutting down: step is skipped too, with no hooks and no call.
-// When step is skipped for a dependency of a closing scope and is not in a
-// closing scope itself, the run reports it: the dependency's timeout error
-// while its abandoned call runs, otherwise a *StartError naming step's
-// service that matches ErrShutdown.
-func (r *startRun) dependsOnSkipped(step startStep) bool {
-	desc := step.candidate.desc()
-	closingItself := r.root.scopeClosing(step.candidate.scope)
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if len(r.skipped) == 0 {
-		return false
-	}
-	if _, skipped := r.skipped[desc]; skipped {
-		return true
-	}
-	// the graph as it is now: a kind handler may have declared an edge
-	// since the first skip
-	reached := r.root.reachedMatching(desc, func(d ServiceDescription) bool {
-		_, skipped := r.skipped[d]
-		return skipped
-	})
-	if len(reached) == 0 {
-		return false
-	}
-	// a dependency skipped only because its abandoned call still runs set
-	// the pending error when it was skipped
-	if !closingItself && r.pending == nil {
-		d := slices.MinFunc(reached, func(a, b ServiceDescription) int {
-			return r.compareSkipped(a, b)
-		})
-		r.pending = r.skipped[d].dependentError(step)
-	}
-
-	return true
-}
-
-// compareSkipped orders two skipped services for the error of a dependent
-// that reaches both: a still-running one first, then by scope name,
-// service name and scope ID, so that the error does not depend on the
-// order the graph is walked in. r.mu must be held.
-func (r *startRun) compareSkipped(a, b ServiceDescription) int {
-	aRunning, bRunning := r.skipped[a].stillRunning != nil, r.skipped[b].stillRunning != nil
-	if aRunning != bRunning {
-		if aRunning {
-			return -1
-		}
-		return 1
-	}
-
-	return cmp.Or(
-		strings.Compare(a.ScopeName, b.ScopeName),
-		strings.Compare(a.Service, b.Service),
-		strings.Compare(a.ScopeID, b.ScopeID),
-	)
 }
 
 // claim is claimStep for the run: it reports whether step is skipped,
@@ -917,12 +856,14 @@ func (s *RootScope) startStarters(startCtx context.Context, run *startRun, candi
 		return s.startStartersParallel(startCtx, run, candidates, int(n))
 	}
 
+	var check *dependentsCheck
 	for _, candidate := range candidates {
 		if err := checkAbort(startCtx); err != nil {
 			return err
 		}
 
-		if run.dependsOnSkipped(startStep{candidate: candidate, op: StartOpStart}) {
+		check = run.dependentsCheckSince(check)
+		if check.skips(startStep{candidate: candidate, op: StartOpStart}) {
 			continue
 		}
 
@@ -952,15 +893,18 @@ func (s *RootScope) startStartersParallel(startCtx context.Context, run *startRu
 	started := map[ServiceDescription]bool{}
 
 	outcomes := make(chan starterOutcome)
+	var check *dependentsCheck
 	running := 0
 	var firstErr error
 	var firstPanic *starterOutcome
 
 	for {
 		for firstErr == nil && firstPanic == nil && running < n {
-			// dependents of a still-running step are never scheduled
+			// dependents of a still-running step are never scheduled; one
+			// check answers every pass until what it read changes
+			check = run.dependentsCheckSince(check)
 			pending = slices.DeleteFunc(pending, func(c *startCandidate) bool {
-				return run.dependsOnSkipped(startStep{candidate: c, op: StartOpStart})
+				return check.skips(startStep{candidate: c, op: StartOpStart})
 			})
 			ready := slices.IndexFunc(pending, func(c *startCandidate) bool {
 				return !slices.ContainsFunc(requires[c.desc()], func(d ServiceDescription) bool { return !started[d] })
@@ -1141,6 +1085,7 @@ func (s *RootScope) runStage(startCtx context.Context, run *startRun, stage Stag
 	entries := s.kinds // never written in place
 	s.kindsMu.Unlock()
 
+	var check *dependentsCheck
 	for _, entry := range entries {
 		if entry.stage != stage {
 			continue
@@ -1163,7 +1108,8 @@ func (s *RootScope) runStage(startCtx context.Context, run *startRun, stage Stag
 			}
 
 			step := startStep{candidate: component, op: StartOpHandle, kind: entry.id}
-			if run.dependsOnSkipped(step) {
+			check = run.dependentsCheckSince(check)
+			if check.skips(step) {
 				continue
 			}
 

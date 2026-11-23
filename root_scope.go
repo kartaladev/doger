@@ -148,12 +148,18 @@ type RootScope struct {
 	// is held across their user code; Shutdown never takes it, and nothing
 	// takes it while holding lifecycleMu.
 	pipelineMu sync.Mutex
-	runScopes  map[*Scope]struct{}          // scopes with candidates in the running pipeline; guarded by lifecycleMu
-	runSteps   map[*runningStep]struct{}    // contexts of the start steps the pipeline runs or awaits now; guarded by lifecycleMu
-	startedMu  sync.Mutex                   // guards started, handled and abandoned; never held across user code
-	started    map[any]struct{}             // Starters already started, keyed by wrapper
-	handled    map[any]map[*kindID]struct{} // kinds already handled, by wrapper
-	abandoned  map[any]map[*kindID]struct{} // steps whose abandoned call still runs, by wrapper; a nil kind is the Start method
+	runScopes  map[*Scope]struct{}           // scopes with candidates in the running pipeline; guarded by lifecycleMu
+	runSteps   map[*runningStep]struct{}     // contexts of the start steps the pipeline runs or awaits now; guarded by lifecycleMu
+	startedMu  sync.Mutex                    // guards started, handled and abandoned; never held across user code
+	started    map[any]struct{}              // Starters already started, keyed by wrapper
+	handled    map[any]map[*kindID]struct{}  // kinds already handled, by wrapper
+	abandoned  map[any]map[*kindID]startStep // steps whose abandoned call still runs, by wrapper; a nil kind is the Start method
+	// abandonedChanges counts the changes of abandoned; guarded by startedMu
+	abandonedChanges uint64
+	// registrations counts the services stored in any scope of the
+	// container (registrations, overrides, defaults replaced), which can
+	// change what a name resolves to; see dependentsCheck.current
+	registrations atomic.Uint64
 
 	// startSeam holds test-only callbacks into the start pipeline; it is
 	// zero (no callback) in production.

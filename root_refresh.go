@@ -2,6 +2,7 @@ package doger
 
 import (
 	"context"
+	"strings"
 )
 
 // Refresh starts what is not started yet, with context.Background(); see
@@ -258,6 +259,59 @@ func (s *RootScope) claimStep(step startStep) (skip bool, err error) {
 	return false, nil
 }
 
+// stillRunningErrors returns, by service, the error of a step whose
+// abandoned call still runs, whether a run claims that service or not: the
+// Start method's step first, then the handler call of the kind first by
+// name. errs is nil when no abandoned call runs. changes is the count of
+// changes of the abandoned steps it reflects (see abandonedChangeCount).
+func (s *RootScope) stillRunningErrors() (errs map[ServiceDescription]error, changes uint64) {
+	s.startedMu.Lock()
+	defer s.startedMu.Unlock()
+
+	if len(s.abandoned) == 0 {
+		return nil, s.abandonedChanges
+	}
+	steps := map[ServiceDescription]startStep{}
+	for _, kinds := range s.abandoned {
+		for _, step := range kinds {
+			desc := step.candidate.desc() // reads no lock
+			if first, ok := steps[desc]; !ok || compareStepKinds(step.kind, first.kind) < 0 {
+				steps[desc] = step
+			}
+		}
+	}
+	errs = make(map[ServiceDescription]error, len(steps))
+	for desc, step := range steps {
+		errs[desc] = step.stillRunningError()
+	}
+
+	return errs, s.abandonedChanges
+}
+
+// abandonedChangeCount returns how many times a step became abandoned or
+// stopped being so.
+func (s *RootScope) abandonedChangeCount() uint64 {
+	s.startedMu.Lock()
+	defer s.startedMu.Unlock()
+
+	return s.abandonedChanges
+}
+
+// compareStepKinds orders the step kinds of one service: the Start method
+// (a nil kind) first, then the kinds by name.
+func compareStepKinds(a, b *kindID) int {
+	switch {
+	case a == b:
+		return 0
+	case a == nil:
+		return -1
+	case b == nil:
+		return 1
+	default:
+		return strings.Compare(a.name, b.name)
+	}
+}
+
 // recordedLocked reports whether step is recorded as started or handled.
 // startedMu must be held.
 func (s *RootScope) recordedLocked(step startStep) bool {
@@ -280,12 +334,13 @@ func (s *RootScope) markAbandoned(step startStep) {
 	defer s.startedMu.Unlock()
 
 	if s.abandoned == nil {
-		s.abandoned = map[any]map[*kindID]struct{}{}
+		s.abandoned = map[any]map[*kindID]startStep{}
 	}
 	if s.abandoned[service] == nil {
-		s.abandoned[service] = map[*kindID]struct{}{}
+		s.abandoned[service] = map[*kindID]startStep{}
 	}
-	s.abandoned[service][step.kind] = struct{}{}
+	s.abandoned[service][step.kind] = step
+	s.abandonedChanges++
 }
 
 // finishAbandoned handles the end of an abandoned call of step with
@@ -317,6 +372,7 @@ func (s *RootScope) finishAbandoned(step startStep, err error) {
 	if len(s.abandoned[candidate.service]) == 0 {
 		delete(s.abandoned, candidate.service)
 	}
+	s.abandonedChanges++
 }
 
 // recordIfHeld records step as started or handled while its scope holds
@@ -378,5 +434,8 @@ func (s *RootScope) forget(service any) {
 
 	delete(s.started, service)
 	delete(s.handled, service)
-	delete(s.abandoned, service)
+	if _, ok := s.abandoned[service]; ok {
+		delete(s.abandoned, service)
+		s.abandonedChanges++
+	}
 }

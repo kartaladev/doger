@@ -89,9 +89,13 @@ func (s *RootScope) dependencyPath(from, to ServiceDescription) []ServiceDescrip
 
 // dependencyNeighbors returns the services desc depends on: its recorded DAG
 // edges plus the static DependsOn declarations of its registered wrapper,
-// resolved from its scope. The DAG lock is never held while a scope lock is
+// resolved from its scope, and, for an export, its source, which an edge
+// declared to the export reaches before anything resolved it. A neighbour
+// may be listed twice. The DAG lock is never held while a scope lock is
 // taken.
 func (s *RootScope) dependencyNeighbors(desc ServiceDescription) []ServiceDescription {
+	s.seamDependencyNeighbors(desc)
+
 	s.dag.mu.RLock()
 	neighbors := keys(s.dag.dependencies[desc])
 	s.dag.mu.RUnlock()
@@ -104,6 +108,13 @@ func (s *RootScope) dependencyNeighbors(desc ServiceDescription) []ServiceDescri
 	serviceAny, ok := scope.serviceGet(desc.Service)
 	if !ok {
 		return neighbors
+	}
+
+	// an export depends on its source, even before anything resolved it
+	if export, ok := asExport(serviceAny); ok {
+		if source, sourceName, found := export.exportSource(); found {
+			neighbors = append(neighbors, newServiceDescription(source.ID(), source.Name(), sourceName))
+		}
 	}
 
 	service, ok := serviceAny.(serviceWrapperAny)
