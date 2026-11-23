@@ -8,6 +8,25 @@ break is listed under **BREAKING** with its migration.
 
 ## Unreleased
 
+### Added
+
+- `InjectorOpts.StartTimeout` (default `0`, off): a Starter `Start` method
+  or kind-handler call still running after it is abandoned, and the run
+  returns a `*StartError` matching the new `ErrStartTimeout`. The call keeps
+  running in its own goroutine and is never made again while it runs; a
+  later `Refresh` or `Scope.Start` skips it and every service that depends
+  on it, and fails with its error. See `docs/docs/container/options.md`
+  ("Slow and stuck start steps") and `docs/docs/service-lifecycle/starter.md`
+  ("A Start that never returns").
+- `InjectorOpts.SlowStartThreshold` (default `0`, meaning the new
+  `DefaultSlowStartThreshold`, 10s; negative disables it): a start step
+  still running after it is logged once at Warn level when a `Logger` is
+  set.
+- Log records, with a `Logger` set: `start step is slow` (Warn), and for an
+  abandoned step that ends, `abandoned start step returned` (Warn) and
+  `abandoned start step error` (Debug), or the `panic recovered` records.
+  See the logging table of `docs/docs/container/options.md`.
+
 ### Changed
 
 - A child scope `Shutdown`/`ShutdownWithContext` cancels the context of the
@@ -38,10 +57,16 @@ break is listed under **BREAKING** with its migration.
   it could return while that delivery still ran. A custom executor,
   including one wrapping `NewBoundedEventExecutor`, keeps the previous
   rule; see the events docs, "Shutdown".
-- Start order now follows a dependency declared with `DeclareDependency` on
-  an export to the export's source, even when nothing has resolved the
-  export yet. Before, the dependent could start before the export's source,
-  and a source skipped by its scope's shutdown did not skip it.
+- Start and shutdown order now follow a dependency declared with
+  `DeclareDependency` on an export to the export's source, even when
+  nothing has resolved the export yet. Before, the dependent could start
+  before the export's source and shut down after it, and a source skipped
+  by its scope's shutdown did not skip it. Cycle detection follows the
+  export too: when the source depends back on the dependent (for example
+  with `DependsOnNamed`), `DeclareDependency` now returns an error matching
+  `ErrCircularDependency` instead of accepting the edge and starting in the
+  wrong order, and an override that adds such a back edge later makes
+  `Start` fail with a cycle.
 
 ## v0.3.0 - 2026-11-22
 

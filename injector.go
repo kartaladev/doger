@@ -613,9 +613,13 @@ type InjectorOpts struct {
 	// skips every candidate of the run that depends on its service, directly
 	// or through others; it starts everything else, then returns its first
 	// failure, or else a [*StartError] naming the still-running step that
-	// matches ErrStartTimeout. Once it returns nil it is recorded as started
-	// (or handled) unless its scope is shutting down or no longer holds it,
-	// and once it fails a later Refresh or Scope.Start tries it again. After
+	// matches ErrStartTimeout. This also holds when the run does not cover
+	// the step: Scope.Start, or any run, skips a dependent of a
+	// still-running step in an ancestor scope, or whose own step runs in an
+	// earlier stage, and fails with that step's ErrStartTimeout error. Once
+	// it returns nil it is recorded as started (or handled) unless its scope
+	// is shutting down or no longer holds it, and once it fails a later
+	// Refresh or Scope.Start tries it again. After
 	// root Start abandoned a step, no such run follows: Start has failed, so
 	// Refresh and Scope.Start return [ErrNotStarted] and Start returns
 	// [ErrAlreadyStarted]; the late return is still recorded or logged, and

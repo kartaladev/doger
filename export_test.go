@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -535,6 +538,132 @@ func TestExport_TargetShutdownOnce(t *testing.T) {
 			tt.operation(root, redis)
 
 			assert.Equal(t, tt.calls, pool.shutdowns.Load())
+		})
+	}
+}
+
+// exTimedShutdown records when its Shutdown is called, after the shutdown
+// began, and then takes d.
+type exTimedShutdown struct {
+	name  string
+	d     time.Duration
+	begin *time.Time
+	calls *callRecorder
+}
+
+func (s *exTimedShutdown) Shutdown() error {
+	s.calls.record(fmt.Sprintf("%s@%s", s.name, time.Since(*s.begin)))
+	time.Sleep(s.d)
+	return nil
+}
+
+// TestExport_UnresolvedShutdownNotDelayed pins that an export nothing
+// resolved and nothing depends on does not hold its source back at root
+// Shutdown: "cache", exported by "redis", shuts down in the first round, with
+// the unrelated root service "slow" whose Shutdown takes 5s, also when the
+// Shutdown is bounded below that.
+func TestExport_UnresolvedShutdownNotDelayed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		bound time.Duration // the Shutdown's context timeout; 0: none
+	}{
+		{name: "unbounded"},
+		{name: "bounded_1s", bound: time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := New()
+				redis := root.Scope("redis")
+				calls := &callRecorder{}
+				var begin time.Time
+				provide := func(scope *Scope, name string, d time.Duration) {
+					ProvideNamed(scope, name, func(Injector) (*exTimedShutdown, error) {
+						return &exTimedShutdown{name: name, d: d, begin: &begin, calls: calls}, nil
+					})
+					_, err := InvokeNamed[*exTimedShutdown](scope, name) // built in its own scope
+					require.NoError(t, err)
+				}
+				provide(redis, "cache", 0)
+				require.NoError(t, ExportNamed[*exTimedShutdown](redis, "cache"))
+				provide(root.self, "slow", 5*time.Second)
+
+				ctx := context.Background()
+				if tt.bound > 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, tt.bound)
+					defer cancel()
+				}
+				begin = time.Now()
+				report := root.ShutdownWithContext(ctx)
+
+				assert.ElementsMatch(t, []string{"slow@0s", "cache@0s"}, calls.list(), "Shutdown calls")
+				for desc, err := range report.Errors {
+					assert.NotEqual(t, "cache", desc.Service, "cache's shutdown error: %v", err)
+				}
+				time.Sleep(5 * time.Second) // slow's Shutdown, past a bounded Shutdown, returns
+			})
+		})
+	}
+}
+
+// TestExport_DeclaredUnresolvedChainShutdownOrder pins that an edge declared
+// to an export of an export, neither resolved, orders root Shutdown: "cache"
+// in "leaf" is exported to "mid", which exports it to the root, where
+// "server" declares an edge to it; "server" shuts down before "cache". The
+// direct row declares the edge to a one-level export, from "mid".
+func TestExport_DeclaredUnresolvedChainShutdownOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		chained bool // "cache" is exported twice, leaf -> mid -> root
+	}{
+		{name: "direct"},
+		{name: "chained", chained: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := New()
+			mid := root.Scope("mid")
+			source := mid
+			if tt.chained {
+				source = mid.Scope("leaf")
+			}
+			calls := &callRecorder{}
+			var begin time.Time
+			provide := func(scope *Scope, name string) {
+				ProvideNamed(scope, name, func(Injector) (*exTimedShutdown, error) {
+					return &exTimedShutdown{name: name, begin: &begin, calls: calls}, nil
+				})
+				_, err := InvokeNamed[*exTimedShutdown](scope, name) // built in its own scope
+				require.NoError(t, err)
+			}
+			provide(source, "cache")
+			require.NoError(t, ExportNamed[*exTimedShutdown](source, "cache"))
+			if tt.chained {
+				require.NoError(t, ExportNamed[*exTimedShutdown](mid, "cache"))
+			}
+			provide(root.self, "server")
+			require.NoError(t, DeclareDependency(root, "server", "cache"))
+
+			begin = time.Now()
+			require.True(t, root.Shutdown().Succeed)
+
+			names := make([]string, 0, 2)
+			for _, call := range calls.list() {
+				name, _, _ := strings.Cut(call, "@")
+				names = append(names, name)
+			}
+			assert.Equal(t, []string{"server", "cache"}, names, "shutdown order")
 		})
 	}
 }

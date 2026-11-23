@@ -238,6 +238,23 @@ func asExport(service any) (serviceWrapperExport, bool) {
 	}
 }
 
+// exportSourceOf returns the source of service when it is an export whose
+// source scope exists: an export depends on its source even before anything
+// resolved it, while the DAG records that edge only once it is resolved.
+func exportSourceOf(service any) (ServiceDescription, bool) {
+	export, ok := asExport(service)
+	if !ok {
+		return ServiceDescription{}, false
+	}
+
+	source, sourceName, found := export.exportSource()
+	if !found {
+		return ServiceDescription{}, false
+	}
+
+	return newServiceDescription(source.id, source.name, sourceName), true
+}
+
 // readerSeesSource reports whether export is an export and reader is inside
 // its source scope (that scope or a descendant), where the exported service
 // is visible under its own name.

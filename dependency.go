@@ -15,8 +15,12 @@ import (
 // would. A name that cannot be resolved gives an error matching
 // [ErrServiceNotFound]. If dependency already reaches dependent through
 // recorded edges or static [DependsOn] declarations, the edge would close a
-// cycle and an error matching [ErrCircularDependency] is returned. Declaring
-// an edge twice changes nothing. A nil i, including a typed-nil *RootScope
+// cycle and an error matching [ErrCircularDependency] is returned. An
+// export reaches its source, even before anything resolved the export: with
+// an edge to an export, dependent starts after that source and shuts down
+// before it, and the edge closes a cycle when the source depends back on
+// dependent (such a back edge added later, by an override, makes Start fail
+// with a cycle). Declaring an edge twice changes nothing. A nil i, including a typed-nil *RootScope
 // or *Scope, gives [ErrNilInjector] and records nothing: there is no
 // default container.
 //
@@ -110,11 +114,8 @@ func (s *RootScope) dependencyNeighbors(desc ServiceDescription) []ServiceDescri
 		return neighbors
 	}
 
-	// an export depends on its source, even before anything resolved it
-	if export, ok := asExport(serviceAny); ok {
-		if source, sourceName, found := export.exportSource(); found {
-			neighbors = append(neighbors, newServiceDescription(source.ID(), source.Name(), sourceName))
-		}
+	if source, ok := exportSourceOf(serviceAny); ok {
+		neighbors = append(neighbors, source)
 	}
 
 	service, ok := serviceAny.(serviceWrapperAny)

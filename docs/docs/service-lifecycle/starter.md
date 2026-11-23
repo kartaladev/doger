@@ -171,7 +171,7 @@ func (s *ListeningServer) Shutdown(ctx context.Context) error {
 A `Start` method that ignores its context is awaited even when the context of `StartWithContext` has expired. Two [options](../container/options.md#start-timeout) help you find one:
 
 - **`SlowStartThreshold`** (default 10s, a negative value disables it): a step still running after it is logged once at Warn level as `start step is slow`, naming its scope and service. It needs `InjectorOpts.Logger`.
-- **`StartTimeout`** (default off): a step still running after it is abandoned. When the context ends first, the step's context is cancelled and `Start` waits for it up to the timeout. `Start` returns a `*doger.StartError` naming it that matches `doger.ErrStartTimeout`. The method keeps running in its own goroutine and is not called again while it runs; `Shutdown` still calls the service's `Shutdowner`.
+- **`StartTimeout`** (default off): a step still running after it is abandoned. When the context ends first, the step's context is cancelled and `Start` waits for it up to the timeout. `Start` returns a `*doger.StartError` naming it that matches `doger.ErrStartTimeout`. The method keeps running in its own goroutine and is not called again while it runs; `Shutdown` still calls the service's `Shutdowner`. A later `Refresh` or `Scope.Start` skips every service that depends on it, also one in a child scope or one whose own step runs in an earlier stage (such as a Starter depending on a still-running `Runner`), and fails with the step's `ErrStartTimeout` error.
 
 ## Errors {#errors}
 

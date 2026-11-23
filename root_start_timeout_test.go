@@ -1005,8 +1005,9 @@ func (s *registeringStarter) Start() error {
 // check reads the registrations as they are now: in tenant.Start(), Starter
 // "gate" registers, while the run runs, a service that makes the DependsOn
 // name "cache" of Starter "dep" lead to "stuck", whose abandoned call still
-// runs, so "dep" is skipped. In the parallel rows the run walked "dep"'s
-// dependencies before "gate" started.
+// runs, so "dep" is skipped. The declare_edge rows declare the edge
+// dep -> stuck instead (the DAG's change count). In the parallel rows the
+// run walked "dep"'s dependencies before "gate" started.
 func TestStartTimeout_LateRegistrationSkipsDependent(t *testing.T) {
 	t.Parallel()
 
@@ -1014,11 +1015,14 @@ func TestStartTimeout_LateRegistrationSkipsDependent(t *testing.T) {
 		name        string
 		parallelism uint
 		override    bool // gate overrides root "cache", instead of registering "cache" in tenant
+		declare     bool // gate declares the edge dep -> stuck, instead of registering "cache" in tenant
 	}{
 		{name: "register_nearer/sequential"},
 		{name: "register_nearer/parallel", parallelism: 4},
 		{name: "override/sequential", override: true},
 		{name: "override/parallel", parallelism: 4, override: true},
+		{name: "declare_edge/sequential", declare: true},
+		{name: "declare_edge/parallel", parallelism: 4, declare: true},
 	}
 
 	for _, tt := range tests {
@@ -1044,6 +1048,10 @@ func TestStartTimeout_LateRegistrationSkipsDependent(t *testing.T) {
 				ProvideNamed(tenant, "gate", func(Injector) (*registeringStarter, error) {
 					return &registeringStarter{register: func() {
 						starts.record("gate")
+						if tt.declare {
+							assert.NoError(t, DeclareDependency(tenant, "dep", "stuck"))
+							return
+						}
 						if tt.override {
 							OverrideNamed(root, "cache", newCache, DependsOnNamed("stuck"))
 							return
