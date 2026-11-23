@@ -8,6 +8,24 @@ break is listed under **BREAKING** with its migration.
 
 ## Unreleased
 
+### Changed
+
+- A child scope `Shutdown`/`ShutdownWithContext` cancels the context of the
+  running start steps (Starter `Start` methods and kind-handler calls) of
+  its subtree, with a cause matching `ErrShutdown`, instead of only waiting
+  for the run. Such a step is skipped, not a failure of the run: it is not
+  recorded as started, and the run skips the rest of that subtree and
+  goes on. A service that depends on a step skipped this way is skipped
+  too; a dependent outside the shutting-down scope (such as a root service
+  depending on its export) then fails the run with a `*StartError` naming
+  it that matches `ErrShutdown`, or, while the skipped step's abandoned
+  call still runs, with that step's error matching `ErrStartTimeout`. A
+  start step now always receives its own child of the run's context. With
+  a `Logger`, a cancelled step's error is logged at Debug as `cancelled
+  start step error`, and its panic as `panic recovered` (Error) and `panic
+  value` (Debug) with `step` and `kind`. See the upgrading guide, "A child scope shutdown
+  cancels its subtree's running start steps".
+
 ## v0.3.0 - 2026-11-22
 
 Events: in-process publishing, transport-neutral delivery between

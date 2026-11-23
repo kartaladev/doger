@@ -1,12 +1,14 @@
 package doger
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -241,6 +243,12 @@ func (s *Scope) logRecoveredPanicAs(point, service, panicType string, value any)
 		attrs = append(attrs, slog.String("service", service))
 	}
 	attrs = append(attrs, slog.String("point", point))
+	s.logPanicRecords(attrs, panicType, value)
+}
+
+// logPanicRecords logs the records of a recovered panic with attrs: an
+// Error record with panicType, and value only in a Debug record.
+func (s *Scope) logPanicRecords(attrs []slog.Attr, panicType string, value any) {
 	if s.logEnabled(slog.LevelError) {
 		s.log(slog.LevelError, "panic recovered", append(attrs, slog.String("panic_type", panicType))...)
 	}
@@ -458,7 +466,7 @@ func (s *RootScope) runStartPipeline(startCtx context.Context) error {
 // claimed, so that nothing of them was started.
 func (s *RootScope) runPipeline(ctx context.Context, roots []*Scope) (closing bool, err error) {
 	candidates, closing := s.claimCandidates(roots, s.discoverCandidates(roots))
-	run := &startRun{root: s, candidates: candidates}
+	run := &startRun{root: s}
 
 	if err := buildCandidates(ctx, candidates); err != nil {
 		return closing, err
@@ -489,48 +497,87 @@ func (s *RootScope) runPipeline(ctx context.Context, roots []*Scope) (closing bo
 }
 
 // startRun is the state of one run of the start pipeline that its stages
-// share: the services with a step it skipped because an abandoned call of
-// that step still runs, and the error of the first such step, which the
-// run returns when no step failed.
+// share: the services with a step it skipped, and the first pending error,
+// which the run returns when no step failed.
 type startRun struct {
-	root       *RootScope
-	candidates []*startCandidate
+	root *RootScope
 
-	mu           sync.Mutex
-	stillRunning map[ServiceDescription]bool
-	pending      error
-	// requires is dependencyRequirements of candidates, computed at the
-	// first skip
-	requires map[ServiceDescription][]ServiceDescription
+	mu      sync.Mutex
+	skipped map[ServiceDescription]stepSkip
+	pending error
 }
 
-// skipStillRunning records that the run skipped a step of candidate whose
-// abandoned call still runs, with the step's error err.
-func (r *startRun) skipStillRunning(candidate *startCandidate, err error) {
+// stepSkip is why the run skipped a step of a service: an abandoned call
+// of it still runs, or a shutdown of its scope, or of an ancestor scope,
+// began, before its call or by cancelling it; or both.
+type stepSkip struct {
+	service string
+	// closing is the scope shutdown's cancellation cause, which matches
+	// ErrShutdown, or nil when the step was skipped only because its
+	// abandoned call still runs
+	closing error
+	// stillRunning is the step's timeout error while its call, abandoned
+	// at StartTimeout, still runs, or nil
+	stillRunning error
+}
+
+// dependentError is the run's error for step, skipped outside a closing
+// scope because it depends on the skipped service: the service's timeout
+// error while its abandoned call still runs, otherwise a *StartError naming
+// step's service that matches ErrShutdown.
+func (skip stepSkip) dependentError(step startStep) error {
+	if skip.stillRunning != nil {
+		return skip.stillRunning
+	}
+
+	return step.startError(libErrorf("dependency `%s` was not started: %w", skip.service, skip.closing))
+}
+
+// skip records that the run skipped a step of candidate. A step skipped
+// only because its abandoned call still runs is the run's pending error
+// unless one is already set; a step of candidate still running stays
+// recorded as such.
+func (r *startRun) skip(candidate *startCandidate, skip stepSkip) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.stillRunning == nil {
-		r.stillRunning = map[ServiceDescription]bool{}
-		r.requires = r.root.dependencyRequirements(r.candidates)
+	if r.skipped == nil {
+		r.skipped = map[ServiceDescription]stepSkip{}
 	}
-	r.stillRunning[candidate.desc()] = true
-	if r.pending == nil {
-		r.pending = err
+	if skip.closing == nil && r.pending == nil {
+		r.pending = skip.stillRunning
 	}
+	desc := candidate.desc()
+	if previous, ok := r.skipped[desc]; ok && previous.stillRunning != nil {
+		return
+	}
+	skip.service = candidate.name
+	r.skipped[desc] = skip
 }
 
-// skippedStillRunning reports whether the run skipped a step of candidate
-// because an abandoned call of that step still runs.
-func (r *startRun) skippedStillRunning(candidate *startCandidate) bool {
+// skipCancelled records a step that a scope shutdown cancelled, which
+// ended as end, as skipped because its scope is shutting down.
+func (r *startRun) skipCancelled(startCtx context.Context, step startStep, end stepEnd) {
+	skip := stepSkip{closing: end.cancelled}
+	if end.abandoned {
+		skip.stillRunning = withAbortCause(startCtx, step.startError(end.err))
+	}
+	r.skip(step.candidate, skip)
+}
+
+// skippedStep reports whether the run skipped a step of candidate.
+func (r *startRun) skippedStep(candidate *startCandidate) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return r.stillRunning[candidate.desc()]
+	_, skipped := r.skipped[candidate.desc()]
+	return skipped
 }
 
-// pendingError returns the error of the first step the run skipped because
-// an abandoned call of it still runs, or nil.
+// pendingError returns the run's first pending error: that of the first
+// step it skipped because an abandoned call of it still runs, or of the
+// first dependent of a closing scope's skipped step it skipped outside
+// that scope; nil when there is none.
 func (r *startRun) pendingError() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -538,25 +585,90 @@ func (r *startRun) pendingError() error {
 	return r.pending
 }
 
-// dependsOnStillRunning reports whether the run skipped a step of
-// candidate, or of a candidate it depends on, directly or through others,
-// because an abandoned call of that step still runs: candidate is skipped
-// too, with no hooks and no call.
-func (r *startRun) dependsOnStillRunning(candidate *startCandidate) bool {
+// dependsOnSkipped reports whether the run skipped a step of the
+// candidate of step, or of a candidate it depends on, directly or through
+// others, because an abandoned call of that step still runs or because its
+// scope is shutting down: step is skipped too, with no hooks and no call.
+// When step is skipped for a dependency of a closing scope and is not in a
+// closing scope itself, the run reports it: the dependency's timeout error
+// while its abandoned call runs, otherwise a *StartError naming step's
+// service that matches ErrShutdown.
+func (r *startRun) dependsOnSkipped(step startStep) bool {
+	desc := step.candidate.desc()
+	closingItself := r.root.scopeClosing(step.candidate.scope)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	return r.stillRunning[candidate.desc()] ||
-		slices.ContainsFunc(r.requires[candidate.desc()], func(d ServiceDescription) bool { return r.stillRunning[d] })
+	if len(r.skipped) == 0 {
+		return false
+	}
+	if _, skipped := r.skipped[desc]; skipped {
+		return true
+	}
+	// the graph as it is now: a kind handler may have declared an edge
+	// since the first skip
+	reached := r.root.reachedMatching(desc, func(d ServiceDescription) bool {
+		_, skipped := r.skipped[d]
+		return skipped
+	})
+	if len(reached) == 0 {
+		return false
+	}
+	// a dependency skipped only because its abandoned call still runs set
+	// the pending error when it was skipped
+	if !closingItself && r.pending == nil {
+		d := slices.MinFunc(reached, func(a, b ServiceDescription) int {
+			return r.compareSkipped(a, b)
+		})
+		r.pending = r.skipped[d].dependentError(step)
+	}
+
+	return true
+}
+
+// compareSkipped orders two skipped services for the error of a dependent
+// that reaches both: a still-running one first, then by scope name,
+// service name and scope ID, so that the error does not depend on the
+// order the graph is walked in. r.mu must be held.
+func (r *startRun) compareSkipped(a, b ServiceDescription) int {
+	aRunning, bRunning := r.skipped[a].stillRunning != nil, r.skipped[b].stillRunning != nil
+	if aRunning != bRunning {
+		if aRunning {
+			return -1
+		}
+		return 1
+	}
+
+	return cmp.Or(
+		strings.Compare(a.ScopeName, b.ScopeName),
+		strings.Compare(a.Service, b.Service),
+		strings.Compare(a.ScopeID, b.ScopeID),
+	)
 }
 
 // claim is claimStep for the run: it reports whether step is skipped,
-// either because it is already recorded or because an abandoned call of it
-// still runs, which it records in the run.
+// because its scope or an ancestor scope is shutting down, because it is
+// already recorded, or because an abandoned call of it still runs, which it
+// records in the run.
 func (r *startRun) claim(startCtx context.Context, step startStep) (skip bool) {
+	if closing := r.root.closingScope(step.candidate.scope); closing != nil {
+		recorded, err := r.root.claimStep(step)
+		if recorded {
+			// started or handled since discovery: its dependents may start
+			return true
+		}
+		skip := stepSkip{closing: scopeShutdownCause(closing)}
+		// a step whose abandoned call still runs keeps its own error
+		if err != nil {
+			skip.stillRunning = withAbortCause(startCtx, err)
+		}
+		r.skip(step.candidate, skip)
+		return true
+	}
 	skip, err := r.root.claimStep(step)
 	if err != nil {
-		r.skipStillRunning(step.candidate, withAbortCause(startCtx, err))
+		r.skip(step.candidate, stepSkip{stillRunning: withAbortCause(startCtx, err)})
 		return true
 	}
 
@@ -675,13 +787,19 @@ func (s *RootScope) claimCandidates(roots []*Scope, candidates []*startCandidate
 // closingInLine reports whether scope or one of its ancestors is shutting
 // down. lifecycleMu must be held.
 func closingInLine(scope *Scope) bool {
+	return closingScopeInLine(scope) != nil
+}
+
+// closingScopeInLine returns scope or the nearest ancestor of it that is
+// shutting down, or nil when none is. lifecycleMu must be held.
+func closingScopeInLine(scope *Scope) *Scope {
 	for ; scope != nil; scope = scope.parentScope {
 		if scope.closing != nil && scope.closing.count > 0 {
-			return true
+			return scope
 		}
 	}
 
-	return false
+	return nil
 }
 
 // newStartCandidate returns the candidate for a registered service, or nil
@@ -804,7 +922,7 @@ func (s *RootScope) startStarters(startCtx context.Context, run *startRun, candi
 			return err
 		}
 
-		if run.dependsOnStillRunning(candidate) {
+		if run.dependsOnSkipped(startStep{candidate: candidate, op: StartOpStart}) {
 			continue
 		}
 
@@ -841,7 +959,9 @@ func (s *RootScope) startStartersParallel(startCtx context.Context, run *startRu
 	for {
 		for firstErr == nil && firstPanic == nil && running < n {
 			// dependents of a still-running step are never scheduled
-			pending = slices.DeleteFunc(pending, run.dependsOnStillRunning)
+			pending = slices.DeleteFunc(pending, func(c *startCandidate) bool {
+				return run.dependsOnSkipped(startStep{candidate: c, op: StartOpStart})
+			})
 			ready := slices.IndexFunc(pending, func(c *startCandidate) bool {
 				return !slices.ContainsFunc(requires[c.desc()], func(d ServiceDescription) bool { return !started[d] })
 			})
@@ -877,7 +997,7 @@ func (s *RootScope) startStartersParallel(startCtx context.Context, run *startRu
 		if o.err != nil && firstErr == nil {
 			firstErr = o.err
 		}
-		if o.err == nil && !run.skippedStillRunning(o.candidate) {
+		if o.err == nil && !run.skippedStep(o.candidate) {
 			started[o.candidate.desc()] = true
 		}
 	}
@@ -923,13 +1043,24 @@ func (s *RootScope) startCandidate(startCtx context.Context, run *startRun, cand
 	op := serviceOp{ctx: startCtx, scope: candidate.scope, name: candidate.name}
 	s.hooks.onBeforeStart(op)
 	op = beginServiceOp(startCtx, candidate.scope, candidate.name)
-	err := s.runStartStep(startCtx, step, func(ctx context.Context) error {
+	end := s.runStartStep(startCtx, step, func(ctx context.Context) error {
 		return startInstance(ctx, candidate.instance)
 	})
-	s.hooks.onAfterStart(op, op.elapsed(), err)
-	if err != nil {
-		err = newStartError(StartOpStart, candidate.scope, candidate.name, "", err)
-		return withAbortCause(startCtx, err)
+	s.hooks.onAfterStart(op, op.elapsed(), end.err)
+
+	return s.endStep(startCtx, run, step, end)
+}
+
+// endStep settles step, whose wait ended as end: a step a scope shutdown
+// cancelled is skipped in run, since the scope shuts it down; a failed one
+// returns the run's error; a successful one is recorded.
+func (s *RootScope) endStep(startCtx context.Context, run *startRun, step startStep, end stepEnd) error {
+	if end.skipped() {
+		run.skipCancelled(startCtx, step, end)
+		return nil
+	}
+	if end.err != nil {
+		return withAbortCause(startCtx, step.startError(end.err))
 	}
 	// a service shut down meanwhile (a bounded scope shutdown gave up
 	// waiting) stays out of the bookkeeping
@@ -1031,21 +1162,20 @@ func (s *RootScope) runStage(startCtx context.Context, run *startRun, stage Stag
 				return err
 			}
 
-			if run.dependsOnStillRunning(component) {
+			step := startStep{candidate: component, op: StartOpHandle, kind: entry.id}
+			if run.dependsOnSkipped(step) {
 				continue
 			}
 
-			step := startStep{candidate: component, op: StartOpHandle, kind: entry.id}
 			if run.claim(startCtx, step) {
 				continue
 			}
-			if err := s.runStartStep(startCtx, step, func(ctx context.Context) error {
+			end := s.runStartStep(startCtx, step, func(ctx context.Context) error {
 				return callKindHandler(ctx, entry, component, metas[component])
-			}); err != nil {
-				err = newStartError(StartOpHandle, component.scope, component.name, entry.id.name, err)
-				return withAbortCause(startCtx, err)
+			})
+			if err := s.endStep(startCtx, run, step, end); err != nil {
+				return err
 			}
-			s.recordIfHeld(step)
 		}
 	}
 

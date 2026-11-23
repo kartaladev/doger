@@ -50,18 +50,135 @@ func (s *RootScope) seamAfterStepDone(step startStep) {
 	}
 }
 
-// runStartStep runs call, the user code of step, with the run's context
-// ctx, recovering a panic as an error. Every Starter Start method and every
-// kind handler call of the start pipeline goes through it.
-func (s *RootScope) runStartStep(ctx context.Context, step startStep, call func(context.Context) error) error {
+// runStartStep runs call, the user code of step, with a child of the run's
+// context ctx, recovering a panic as an error. Every Starter Start method
+// and every kind handler call of the start pipeline goes through it.
+//
+// The step's context is registered with its scope while the run runs or
+// awaits the step, so that a shutdown of that scope, or of an ancestor
+// scope, cancels it (see Scope.ShutdownWithContext). The step is then
+// neither recorded nor a failure of the run, whatever it returned, and
+// end.cancelled holds the shutdown's cause; a cancelled call that returned
+// an error or panicked is logged, since the run does not report it.
+func (s *RootScope) runStartStep(ctx context.Context, step startStep, call func(context.Context) error) (end stepEnd) {
 	stopWarning := s.armSlowStartWarning(step)
 	defer stopWarning()
 
+	stepCtx, running := s.registerStep(ctx, step.candidate.scope)
+	var outcome stepOutcome
+	defer func() {
+		end.cancelled = s.unregisterStep(running)
+		if end.skipped() && !end.abandoned {
+			logCancelledOutcome(step, outcome)
+		}
+	}()
+
 	if s.opts.StartTimeout <= 0 {
-		return callStep(ctx, call).err
+		outcome = callStep(stepCtx, call)
+		return stepEnd{err: outcome.err}
 	}
 
-	return s.awaitStep(ctx, step, call, stopWarning)
+	outcome, abandoned := s.awaitStep(stepCtx, running.cancel, step, call, stopWarning)
+
+	return stepEnd{err: outcome.err, abandoned: abandoned}
+}
+
+// stepEnd is how the run's wait for a start step ended.
+type stepEnd struct {
+	err       error // the call's error, or the timeout error when abandoned
+	abandoned bool  // the StartTimeout timer abandoned the call, which still runs
+	// cancelled is the cause with which a shutdown of the step's scope, or
+	// of an ancestor scope, cancelled its context, or nil
+	cancelled error
+}
+
+// skipped reports whether a scope shutdown cancelled the step, which the
+// run then skips instead of recording it or failing with it.
+func (end stepEnd) skipped() bool {
+	return end.cancelled != nil
+}
+
+// logCancelledOutcome logs the outcome of a call of step that a scope
+// shutdown cancelled: an error at Debug level, a panic as a recovered
+// panic of point "start", nothing for a nil return.
+func logCancelledOutcome(step startStep, outcome stepOutcome) {
+	scope := step.candidate.scope
+	if outcome.panicked {
+		attrs := slices.Insert(step.attrs(), 1, slog.String("point", "start"))
+		scope.logPanicRecords(slices.Clip(attrs), outcome.panicType, outcome.value)
+		return
+	}
+	if outcome.err != nil && scope.logEnabled(slog.LevelDebug) {
+		scope.log(slog.LevelDebug, "cancelled start step error", append(step.attrs(), slog.String("error", outcome.err.Error()))...)
+	}
+}
+
+// runningStep is the context of a start step that the pipeline runs or
+// awaits now, registered with the step's scope.
+type runningStep struct {
+	scope  *Scope
+	cancel context.CancelCauseFunc
+	// cancelled is set, under lifecycleMu, to the cause with which a
+	// shutdown of scope or of an ancestor scope cancelled the context
+	cancelled error
+}
+
+// registerStep returns the context of a start step of scope, a child of
+// the run's context ctx, registered with scope until unregisterStep. The
+// context is not cancelled when the step returns: it keeps the run
+// context's lifetime, which releases it when the run ends, unless a scope
+// shutdown (cancelSubtreeSteps) or the StartTimeout timer cancels it first.
+func (s *RootScope) registerStep(ctx context.Context, scope *Scope) (context.Context, *runningStep) {
+	stepCtx, cancel := context.WithCancelCause(ctx)
+	running := &runningStep{scope: scope, cancel: cancel}
+
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	if s.runSteps == nil {
+		s.runSteps = map[*runningStep]struct{}{}
+	}
+	s.runSteps[running] = struct{}{}
+	// a shutdown that began since the run's closing check, during the
+	// step's before hooks, has already cancelled the registered steps
+	if closing := closingScopeInLine(scope); closing != nil {
+		running.cancelled = scopeShutdownCause(closing)
+		cancel(running.cancelled)
+	}
+
+	return stepCtx, running
+}
+
+// unregisterStep ends the registration of running, and returns the cause
+// with which a scope shutdown cancelled its context, or nil.
+func (s *RootScope) unregisterStep(running *runningStep) (cancelled error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	delete(s.runSteps, running)
+
+	return running.cancelled
+}
+
+// cancelSubtreeSteps cancels the registered contexts of the start steps of
+// scope and of its descendant scopes, with scopeShutdownCause(scope).
+// lifecycleMu must be held. Cancelling under it runs no user code: the
+// steps' contexts are the library's own, and their children only propagate
+// the cancellation (a context.AfterFunc callback runs on its own
+// goroutine).
+func (s *RootScope) cancelSubtreeSteps(scope *Scope) {
+	for running := range s.runSteps {
+		if running.cancelled == nil && isScopeOrDescendant(running.scope, scope) {
+			running.cancelled = scopeShutdownCause(scope)
+			running.cancel(running.cancelled)
+		}
+	}
+}
+
+// scopeShutdownCause is the cause with which a shutdown of scope cancels
+// the running start steps of its subtree. It matches ErrShutdown.
+func scopeShutdownCause(scope *Scope) error {
+	return libErrorf("%w: scope `%s` is shutting down", ErrShutdown, scope.name)
 }
 
 // stepOutcome is how a call of user start code ended.
@@ -127,18 +244,18 @@ func (s *RootScope) armSlowStartWarning(step startStep) (stop func()) {
 	return func() { timer.Stop() }
 }
 
-// awaitStep runs call in its own goroutine with a child of the run's
-// context ctx, and waits until the call returns or a StartTimeout timer on
-// the container clock times it out (see timeOut). An ended ctx cancels the
-// call's context but does not end the wait. A timed-out call is abandoned:
-// it keeps running, its step stays registered as abandoned until it ends,
-// and the timeout error is returned. A call that returned in time keeps its
-// context until the run ends, which reports no deadline. stopWarning, the
-// step's slow warning disarm, is called as soon as the wait ends, so no
-// warning is logged once the step is abandoned.
-func (s *RootScope) awaitStep(ctx context.Context, step startStep, call func(context.Context) error, stopWarning func()) error {
+// awaitStep runs call in its own goroutine with the step's context stepCtx,
+// a child of the run's context that cancel cancels, and waits until the
+// call returns or a StartTimeout timer on the container clock times it out
+// (see timeOut). An ended stepCtx does not end the wait. A timed-out call
+// is abandoned: it keeps running, its step stays registered as abandoned
+// until it ends, and abandoned is true with the timeout error as outcome.
+// A call that returned in time keeps its context until the run ends, which
+// reports no deadline, and its outcome is returned.
+// stopWarning, the step's slow warning disarm, is called as soon as the
+// wait ends, so no warning is logged once the step is abandoned.
+func (s *RootScope) awaitStep(stepCtx context.Context, cancel context.CancelCauseFunc, step startStep, call func(context.Context) error, stopWarning func()) (outcome stepOutcome, abandoned bool) {
 	clock := step.candidate.scope.clock()
-	stepCtx, cancel := context.WithCancelCause(ctx)
 	c := &stepCall{returned: make(chan struct{}), timedOut: make(chan struct{}), clock: clock, begin: clock.Now()}
 	timer := clock.AfterFunc(s.opts.StartTimeout, func() { s.timeOut(step, c, cancel) })
 	defer timer.Stop()
@@ -157,10 +274,10 @@ func (s *RootScope) awaitStep(ctx context.Context, step startStep, call func(con
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.abandoned {
-		return c.outcome.err
+		return c.outcome, false
 	}
 
-	return libErrorf("%w after %s: %w", ErrStartTimeout, s.opts.StartTimeout, context.DeadlineExceeded)
+	return stepOutcome{err: libErrorf("%w after %s: %w", ErrStartTimeout, s.opts.StartTimeout, context.DeadlineExceeded)}, true
 }
 
 // timeOut is the StartTimeout timer callback of call c of step. It and the
@@ -257,11 +374,15 @@ func (step startStep) attrs() []slog.Attr {
 // stillRunningError is the error of a run that reached step while an
 // abandoned call of it still runs.
 func (step startStep) stillRunningError() *StartError {
+	return step.startError(libErrorf("%w: a previous call is still running", ErrStartTimeout))
+}
+
+// startError returns the *StartError of step with cause.
+func (step startStep) startError(cause error) *StartError {
 	kind := ""
 	if step.kind != nil {
 		kind = step.kind.name
 	}
 
-	return newStartError(step.op, step.candidate.scope, step.candidate.name, kind,
-		libErrorf("%w: a previous call is still running", ErrStartTimeout))
+	return newStartError(step.op, step.candidate.scope, step.candidate.name, kind, cause)
 }

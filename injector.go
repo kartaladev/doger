@@ -211,13 +211,15 @@ type InjectorOpts struct {
 
 	// HookBeforeStart is called by Start, Refresh and Scope.Start just before
 	// a service's Start method, with the context the operation runs with.
-	// With StartTimeout set, the Start method receives a context derived from
-	// it that also ends when the method is abandoned; it reports no deadline,
-	// and a method that returns in time keeps it until the operation ends, as
-	// without the option. No hook is called for a Starter the run
-	// skips (already started) or fails fast (an abandoned Start call of it
-	// still runs). With StartParallelism > 1, calls for different services
-	// may run concurrently.
+	// The Start method receives its own context derived from it, which
+	// reports no deadline and is not cancelled when the method returns; it
+	// also ends when a shutdown of the service's child scope, or of an
+	// ancestor child scope, begins while the method runs, and, with
+	// StartTimeout set, when the method is abandoned. No hook is called for
+	// a Starter the run skips: already started, an abandoned Start call of
+	// it still running, its scope shutting down, or a dependency of it
+	// skipped for either of the last two reasons. With StartParallelism > 1, calls
+	// for different services may run concurrently.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddBeforeStartHook] adds a hook later, safely
@@ -234,6 +236,12 @@ type InjectorOpts struct {
 	// the operation's goroutine when the method is abandoned, with elapsed
 	// the time waited and err matching ErrStartTimeout; it is not called
 	// again when the abandoned method returns.
+	//
+	// It is also called for a Start method whose context a shutdown of the
+	// service's child scope, or of an ancestor child scope, cancelled while
+	// it ran, with the error the method returned (or, once abandoned, the
+	// timeout error), although the run skips that service instead of
+	// failing with it.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddAfterStartHook] adds a hook later, safely
@@ -402,8 +410,12 @@ type InjectorOpts struct {
 	// message and level and the attributes "scope" and "service" where they
 	// apply:
 	//   - Debug: registrations, overrides, invocations, exports, a health
-	//     check requested or failed, the property source selected, and the
-	//     value of a recovered panic ("panic value");
+	//     check requested or failed, the property source selected, the
+	//     value of a recovered panic ("panic value"), and the error of a
+	//     start step that a child scope shutdown cancelled ("cancelled start
+	//     step error", with "step", "kind" for a handler call, and "error";
+	//     such a step that panics logs "panic recovered" and "panic value"
+	//     with "step" and "kind" instead);
 	//   - Info: container started, ready, closing and closed, an extension
 	//     disabled, and the container health back to healthy;
 	//   - Warn: an unavailable property source, properties read after
@@ -590,9 +602,13 @@ type InjectorOpts struct {
 	// goroutine and, before the timeout, is reported as a [*StartError] for
 	// the step (after it, it is logged as the late outcome); without this
 	// option the call runs on the caller's goroutine, which Goexit ends. The step's context keeps the lifetime it has without this
-	// option: it ends when the run ends, and also when the step is
-	// abandoned. It reports no deadline, since a step that returns in time
-	// keeps it past the timeout. While it runs, the container never calls it
+	// option: it ends when the run ends or when a shutdown of the step's
+	// child scope, or of an ancestor child scope, begins, and also when the
+	// step is abandoned. A step that such a scope shutdown cancelled is
+	// skipped, not a failure, even once abandoned, unless a service outside
+	// that scope depends on it (see [Scope.ShutdownWithContext]). It reports
+	// no deadline, since a step that returns in time keeps it past the
+	// timeout. While it runs, the container never calls it
 	// again: a covering Refresh or Scope.Start skips it, with no hooks, and
 	// skips every candidate of the run that depends on its service, directly
 	// or through others; it starts everything else, then returns its first

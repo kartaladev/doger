@@ -36,6 +36,7 @@ Examples:
   | root.Start(ctx) while "svc"'s Start is still running once SlowStartThreshold elapsed | start step is slow   | WARN  | scope=[root] service=svc step=start threshold=<SlowStartThreshold> |
   | with StartTimeout 5s, "svc"'s abandoned Start returning nil at 1m | abandoned start step returned | WARN  | scope=[root] service=svc step=start elapsed=1m |
   | with StartTimeout 5s, "svc"'s abandoned Start returning errors.New("x") | abandoned start step error | DEBUG | scope=[root] service=svc step=start error=x |
+  | with "svc" in child "ext" instead, ext.Shutdown() cancelling "svc"'s running Start, which returns errors.New("x") | cancelled start step error | DEBUG | scope=ext service=svc step=start error=x |
 ```
 
 #### Scenario: Records below the handler's level are dropped
@@ -236,3 +237,34 @@ Examples:
 <!-- cases: 8 concurrency: the late outcome is logged on the abandoned goroutine; the test synchronizes on its end -->
 <!-- cases: 9 panics: the panic rows; the panic is never re-raised, since nothing waits for it; a panicking handler here is covered by "A panicking log handler does not crash the process" -->
 <!-- cases: 10 compatibility: only reachable with StartTimeout set -->
+
+### Requirement: A start step cancelled by its scope's shutdown that fails is logged
+With a `Logger` set, when a shutdown of a child scope cancels a running start step of its subtree (container-start, "Child scope shutdown waits for a start that is starting its services") and the call then returns without being abandoned, the container SHALL emit, if it returned an error, one `DEBUG` record "cancelled start step error" with `scope` (the step's own scope), `service`, `step`, `kind` (handle only) and `error`, and, if it panicked, the existing "panic recovered" records of point "start" with the step's own scope, plus `step` and `kind` (handle only). A call that returns nil SHALL emit no such record. The run does not report these outcomes, so the log is where they show; a step abandoned at `StartTimeout` is logged by "An abandoned start step that ends is logged" instead.
+
+#### Scenario: Outcome of a cancelled step
+```gherkin
+Given a started root container created with InjectorOpts{Logger: a recording logger at level <level>}, inside synctest.Test, and child scope "tenant" created after Start
+And lazy <kind> "w" in "tenant", registered after Start, whose call waits for ctx.Done() and then <outcome>
+And tenant.Start() is running in another goroutine and "w"'s call has begun
+When the consumer calls tenant.Shutdown() and tenant.Start() returned
+Then the records about "w" from its cancellation until tenant.Shutdown() returned, other than its shutdown records, are exactly <records>
+
+Examples:
+  | level | kind                          | outcome                 | records |
+  | DEBUG | Starter                       | returns ctx.Err()       | DEBUG "cancelled start step error" scope=tenant service=w step=start error=context canceled |
+  | INFO  | Starter                       | returns ctx.Err()       | none |
+  | DEBUG | Starter                       | returns nil             | none |
+  | DEBUG | Starter                       | panics with "boom"      | ERROR "panic recovered" scope=tenant service=w point=start step=start panic_type=string; DEBUG "panic value" scope=tenant service=w point=start step=start value=boom |
+  | DEBUG | service opted in with AsRunnable() | returns ctx.Err() in Run | DEBUG "cancelled start step error" scope=tenant service=w step=handle kind=runnable error=context canceled |
+```
+
+<!-- cases: 1 happy path: an error return logged at Debug -->
+<!-- cases: 2 overrides: the handler level row (INFO drops it) -->
+<!-- cases: N/A 3 zero values: a nil Logger emits nothing, per "Logging is off by default" -->
+<!-- cases: 4 boundaries: a nil return logs nothing -->
+<!-- cases: 5 errors: the error text stays at Debug, as for abandoned steps and health checks -->
+<!-- cases: N/A 6 duplicates: a cancelled call ends once -->
+<!-- cases: 7 lifecycle: records name the step's own scope; Starter and kind handler rows; an abandoned step is logged by the late-outcome requirement -->
+<!-- cases: 8 concurrency: logged on the run's goroutine once the step returned, before the next step -->
+<!-- cases: 9 panics: the panic row; the panic is not re-raised, as for any step panic, which the run turns into an error -->
+<!-- cases: 10 compatibility: new records, only reachable through a child scope Shutdown during a start -->

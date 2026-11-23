@@ -109,3 +109,28 @@ func (s *RootScope) dependencyRequirements(candidates []*startCandidate) map[Ser
 
 	return requires
 }
+
+// reachedMatching returns every service that from reaches through
+// dependency edges, directly or transitively, for which match holds, in no
+// particular order. It reads the dependency graph as it is now.
+func (s *RootScope) reachedMatching(from ServiceDescription, match func(ServiceDescription) bool) []ServiceDescription {
+	var matching []ServiceDescription
+	visited := map[ServiceDescription]bool{from: true}
+	queue := []ServiceDescription{from}
+	for len(queue) > 0 {
+		node := queue[0]
+		queue = queue[1:]
+		for _, neighbor := range s.dependencyNeighbors(node) {
+			if visited[neighbor] {
+				continue
+			}
+			if match(neighbor) {
+				matching = append(matching, neighbor)
+			}
+			visited[neighbor] = true
+			queue = append(queue, neighbor)
+		}
+	}
+
+	return matching
+}

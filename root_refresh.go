@@ -78,6 +78,15 @@ func (s *RootScope) scopeClosing(scope *Scope) bool {
 	return closingInLine(scope)
 }
 
+// closingScope returns scope or the nearest ancestor of it that is shutting
+// down, or nil when none is.
+func (s *RootScope) closingScope(scope *Scope) *Scope {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	return closingScopeInLine(scope)
+}
+
 // runScopeStartingHooks runs the scope Starting hooks for scope in order.
 // The first error or panic is a veto: the remaining hooks do not run and
 // Scope.Start fails with it.

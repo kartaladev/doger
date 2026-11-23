@@ -52,6 +52,12 @@ Found in review, in code that predates this change: a Starter whose `Start` retu
 - Expected: no start record for a removed service.
 - Reproduction: no hook sits inside that window, so the regression test (tasks group 12) pins it with an unexported test seam on `RootScope` (design D11) that runs `ShutdownNamed` there. It fails on the current code.
 
+Found while fixing flaky tests (tasks 37.2), also predating this change: a scope shutdown called from an async listener could return while another async delivery to that scope still ran. The shutdown does not wait for a publisher still inside the executor's `Submit`, so that an inline executor cannot deadlock. The default `BoundedEventExecutor` starts the delivery goroutine inside `Submit`, so under load the new delivery reached the shutdown before the publisher left `Submit`, and the shutdown skipped it.
+
+- Observed: `TestScopeShutdown_PublishingDelivery/elsewhere` failed 3 of 6000 loaded runs with the order `[shutdown:returned, publisher:done]`.
+- Expected: the scope shutdown waits for the publisher's delivery.
+- Reproduction: `TestScopeShutdown_PublishingDeliveryBeforeSubmitReturns` wraps the executor so a nested `Submit` returns only once the drain waits; it failed 20 of 20 runs before the fix. A wrapper whose `Submit` waits for its task keeps the old rule (`TestScopeShutdown_WaitingWrapperExecutor`), so it cannot deadlock.
+
 ## Out of scope: findings of the lifecycle sweep
 
 A sweep of the other lifecycle paths used ctx-ignoring callees with a 100ms deadline. Each case is reproduced by a scratch test (`scratchpad/sweep/sweep_test.go`, not committed). Shutdown of services, the per-service shutdown hooks, health checks, builds caught by Shutdown and the async listener drain are already bounded by ctx. These need their own changes:

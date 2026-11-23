@@ -149,6 +149,7 @@ type RootScope struct {
 	// takes it while holding lifecycleMu.
 	pipelineMu sync.Mutex
 	runScopes  map[*Scope]struct{}          // scopes with candidates in the running pipeline; guarded by lifecycleMu
+	runSteps   map[*runningStep]struct{}    // contexts of the start steps the pipeline runs or awaits now; guarded by lifecycleMu
 	startedMu  sync.Mutex                   // guards started, handled and abandoned; never held across user code
 	started    map[any]struct{}             // Starters already started, keyed by wrapper
 	handled    map[any]map[*kindID]struct{} // kinds already handled, by wrapper
