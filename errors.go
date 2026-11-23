@@ -53,9 +53,9 @@ var (
 	// ErrStartTimeout is matched by the [*StartError] of a Starter Start
 	// method or kind-handler call that Start, Refresh or Scope.Start
 	// abandoned under [InjectorOpts.StartTimeout]: the step outlived the
-	// timeout (the error then also matches context.DeadlineExceeded), or the
-	// run's context ended while it ran (the error then also matches that
-	// context's cause, such as [ErrShutdown]). It is also matched by the
+	// timeout, so the error also matches context.DeadlineExceeded. When the
+	// run's context ended while the step ran, the error also matches that
+	// context's cause, such as [ErrShutdown]. It is also matched by the
 	// error of a later run that reached a step whose abandoned call is still
 	// running: that call is never made a second time while it runs.
 	ErrStartTimeout = errors.New("doger: start timeout")

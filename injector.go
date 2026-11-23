@@ -567,11 +567,18 @@ type InjectorOpts struct {
 	SlowStartThreshold time.Duration
 
 	// StartTimeout bounds each Starter Start method and each kind-handler
-	// call of Start, Refresh and Scope.Start. A step still running after it,
-	// or when the run's context ends (the caller's deadline or cancellation,
-	// or root Shutdown), is abandoned: the run stops waiting, starts nothing
-	// further and returns a [*StartError] naming the step that matches
-	// [ErrStartTimeout]. Go cannot stop the call: it keeps running in its
+	// call of Start, Refresh and Scope.Start. A step still running after it
+	// is abandoned: the run stops waiting, starts nothing further and returns
+	// a [*StartError] naming the step that matches [ErrStartTimeout] and
+	// context.DeadlineExceeded. When the run's context ends first (the
+	// caller's deadline or cancellation, or root Shutdown), the step's
+	// context is cancelled at once and the run keeps waiting up to the
+	// timeout, so a step that honours its context returns and is never
+	// abandoned; the error then also carries that context's cause. Root
+	// Shutdown waits for the run within its own context: a Shutdown bounded
+	// below StartTimeout stops waiting at its deadline and skips the
+	// services it then reaches, so a stuck step keeps running until its call
+	// returns, as without this option. Go cannot stop the call: it keeps running in its
 	// goroutine with a cancelled context. The step's context keeps the
 	// lifetime it has without this option: it ends when the run ends, and
 	// also when the step is abandoned. It reports no deadline, since a step

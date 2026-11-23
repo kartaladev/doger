@@ -136,15 +136,17 @@ func (s *RootScope) armSlowStartWarning(step startStep) (stop func()) {
 // warning is logged once the step is abandoned.
 func (s *RootScope) awaitStep(ctx context.Context, step startStep, call func(context.Context) error, stopWarning func()) error {
 	clock := step.candidate.scope.clock()
-	stepCtx, stopTimer, abandon := newStepContext(ctx, clock, s.opts.StartTimeout)
+	stepCtx, timedOut, stopTimer, abandon := newStepContext(ctx, clock, s.opts.StartTimeout)
 	defer stopTimer()
 
 	c := &stepCall{returned: make(chan struct{}), clock: clock, begin: clock.Now()}
 	go s.runStepCall(stepCtx, step, c, call)
 
+	// only the timer abandons: an ended run context has cancelled stepCtx,
+	// its child, and the run keeps waiting for a step that honours it
 	select {
 	case <-c.returned:
-	case <-stepCtx.Done():
+	case <-timedOut:
 	}
 	stopWarning()
 	s.seamAfterStepDone(step)
@@ -158,20 +160,25 @@ func (s *RootScope) awaitStep(ctx context.Context, step startStep, call func(con
 	abandon()
 	s.markAbandoned(step)
 
-	return timeoutCause(stepCtx, s.opts.StartTimeout)
+	return libErrorf("%w after %s: %w", ErrStartTimeout, s.opts.StartTimeout, context.DeadlineExceeded)
 }
 
 // newStepContext returns the context of a step run under StartTimeout,
 // derived from the run's context runCtx: a timer on clock cancels it with
-// errStepTimedOut once timeout elapsed. A step that returns in time keeps
-// it as long as it would without a timeout: stopTimer only stops the timer,
-// and the run's context releases it when the run ends. abandon cancels it.
-// It reports no deadline, since a step that returns in time outlives one.
-func newStepContext(runCtx context.Context, clock Clock, timeout time.Duration) (ctx context.Context, stopTimer, abandon func()) {
+// errStepTimedOut once timeout elapsed, and then closes timedOut. A step
+// that returns in time keeps it as long as it would without a timeout:
+// stopTimer only stops the timer, and the run's context releases it when
+// the run ends. abandon cancels it. It reports no deadline, since a step
+// that returns in time outlives one.
+func newStepContext(runCtx context.Context, clock Clock, timeout time.Duration) (ctx context.Context, timedOut <-chan struct{}, stopTimer, abandon func()) {
 	ctx, cancel := context.WithCancelCause(runCtx)
-	timer := clock.AfterFunc(timeout, func() { cancel(errStepTimedOut) })
+	fired := make(chan struct{})
+	timer := clock.AfterFunc(timeout, func() {
+		cancel(errStepTimedOut)
+		close(fired)
+	})
 
-	return ctx, func() { timer.Stop() }, func() { cancel(errStepTimedOut) }
+	return ctx, fired, func() { timer.Stop() }, func() { cancel(errStepTimedOut) }
 }
 
 // errStepTimedOut is the cancellation cause of the context of a step that
@@ -255,19 +262,4 @@ func (step startStep) stillRunningError() *StartError {
 
 	return newStartError(step.op, step.candidate.scope, step.candidate.name, kind,
 		libErrorf("%w: a previous call is still running", ErrStartTimeout))
-}
-
-// timeoutCause is the cause of a step abandoned under timeout, decided by
-// the cause of its context stepCtx. That cause is set once, by whichever
-// cancellation won, so a run context ending right after the timer fired
-// cannot turn the timeout into an abort. When the timer won, timeout
-// elapsed. Otherwise the run's context ended, and it is the bare
-// ErrStartTimeout: the caller wraps it with withAbortCause, which appends
-// the run's cause once.
-func timeoutCause(stepCtx context.Context, timeout time.Duration) error {
-	if errors.Is(context.Cause(stepCtx), errStepTimedOut) {
-		return libErrorf("%w after %s: %w", ErrStartTimeout, timeout, context.DeadlineExceeded)
-	}
-
-	return libErrorf("%w", ErrStartTimeout)
 }

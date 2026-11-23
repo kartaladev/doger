@@ -399,7 +399,7 @@ func TestStartTimeout_AfterStartHookOnce(t *testing.T) {
 func TestStartTimeout_RunContextEnds(t *testing.T) {
 	t.Parallel()
 
-	const prefix = "doger: failed to start service `srv` in scope `[root]`: start timeout"
+	const prefix = "doger: failed to start service `srv` in scope `[root]`: start timeout after 5s: context deadline exceeded"
 	tests := []struct {
 		name    string
 		trigger func(root *RootScope, cancel context.CancelFunc) // runs at 100ms
@@ -436,7 +436,7 @@ func TestStartTimeout_RunContextEnds(t *testing.T) {
 			t.Parallel()
 
 			synctest.Test(t, func(t *testing.T) {
-				root := NewWithOpts(&InjectorOpts{StartTimeout: time.Hour})
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
 				probe := provideCounted(root, "srv", newStepProbe(0), AsStarter())
 
 				ctx, cancel := tt.ctx()
@@ -452,12 +452,13 @@ func TestStartTimeout_RunContextEnds(t *testing.T) {
 				begin := time.Now()
 				err := root.StartWithContext(ctx)
 
-				assert.Equal(t, 100*time.Millisecond, time.Since(begin))
+				assert.Equal(t, 5*time.Second, time.Since(begin), "the run waits for the step up to StartTimeout")
 				var startErr *StartError
 				require.ErrorAs(t, err, &startErr)
 				assert.Equal(t, "srv", startErr.Service)
 				assert.Equal(t, StartOpStart, startErr.Op)
 				assert.ErrorIs(t, err, ErrStartTimeout)
+				assert.ErrorIs(t, err, context.DeadlineExceeded)
 				assert.ErrorIs(t, err, tt.cause)
 				assert.EqualError(t, err, tt.message)
 
@@ -470,12 +471,121 @@ func TestStartTimeout_RunContextEnds(t *testing.T) {
 }
 
 // TestStartTimeout_ShutdownDuringWait pins container-start "Shutdown
-// during an abandoned step still shuts the service down".
+// during a stuck step shuts the service down".
 func TestStartTimeout_ShutdownDuringWait(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		root := NewWithOpts(&InjectorOpts{StartTimeout: time.Hour})
+		root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+		probe := provideCounted(root, "srv", newStepProbe(0), AsStarter())
+		wrapper, ok := root.self.serviceGet("srv")
+		require.True(t, ok)
+
+		var report *ShutdownReport
+		var shutdownTook time.Duration
+		var shut sync.WaitGroup
+		shut.Go(func() {
+			time.Sleep(100 * time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			begin := time.Now()
+			report = root.ShutdownWithContext(ctx)
+			shutdownTook = time.Since(begin)
+		})
+
+		begin := time.Now()
+		err := root.Start()
+		startTook := time.Since(begin)
+		shut.Wait()
+		<-probe.ended
+		synctest.Wait()
+
+		assert.Equal(t, 5*time.Second, startTook, "the run waits for the stuck step up to StartTimeout")
+		assert.ErrorIs(t, err, ErrShutdown)
+		assert.ErrorIs(t, err, ErrStartTimeout)
+		assert.Equal(t, int32(1), probe.shutdowns.Load(), "Shutdown called srv's Shutdown exactly once")
+		require.NotNil(t, report)
+		assert.NoError(t, report.Err())
+		assert.Less(t, shutdownTook, 10*time.Second, "Shutdown returned before its deadline")
+		assert.False(t, root.isStarted(wrapper), "a late return after Shutdown is not recorded")
+	})
+}
+
+// honouringStarter is a Starter whose Start waits for its context to end,
+// then cleans up for cleanup and returns ctx.Err(). Its Shutdown records
+// whether that cleanup had finished.
+type honouringStarter struct {
+	cleanup time.Duration
+
+	cleanupDone         atomic.Bool
+	shutdowns           atomic.Int32
+	shutdownBeforeClean atomic.Bool
+	entered, returned   chan struct{}
+	enterOnce           sync.Once
+}
+
+func newHonouringStarter(cleanup time.Duration) *honouringStarter {
+	return &honouringStarter{cleanup: cleanup, entered: make(chan struct{}), returned: make(chan struct{})}
+}
+
+func (s *honouringStarter) Start(ctx context.Context) error {
+	defer close(s.returned)
+	s.enterOnce.Do(func() { close(s.entered) })
+	<-ctx.Done()
+	time.Sleep(s.cleanup)
+	s.cleanupDone.Store(true)
+
+	return ctx.Err()
+}
+
+func (s *honouringStarter) Shutdown() error {
+	s.shutdowns.Add(1)
+	if !s.cleanupDone.Load() {
+		s.shutdownBeforeClean.Store(true)
+	}
+
+	return nil
+}
+
+// TestStartTimeout_ShutdownAwaitsHonouringStart pins container-start "A
+// Start that honours its context is awaited when Shutdown cancels it".
+func TestStartTimeout_ShutdownAwaitsHonouringStart(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+		srv := provideCounted(root, "srv", newHonouringStarter(100*time.Millisecond), AsStarter())
+
+		var shut sync.WaitGroup
+		shut.Go(func() {
+			<-srv.entered
+			time.Sleep(100 * time.Millisecond)
+			root.Shutdown()
+		})
+
+		begin := time.Now()
+		err := root.Start()
+		startTook := time.Since(begin)
+		shut.Wait()
+		<-srv.returned
+
+		assert.Equal(t, 200*time.Millisecond, startTook, "the run waits for the Start that honours its context")
+		assert.ErrorIs(t, err, ErrShutdown)
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.NotErrorIs(t, err, ErrStartTimeout)
+		assert.Equal(t, int32(1), srv.shutdowns.Load(), "srv's Shutdown method was called exactly once")
+		assert.False(t, srv.shutdownBeforeClean.Load(), "srv's Shutdown method was called after its Start cleanup finished")
+	})
+}
+
+// TestStartTimeout_ShutdownBoundedBelowTimeout pins container-start "A
+// Shutdown bounded below the start timeout": the Shutdown stops waiting at
+// its deadline and skips the service, as without the option.
+func TestStartTimeout_ShutdownBoundedBelowTimeout(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
 		probe := provideCounted(root, "srv", newStepProbe(0), AsStarter())
 		wrapper, ok := root.self.serviceGet("srv")
 		require.True(t, ok)
@@ -492,17 +602,33 @@ func TestStartTimeout_ShutdownDuringWait(t *testing.T) {
 			shutdownTook = time.Since(begin)
 		})
 
+		begin := time.Now()
 		err := root.Start()
+		startTook := time.Since(begin)
 		shut.Wait()
+
+		assert.Equal(t, time.Second, shutdownTook, "Shutdown stops waiting at its deadline")
+		require.NotNil(t, report)
+		assert.False(t, report.Succeed)
+		var scopeErr, srvErr error
+		for desc, e := range report.Errors {
+			switch desc.Service {
+			case "":
+				scopeErr = e
+			case "srv":
+				srvErr = e
+			}
+		}
+		assert.ErrorIs(t, scopeErr, context.DeadlineExceeded, "the report has an error for the root scope's wait")
+		assert.ErrorIs(t, srvErr, context.DeadlineExceeded, "the ended Shutdown skipped srv")
+		assert.Zero(t, probe.shutdowns.Load(), "srv's Shutdown method was not called")
+		assert.Equal(t, 5*time.Second, startTook, "Start returns at StartTimeout")
+		assert.ErrorIs(t, err, ErrStartTimeout)
+		assert.ErrorIs(t, err, ErrShutdown)
+
+		probe.unblock()
 		<-probe.ended
 		synctest.Wait()
-
-		assert.ErrorIs(t, err, ErrShutdown)
-		assert.ErrorIs(t, err, ErrStartTimeout)
-		assert.Equal(t, int32(1), probe.shutdowns.Load(), "Shutdown called srv's Shutdown exactly once")
-		require.NotNil(t, report)
-		assert.NoError(t, report.Err())
-		assert.Less(t, shutdownTook, time.Second, "Shutdown returned before its deadline")
 		assert.False(t, root.isStarted(wrapper), "a late return after Shutdown is not recorded")
 	})
 }

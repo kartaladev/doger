@@ -69,10 +69,12 @@ func (s *RootScope) Start() error {
 // Slow and stuck steps: a Starter's Start method or a kind-handler call
 // still running after [InjectorOpts.SlowStartThreshold] (10s by default) is
 // logged once at Warn level when a Logger is set. With
-// [InjectorOpts.StartTimeout] set, a step still running after that timeout,
-// or when ctx ends, is abandoned: Start stops waiting and returns a
-// [*StartError] matching [ErrStartTimeout], while the call keeps running in
-// its own goroutine and is never made a second time while it runs. Without
+// [InjectorOpts.StartTimeout] set, a step still running after that timeout
+// is abandoned: Start stops waiting and returns a [*StartError] matching
+// [ErrStartTimeout], while the call keeps running in its own goroutine and
+// is never made a second time while it runs. When ctx ends first, the
+// step's context is cancelled at once and Start waits for it up to the
+// timeout, so a step that honours its context is not abandoned. Without
 // StartTimeout, Start waits for every step, so a Start method that blocks
 // until shutdown (such as an HTTP server's ListenAndServe) makes Start
 // block too: return from Start once the service is ready, and serve in a
