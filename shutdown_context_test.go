@@ -753,45 +753,54 @@ func (c *lateCounted) Shutdown() error { c.calls.Add(1); return nil }
 
 // TestShutdownContext_HandoverThenCtxEnds changes GOMAXPROCS, so it is not
 // parallel: the context ends right after the build hands its instance over.
+// synctest.Wait, not a sleep, makes the shutdown wait for the build before
+// the build completes: a shutdown reaching the service only after the build
+// would find it built with an ended context and skip its Shutdown, as
+// documented, and the round would not test a late instance at all.
 func TestShutdownContext_HandoverThenCtxEnds(t *testing.T) { //nolint:paralleltest // changes GOMAXPROCS
 	testWithTimeout(t, 60*time.Second)
 	prev := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(prev)
 
-	leaked := 0
-	const n = 200
-	for range n {
-		root := New()
-		var calls atomic.Int32
-		ctx, cancel := context.WithCancel(context.Background())
-		entered, release := make(chan struct{}), make(chan struct{})
-		ProvideNamed(root, "conn", func(Injector) (*lateCounted, error) {
-			close(entered)
-			<-release
-			return &lateCounted{calls: &calls}, nil
-		})
-		g := make(chan error, 1)
-		go func() {
-			_, err := InvokeNamed[*lateCounted](root, "conn")
-			cancel() // the deadline passes right after the handover
-			g <- err
-		}()
-		<-entered
-		done := make(chan struct{})
-		go func() { defer close(done); _ = ShutdownNamedWithContext(ctx, root, "conn") }()
-		time.Sleep(time.Millisecond) // the shutdown waits for the build
-		close(release)
-		<-g
-		<-done
-		assert.Eventually(t, func() bool { return calls.Load() >= 1 }, time.Second, time.Millisecond)
-		// a second Shutdown call, if any, has a window to appear
-		if !assert.Never(t, func() bool { return calls.Load() > 1 }, 20*time.Millisecond, time.Millisecond) || calls.Load() != 1 {
-			leaked++
-		}
-		root.Shutdown()
-	}
+	synctest.Test(t, func(t *testing.T) {
+		leaked := 0
+		const n = 200
+		for round := range n {
+			root := New()
+			var calls atomic.Int32
+			ctx, cancel := context.WithCancel(context.Background())
+			release := make(chan struct{})
+			ProvideNamed(root, "conn", func(Injector) (*lateCounted, error) {
+				<-release
+				return &lateCounted{calls: &calls}, nil
+			})
+			g := make(chan error, 1)
+			go func() {
+				_, err := InvokeNamed[*lateCounted](root, "conn")
+				cancel() // the deadline passes right after the handover
+				g <- err
+			}()
+			synctest.Wait() // the build is in flight
+			done := make(chan struct{})
+			go func() { defer close(done); _ = ShutdownNamedWithContext(ctx, root, "conn") }()
+			synctest.Wait() // the shutdown waits for the build
+			close(release)
+			invokeErr := <-g
+			<-done
+			synctest.Wait() // the late instance's shutdown goroutine is done
+			lateCalls := calls.Load()
+			root.Shutdown()
+			synctest.Wait()
 
-	assert.Zero(t, leaked, "late instances not shut down exactly once, out of %d", n)
+			if !assert.ErrorIs(t, invokeErr, ErrShutdown, "round %d: the instance is late, never handed out", round) ||
+				!assert.Equal(t, int32(1), lateCalls, "round %d: the late instance is shut down once", round) ||
+				!assert.Equal(t, int32(1), calls.Load(), "round %d: the root shutdown does not shut it down again", round) {
+				leaked++
+			}
+		}
+
+		assert.Zero(t, leaked, "late instances not shut down exactly once, out of %d", n)
+	})
 }
 
 // drainingConn drains until its context ends, or for at most 1h,
