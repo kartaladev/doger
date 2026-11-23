@@ -442,7 +442,7 @@ func TestConcurrentResolution_WaitersShareFailure(t *testing.T) {
 
 func TestConcurrentResolution_StaleWaitNoFalseCycle(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 60*time.Second)
+	progress := testWithProgress(t)
 
 	// No cycle: a -> d, then a -> c; c -> d. G1 invokes a (and builds d), G2
 	// invokes c and waits for d; once d is built, G1 goes on to c, which G2
@@ -450,6 +450,7 @@ func TestConcurrentResolution_StaleWaitNoFalseCycle(t *testing.T) {
 	falseCycles := 0
 	const rounds = 300
 	for range rounds {
+		progress()
 		root := New()
 		ProvideNamed(root, "d", func(Injector) (int, error) {
 			for waitingForBuilds(root) < 1 { // G2 waits for d, owned by G1

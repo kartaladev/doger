@@ -1609,8 +1609,10 @@ func TestContainerHooks_IncrementalStartFiresNone(t *testing.T) {
 
 // TestContainerHooks_ShutdownCauseRace pins that a start whose pipeline
 // returns just as Shutdown begins still fails with ErrShutdown.
-func TestContainerHooks_ShutdownCauseRace(t *testing.T) {
-	t.Parallel()
+//
+// A CPU-bound stress, it is not parallel: its rows run in parallel with
+// each other only, never starving the other tests of -cpu=1.
+func TestContainerHooks_ShutdownCauseRace(t *testing.T) { //nolint:paralleltest,tparallel // see above
 
 	const runs = 20000
 
@@ -1639,11 +1641,12 @@ func TestContainerHooks_ShutdownCauseRace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			testWithTimeout(t, time.Minute)
+			progress := testWithProgress(t)
 
 			var bad int
 			var sample error
 			for range runs {
+				progress()
 				root := New()
 				scheduled := NewKind[Job, Spec]("k")
 				begin, done := make(chan struct{}), make(chan struct{})

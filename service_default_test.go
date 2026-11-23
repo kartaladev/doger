@@ -774,10 +774,11 @@ func TestAsDefault_ReplaceRacesResolve(t *testing.T) {
 
 func TestAsDefault_ReplaceRacesResolveStress(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 30*time.Second)
+	progress := testWithProgress(t)
 
 	replaced := 0
 	for range 1000 {
+		progress()
 		outcome := raceReplaceAndResolve(t, func(register, invoke func(), _ <-chan struct{}, release chan<- struct{}) {
 			close(release) // the provider does not block: the order is up to the scheduler
 			var wg sync.WaitGroup

@@ -490,12 +490,12 @@ type slowShutdown struct{}
 
 func (slowShutdown) Shutdown() error { time.Sleep(time.Millisecond); return nil }
 
-func TestShutdownContext_AbandonUnscheduledOnce(t *testing.T) {
-	t.Parallel()
-	testWithTimeout(t, 120*time.Second)
+func TestShutdownContext_AbandonUnscheduledOnce(t *testing.T) { //nolint:paralleltest // a CPU-bound stress: in parallel, it starves the other tests of -cpu=1
+	progress := testWithProgress(t)
 
 	notFound, dups, other := 0, 0, 0
 	for round := range 300 {
+		progress()
 		root := New()
 		ProvideNamed(root, "base", func(Injector) (slowShutdown, error) { return slowShutdown{}, nil })
 		for n := range 300 {

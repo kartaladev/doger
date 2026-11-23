@@ -439,8 +439,12 @@ func TestLogging_Events(t *testing.T) {
 			opts: &InjectorOpts{StartTimeout: 10 * time.Millisecond},
 			trigger: func(t *testing.T, root *RootScope) {
 				t.Helper()
-				probe := provideCounted(root, "svc", newStepProbe(100*time.Millisecond), AsStarter())
+				// the step blocks until Start gave it up: a step sleeping
+				// 100ms returned first whenever the 10ms timer's goroutine
+				// was starved, and Start succeeded
+				probe := provideCounted(root, "svc", newStepProbe(0), AsStarter())
 				require.ErrorIs(t, root.Start(), ErrStartTimeout)
+				probe.unblock()
 				<-probe.ended
 			},
 			message: "abandoned start step returned", level: slog.LevelWarn,
@@ -451,10 +455,12 @@ func TestLogging_Events(t *testing.T) {
 			opts: &InjectorOpts{StartTimeout: 10 * time.Millisecond},
 			trigger: func(t *testing.T, root *RootScope) {
 				t.Helper()
-				probe := newStepProbe(100 * time.Millisecond)
+				// blocks until Start gave it up, as in abandoned_returned
+				probe := newStepProbe(0)
 				probe.outcome = func(int32) error { return errors.New("x") }
 				provideCounted(root, "svc", probe, AsStarter())
 				require.ErrorIs(t, root.Start(), ErrStartTimeout)
+				probe.unblock()
 				<-probe.ended
 			},
 			message: "abandoned start step error", level: slog.LevelDebug,

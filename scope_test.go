@@ -2152,41 +2152,51 @@ func TestScope_HealthCheckWithContextExpiration_GlobalTimeoutOption(t *testing.T
 }
 
 // Test mixed scenarios
+//
+// The shutdown runs both services in one layer, each on its own goroutine,
+// and reports a service whose goroutine has not returned when the deadline
+// passes as failed with the context's error: on real time, the no-op
+// shutdown of "healthcheck-service", starved of CPU for 50ms, failed too.
+// In a synctest bubble the deadline passes only once every goroutine is
+// blocked, so only the 200ms shutdown of "shutdown-service" outlives it.
 func TestScope_ContextExpiration_ShutdownAndHealthcheckSameTimeout(t *testing.T) {
 	t.Parallel()
-	is := assert.New(t)
-	injector := New()
 
-	// Create services that implement both interfaces
-	shutdownService := newScopeTestSlowShutdowner(200 * time.Millisecond)
-	healthcheckService := newScopeTestSlowHealthchecker(200 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		is := assert.New(t)
+		injector := New()
 
-	ProvideNamedValue(injector, "shutdown-service", shutdownService)
-	ProvideNamedValue(injector, "healthcheck-service", healthcheckService)
+		// Create services that implement both interfaces
+		shutdownService := newScopeTestSlowShutdowner(200 * time.Millisecond)
+		healthcheckService := newScopeTestSlowHealthchecker(200 * time.Millisecond)
 
-	// Create context with short timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+		ProvideNamedValue(injector, "shutdown-service", shutdownService)
+		ProvideNamedValue(injector, "healthcheck-service", healthcheckService)
 
-	// Test shutdown timeout
-	report := injector.ShutdownWithContext(ctx)
-	is.NotNil(report)
-	is.False(report.Succeed)
-	is.Len(report.Errors, 1)
+		// Create context with short timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
 
-	// Recreate injector for healthcheck test
-	injector2 := New()
-	ProvideNamedValue(injector2, "healthcheck-service", healthcheckService)
+		// Test shutdown timeout
+		report := injector.ShutdownWithContext(ctx)
+		is.NotNil(report)
+		is.False(report.Succeed)
+		is.Len(report.Errors, 1)
 
-	// Test healthcheck timeout
-	healthcheckResults := injector2.HealthCheckWithContext(ctx)
-	is.NotEmpty(healthcheckResults)
-	is.Len(healthcheckResults, 1)
-	for _, err := range healthcheckResults {
-		is.ErrorIs(err, ErrHealthCheckTimeout)
-		// Check if it's a timeout error (could be wrapped)
-		is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded")
-	}
+		// Recreate injector for healthcheck test
+		injector2 := New()
+		ProvideNamedValue(injector2, "healthcheck-service", healthcheckService)
+
+		// Test healthcheck timeout
+		healthcheckResults := injector2.HealthCheckWithContext(ctx)
+		is.NotEmpty(healthcheckResults)
+		is.Len(healthcheckResults, 1)
+		for _, err := range healthcheckResults {
+			is.ErrorIs(err, ErrHealthCheckTimeout)
+			// Check if it's a timeout error (could be wrapped)
+			is.True(errors.Is(err, context.DeadlineExceeded) || err.Error() == "doger: health check timeout: context deadline exceeded")
+		}
+	})
 }
 
 func TestScope_ContextExpiration_ParallelOperations(t *testing.T) {
@@ -2368,10 +2378,11 @@ func TestScopeShutdown_ExportOrder(t *testing.T) {
 
 func TestExport_ShutdownOrderRepeated(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 30*time.Second)
+	progress := testWithProgress(t)
 
 	direct := exportOrderCases()[0]
 	for range 200 {
+		progress()
 		events, nodes := runExportOrder(t, direct)
 
 		if !assert.Equal(t, direct.order, events) || !assert.False(t, nodes[0].sawClosed.Load()) {
@@ -2581,9 +2592,10 @@ func TestScopeShutdown_ChildDependsOnParentDependent(t *testing.T) {
 
 func TestScopeShutdown_ExportingSiblings(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 30*time.Second)
+	progress := testWithProgress(t)
 
 	for range 200 {
+		progress()
 		root := New()
 		a := root.Scope("a")
 		b := root.Scope("b")
