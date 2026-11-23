@@ -81,17 +81,21 @@ func (c *collector) IDs() []string {
 	return slices.Clone(c.ids)
 }
 
-// expect waits for n more envelopes and returns their IDs.
+// expect waits for n more envelopes and returns their IDs. It fails once
+// none arrived for the wait timeout, not after a total time: a loaded
+// machine slows a long stream of envelopes down without stopping it.
 func (c *collector) expect(t *testing.T, n int) []string {
 	t.Helper()
 	ids := make([]string, 0, n)
-	timeout := time.After(waitTimeout)
+	idle := time.NewTimer(waitTimeout)
+	defer idle.Stop()
 	for len(ids) < n {
 		select {
 		case id := <-c.ch:
 			ids = append(ids, id)
-		case <-timeout:
-			t.Fatalf("received %d envelopes %v, want %d", len(ids), ids, n)
+			idle.Reset(waitTimeout)
+		case <-idle.C:
+			t.Fatalf("received %d envelopes %v, want %d: none for %v", len(ids), ids, n, waitTimeout)
 		}
 	}
 	return ids

@@ -17,7 +17,10 @@ import (
 func TestCompete_TwoInstances(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, 2*time.Minute)
+		// only a hang guard: expect fails once no envelope arrives for
+		// the wait timeout, and 200 events take over a minute on a
+		// loaded machine
+		testWithTimeout(t, 5*time.Minute)
 		const dest, n = "orders.placed", 200
 		i1 := schemaTransport(t, db, fast()...)
 		i2 := db.Transport(t, fast()...)

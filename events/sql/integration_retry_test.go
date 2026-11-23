@@ -3,6 +3,7 @@ package eventsql_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -59,14 +60,18 @@ func TestRetry(t *testing.T) {
 				send(t, tr, "e1", dest)
 
 				c.expect(t, int(tt.wantRuns))
+				// the last run's outcome is settled after the handler
+				// returned: wait for it, then for no further run
+				if tt.wantDead {
+					waitFor(t, func() bool {
+						return db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries WHERE state = 'dead'") == 1
+					}, "the delivery was not dead-lettered")
+				} else {
+					waitFor(t, func() bool { return db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries") == 0 }, "the delivery was not removed")
+				}
 				c.quiet(t)
 				assert.Equal(t, tt.wantRuns, runs.Load())
-				if !tt.wantDead {
-					waitFor(t, func() bool { return db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries") == 0 }, "the delivery was not removed")
-					return
-				}
-				assert.Equal(t, 1, db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries WHERE state = 'dead'"))
-				if tt.wantError != "" {
+				if tt.wantDead && tt.wantError != "" {
 					assert.Equal(t, 1, db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries WHERE state = 'dead' AND last_error LIKE ?", "%"+tt.wantError+"%"))
 				}
 			})
@@ -159,8 +164,12 @@ func TestRetry_InterruptedAttemptCounts(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 			_ = stop(ctx)
 			cancel()
+			// stop returns once its context ended and the handlers had a
+			// grace to return: the interrupted delivery is requeued after
+			waitFor(t, func() bool {
+				return db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries WHERE lease_token IS NOT NULL") == 0
+			}, fmt.Sprintf("cycle %d: the lease was not released", cycle))
 			assert.Equal(t, cycle, db.Count(t, "SELECT attempts FROM doger_event_deliveries"), "cycle %d", cycle)
-			assert.Equal(t, 0, db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries WHERE lease_token IS NOT NULL"), "cycle %d: the lease was released", cycle)
 		}
 
 		// the third claim exceeds MaxAttempts(2)

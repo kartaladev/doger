@@ -109,10 +109,12 @@ func TestStop(t *testing.T) {
 	}
 }
 
-// TestStop_NoGoroutine is not parallel: it checks every goroutine of the
-// process.
+// TestStop_NoGoroutine is not parallel, nor are its engines: it checks
+// every goroutine of the process, so another test's or engine's
+// goroutines must not be running. It waits for the goroutines to exit
+// as long as for any other outcome.
 func TestStop_NoGoroutine(t *testing.T) {
-	forEachEngine(t, func(t *testing.T, tdb *testDB) {
+	forEachEngineInTurn(t, func(t *testing.T, tdb *testDB) {
 		testWithTimeout(t, time.Minute)
 		ignore := goleak.IgnoreCurrent()
 		db, err := sql.Open(tdb.driver, scopedDSN(t, tdb.engine, tdb.schema))
@@ -136,6 +138,10 @@ func TestStop_NoGoroutine(t *testing.T) {
 		}
 		require.NoError(t, db.Close()) // the pool's own goroutines
 
+		// each Find retries for about a second and a half; a loaded
+		// machine can take longer to end the goroutines
+		for deadline := time.Now().Add(waitTimeout); goleak.Find(ignore) != nil && time.Now().Before(deadline); {
+		}
 		goleak.VerifyNone(t, ignore)
 	})
 }

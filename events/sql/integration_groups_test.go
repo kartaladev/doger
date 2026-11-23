@@ -104,6 +104,7 @@ func TestGroups_Ephemeral(t *testing.T) {
 				for _, id := range []string{"b1", "b2", "b3"} {
 					send(t, tr, id, dest)
 				}
+				staleHeartbeat(t, db, "cache/b")
 			},
 		},
 		{
@@ -114,6 +115,7 @@ func TestGroups_Ephemeral(t *testing.T) {
 				for _, id := range []string{"a1", "a2", "a3"} {
 					send(t, tr, id, dest)
 				}
+				staleHeartbeat(t, db, "audit")
 			},
 			wantKept:  true,
 			wantDeliv: 3,
@@ -133,20 +135,29 @@ func TestGroups_Ephemeral(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
 				testWithTimeout(t, time.Minute)
-				tr := schemaTransport(t, db, eventsql.EphemeralTTL(time.Second), eventsql.PollInterval(50*time.Millisecond))
+				const ttl = time.Second
+				tr := schemaTransport(t, db, eventsql.EphemeralTTL(ttl), eventsql.PollInterval(50*time.Millisecond))
 				tt.setup(t, db, tr)
 				// "mail" ignores the events, so the others keep theirs
 				subscribe(t, tr, group("other.destination", "mail"), newCollector().handle)
-				time.Sleep(2 * time.Second)
 
-				groups := db.Count(t, "SELECT COUNT(*) FROM doger_event_groups WHERE group_name = ?", tt.group)
-				deliveries := db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries WHERE group_name = ?", tt.group)
-				if tt.wantKept {
-					assert.Equal(t, 1, groups, "the group was removed")
-				} else {
-					assert.Zero(t, groups, "the group was kept")
+				groups := func() int {
+					return db.Count(t, "SELECT COUNT(*) FROM doger_event_groups WHERE group_name = ?", tt.group)
 				}
-				assert.Equal(t, tt.wantDeliv, deliveries)
+				deliveries := func() int {
+					return db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries WHERE group_name = ?", tt.group)
+				}
+				if !tt.wantKept {
+					waitFor(t, func() bool { return groups() == 0 && deliveries() == tt.wantDeliv }, "the group was kept")
+					return
+				}
+				// a running member's registration is older than the TTL
+				// but for its heartbeats; then a whole maintenance step
+				// had the chance to remove the group
+				time.Sleep(ttl)
+				maintenanceStep(t, db)
+				assert.Equal(t, 1, groups(), "the group was removed")
+				assert.Equal(t, tt.wantDeliv, deliveries())
 			})
 		})
 	}
@@ -180,4 +191,11 @@ func TestGroups_EphemeralStopDuringOutbox(t *testing.T) {
 		waitFor(t, func() bool { return db.Count(t, "SELECT COUNT(*) FROM doger_events") == 0 }, "the event was kept")
 		assert.Zero(t, db.Count(t, "SELECT COUNT(*) FROM doger_event_groups WHERE group_name = 'cache/a'"))
 	}, "postgres")
+}
+
+// staleHeartbeat makes the last heartbeat of group an hour old, older than
+// the EphemeralTTL of the tests.
+func staleHeartbeat(t *testing.T, db *testDB, group string) {
+	t.Helper()
+	db.Exec(t, "UPDATE doger_event_groups SET heartbeat_at = "+db.Now()+" - "+db.Interval(time.Hour)+" WHERE group_name = ?", group)
 }
