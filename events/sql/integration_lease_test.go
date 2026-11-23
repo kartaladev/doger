@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -101,8 +102,10 @@ func (a *attempts) Got() []int {
 	return append([]int{}, a.got...)
 }
 
-// TestLease is not parallel with the other tests: its 200ms lease must not
-// expire because a loaded machine delays an acknowledgement.
+// TestLease runs with a 200ms lease. No outcome it checks depends on how
+// fast the machine is: a handler that must outlive its lease waits for
+// what proves the lease ended, and a single worker keeps its member from
+// claiming the delivery it is still settling.
 func TestLease(t *testing.T) {
 	const dest, lease = "orders.placed", 200 * time.Millisecond
 
@@ -149,17 +152,22 @@ func TestLease(t *testing.T) {
 			send(t, i1, "e1", dest)
 
 			type ended struct {
-				after time.Duration
-				err   error
+				deadline time.Duration // from the handler's start
+				hasDL    bool
+				err      error
 			}
 			i1Ended := make(chan ended, 1)
+			i2Claimed := make(chan struct{}) // closed once i2 runs e1
+			claimedByI2 := sync.OnceFunc(func() { close(i2Claimed) })
 			subscribe(t, i1, group(dest, "mail"), func(ctx context.Context, _ doger.Envelope) error {
 				start := time.Now()
+				dl, ok := ctx.Deadline()
 				<-ctx.Done()
-				i1Ended <- ended{after: time.Since(start), err: ctx.Err()}
-				time.Sleep(time.Second - time.Since(start))
-				return nil // the late acknowledgement
+				i1Ended <- ended{deadline: dl.Sub(start), hasDL: ok, err: ctx.Err()}
+				<-i2Claimed
+				return nil // the late acknowledgement, once i2 holds the lease
 			})
+			t.Cleanup(claimedByI2) // before the stop of the cleanup, on a failure
 			var e ended
 			select {
 			case e = <-i1Ended:
@@ -167,10 +175,14 @@ func TestLease(t *testing.T) {
 				t.Fatal("i1's handler context did not end")
 			}
 			require.ErrorIs(t, e.err, context.DeadlineExceeded)
-			assert.Less(t, e.after, lease+100*time.Millisecond)
+			require.True(t, e.hasDL, "i1's handler context has no deadline")
+			// the context ends before the lease does, so the handler is
+			// cancelled before another member can claim the delivery
+			assert.Less(t, e.deadline, lease)
 
 			i2Handled := make(chan struct{})
 			subscribe(t, i2, group(dest, "mail"), func(context.Context, doger.Envelope) error {
+				claimedByI2()
 				waitFor(t, func() bool { return logs.Logged(eventsql.ErrLeaseLost) }, "i1's late acknowledgement was not logged as ErrLeaseLost")
 				assert.Equal(t, 1, db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries"), "i1's acknowledgement removed i2's claim")
 				close(i2Handled)
@@ -198,21 +210,36 @@ func TestLease(t *testing.T) {
 				send(t, tr, id, dest)
 			}
 
+			// the first run is slow: the other claims of its batch wait
+			// for the worker past their lease. It is usually e1, but
+			// delivery is unordered: a claim can skip a row another
+			// statement locks for a moment (MySQL)
 			type run struct {
 				attempt int
-				ctxErr  error
+				// the handler's deadline came from a claim made after the
+				// slow handler returned, not from the claim that waited
+				claimedAfterSlow bool
 			}
 			var mu sync.Mutex
 			runs := map[string][]run{}
+			var slowID string
+			var slowReturned time.Time
 			c := newCollector()
 			subscribe(t, tr, group(dest, "mail"), func(ctx context.Context, env doger.Envelope) error {
 				n, _ := eventsql.AttemptFromContext(ctx)
+				dl, _ := ctx.Deadline()
 				mu.Lock()
-				runs[env.ID] = append(runs[env.ID], run{attempt: n, ctxErr: ctx.Err()})
-				first := len(runs[env.ID]) == 1
+				slow := slowID == ""
+				if slow {
+					slowID = env.ID
+				}
+				runs[env.ID] = append(runs[env.ID], run{attempt: n, claimedAfterSlow: !slowReturned.IsZero() && dl.After(slowReturned)})
 				mu.Unlock()
-				if env.ID == "e1" && first {
-					time.Sleep(lease + 100*time.Millisecond) // e2 and e3 wait past their lease
+				if slow {
+					time.Sleep(lease + 100*time.Millisecond) // the other claims wait past their lease
+					mu.Lock()
+					slowReturned = time.Now()
+					mu.Unlock()
 				}
 				return c.handle(ctx, env)
 			})
@@ -221,8 +248,10 @@ func TestLease(t *testing.T) {
 			waitFor(t, func() bool { return db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries") == 0 }, "the deliveries were not removed")
 			mu.Lock()
 			defer mu.Unlock()
-			for _, id := range []string{"e2", "e3"} {
-				assert.Equal(t, []run{{attempt: 1}}, runs[id], "runs of %s", id)
+			for _, id := range []string{"e1", "e2", "e3"} {
+				if id != slowID {
+					assert.Equal(t, []run{{attempt: 1, claimedAfterSlow: true}}, runs[id], "runs of %s", id)
+				}
 			}
 		})
 	})
@@ -231,24 +260,31 @@ func TestLease(t *testing.T) {
 		t.Parallel()
 		forEachEngine(t, func(t *testing.T, db *testDB) {
 			testWithTimeout(t, time.Minute)
-			i1 := schemaTransport(t, db, fast(eventsql.Lease(lease))...)
+			// one worker, busy until e1 is settled: i1 claims nothing
+			// meanwhile, and i2 subscribes once e1 was removed, so the
+			// acknowledgement holds the lease however late it comes
+			i1 := schemaTransport(t, db, fast(eventsql.Lease(lease), eventsql.Workers(1))...)
 			i2 := db.Transport(t, fast(eventsql.Lease(lease))...)
 			seedGroup(t, db, dest, "mail", false)
 			send(t, i1, "e1", dest)
 
+			var i1Runs atomic.Int32
 			handled := make(chan struct{})
 			subscribe(t, i1, group(dest, "mail"), func(context.Context, doger.Envelope) error {
-				time.Sleep(50 * time.Millisecond)
-				close(handled)
+				if i1Runs.Add(1) == 1 {
+					time.Sleep(50 * time.Millisecond)
+					close(handled)
+				}
 				return nil
 			})
 			<-handled
+			waitFor(t, func() bool { return db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries") == 0 }, "e1 was not removed")
 			c := newCollector()
 			subscribe(t, i2, group(dest, "mail"), c.handle)
 
-			waitFor(t, func() bool { return db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries") == 0 }, "e1 was not removed")
 			time.Sleep(lease) // past the lease
 			c.quiet(t)
+			assert.Equal(t, int32(1), i1Runs.Load(), "i1 handled e1 again")
 			assert.Zero(t, db.Count(t, "SELECT COUNT(*) FROM doger_events"))
 		})
 	})
