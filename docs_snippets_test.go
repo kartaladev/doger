@@ -259,6 +259,7 @@ var docsRegion = regexp.MustCompile(`(?s)// docs:([a-z-]+)\n(.*?)\n[\t ]*// docs
 // root module without its sibling modules may lack them.
 var docsSnippetFiles = map[string]bool{
 	"docs_snippets_test.go":                 false,
+	"docs_starter_snippets_test.go":         false,
 	"clock/clockwork/docs_snippets_test.go": true,
 }
 
@@ -291,7 +292,31 @@ func docsRegions(t *testing.T) (regions map[string]string, optional map[string]b
 func TestDocs_MigrationSnippetsCompiled(t *testing.T) {
 	t.Parallel()
 
-	doc, err := readLF("docs/docs/migrating/migrating-from-samber-do.md")
+	checkDocSnippets(t, "docs/docs/migrating/migrating-from-samber-do.md")
+}
+
+// TestDocs_StarterSnippetsCompiled pins that every Go block of the Starter
+// page is the named region of a compiled snippet file, including the wrong
+// and right server shapes of its "A Start that never returns" section.
+func TestDocs_StarterSnippetsCompiled(t *testing.T) {
+	t.Parallel()
+
+	names := checkDocSnippets(t, "docs/docs/service-lifecycle/starter.md")
+	for _, required := range []string{"starter-blocking-server", "starter-listening-server"} {
+		if !names[required] {
+			t.Errorf("the Starter page has no <!-- snippet: %s --> block", required)
+		}
+	}
+}
+
+// checkDocSnippets checks that every Go block of the doc at path is either
+// marked as samber/do code or a fragment, or is, as a whole, the named
+// region of a compiled snippet file. It returns the names of the compiled
+// snippets it found.
+func checkDocSnippets(t *testing.T, path string) (names map[string]bool) {
+	t.Helper()
+
+	doc, err := readLF(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,8 +325,9 @@ func TestDocs_MigrationSnippetsCompiled(t *testing.T) {
 
 	blocks := docsSnippet.FindAllStringSubmatch(doc, -1)
 	if len(blocks) == 0 {
-		t.Fatal("the migration guide has no Go block")
+		t.Fatalf("%s has no Go block", path)
 	}
+	names = map[string]bool{}
 	compiled := 0
 	for _, block := range blocks {
 		marker, name, text := block[1], block[2], dedent(block[3])
@@ -323,11 +349,14 @@ func TestDocs_MigrationSnippetsCompiled(t *testing.T) {
 		if text != region {
 			t.Errorf("snippet %q differs from its compiled region\ndoc:\n%s\ncompiled:\n%s", name, text, region)
 		}
+		names[name] = true
 		compiled++
 	}
 	if compiled == 0 {
-		t.Error("no compiled snippet in the migration guide")
+		t.Errorf("no compiled snippet in %s", path)
 	}
+
+	return names
 }
 
 // TestDocs_MigrationSnippetsRun runs the snippets whose outcome the guide

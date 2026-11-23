@@ -66,6 +66,18 @@ func (s *RootScope) Start() error {
 // a prior Start. A panic in a per-service hook is not recovered as an error:
 // Start runs the Failed hooks, then re-raises it.
 //
+// Slow and stuck steps: a Starter's Start method or a kind-handler call
+// still running after [InjectorOpts.SlowStartThreshold] (10s by default) is
+// logged once at Warn level when a Logger is set. With
+// [InjectorOpts.StartTimeout] set, a step still running after that timeout,
+// or when ctx ends, is abandoned: Start stops waiting and returns a
+// [*StartError] matching [ErrStartTimeout], while the call keeps running in
+// its own goroutine and is never made a second time while it runs. Without
+// StartTimeout, Start waits for every step, so a Start method that blocks
+// until shutdown (such as an HTTP server's ListenAndServe) makes Start
+// block too: return from Start once the service is ready, and serve in a
+// goroutine.
+//
 // Shutdown during Start: a root Shutdown that begins while Start runs
 // cancels the Start-time context with cause [ErrShutdown] and waits
 // for Start to return, bounded by its own context. Start stops before its
@@ -804,10 +816,19 @@ func (s *RootScope) startCandidate(startCtx context.Context, candidate *startCan
 		return startErr
 	}
 
+	step := startStep{candidate: candidate, op: StartOpStart}
+	if skip, err := s.claimStep(step); err != nil {
+		return withAbortCause(startCtx, err)
+	} else if skip {
+		return nil
+	}
+
 	op := serviceOp{ctx: startCtx, scope: candidate.scope, name: candidate.name}
 	s.hooks.onBeforeStart(op)
 	op = beginServiceOp(startCtx, candidate.scope, candidate.name)
-	err := startInstance(startCtx, candidate.instance)
+	err := s.runStartStep(startCtx, step, func(ctx context.Context) error {
+		return startInstance(ctx, candidate.instance)
+	})
 	s.hooks.onAfterStart(op, op.elapsed(), err)
 	if err != nil {
 		err = newStartError(StartOpStart, candidate.scope, candidate.name, "", err)
@@ -815,9 +836,7 @@ func (s *RootScope) startCandidate(startCtx context.Context, candidate *startCan
 	}
 	// a service shut down meanwhile (a bounded scope shutdown gave up
 	// waiting) stays out of the bookkeeping
-	if stillRegistered(candidate) {
-		s.markStarted(candidate.service)
-	}
+	s.recordIfHeld(step)
 
 	return nil
 }
@@ -829,14 +848,9 @@ func stillRegistered(candidate *startCandidate) bool {
 }
 
 // startInstance calls the Start method of the instance's Starter variant.
-// The type switch mirrors the one of the shutdown path.
-func startInstance(ctx context.Context, instance any) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = recoverAsError(r)
-		}
-	}()
-
+// The type switch mirrors the one of the shutdown path. A panic is
+// recovered by runStartStep, its caller.
+func startInstance(ctx context.Context, instance any) error {
 	switch instance := instance.(type) {
 	case StarterWithContextAndError:
 		return instance.Start(ctx)
@@ -920,27 +934,27 @@ func (s *RootScope) runStage(startCtx context.Context, stage Stage, candidates [
 				return err
 			}
 
-			if err := callKindHandler(startCtx, entry, component, metas[component]); err != nil {
+			step := startStep{candidate: component, op: StartOpHandle, kind: entry.id}
+			if skip, err := s.claimStep(step); err != nil {
+				return withAbortCause(startCtx, err)
+			} else if skip {
+				continue
+			}
+			if err := s.runStartStep(startCtx, step, func(ctx context.Context) error {
+				return callKindHandler(ctx, entry, component, metas[component])
+			}); err != nil {
 				err = newStartError(StartOpHandle, component.scope, component.name, entry.id.name, err)
 				return withAbortCause(startCtx, err)
 			}
-			if stillRegistered(component) {
-				s.markHandled(component.service, entry.id)
-			}
+			s.recordIfHeld(step)
 		}
 	}
 
 	return nil
 }
 
-// callKindHandler calls entry's handler for one component, recovering a panic
-// as an error.
-func callKindHandler(startCtx context.Context, entry kindEntry, component *startCandidate, meta any) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = recoverAsError(r)
-		}
-	}()
-
+// callKindHandler calls entry's handler for one component. A panic is
+// recovered by runStartStep, its caller.
+func callKindHandler(startCtx context.Context, entry kindEntry, component *startCandidate, meta any) error {
 	return entry.run(startCtx, component.scope, component.name, component.instance, meta)
 }

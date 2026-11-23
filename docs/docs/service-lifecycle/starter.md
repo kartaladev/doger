@@ -8,13 +8,14 @@ sidebar_position: 3
 
 Background components such as servers, consumers and schedulers need to be started once the container is wired. `Start()` builds every component that needs starting, then starts them in dependency order.
 
+<!-- snippet: starter-quickstart -->
 ```go
 root := doger.New()
 doger.Provide(root, NewDB, doger.AsStarter())         // Start(ctx) error, opted in
 doger.Provide(root, NewHTTPServer, doger.AsStarter()) // invokes *DB -> started after DB
 
 if err := root.StartWithContext(ctx); err != nil {
-	_ = root.Shutdown()                         // the caller owns cleanup
+	_ = root.Shutdown() // the caller owns cleanup
 	return err
 }
 ```
@@ -25,11 +26,14 @@ if err := root.StartWithContext(ctx); err != nil {
 
 A service registered with `doger.AsStarter()` is started through one of:
 
+<!-- snippet: starter-interfaces -->
 ```go
-type Starter interface{ Start() }
-type StarterWithError interface{ Start() error }
-type StarterWithContext interface{ Start(context.Context) }
-type StarterWithContextAndError interface{ Start(context.Context) error }
+type (
+	Starter                    interface{ Start() }
+	StarterWithError           interface{ Start() error }
+	StarterWithContext         interface{ Start(context.Context) }
+	StarterWithContextAndError interface{ Start(context.Context) error }
+)
 ```
 
 There is no `Stop` counterpart: a started service is stopped by its [`Shutdown` method](./shutdowner.md) when the container shuts down. A starter without a `Shutdown` method is allowed.
@@ -48,6 +52,7 @@ With zero configuration, `Start` starts **only the services registered with `dog
 | Default (`AsDefault()`) that yields                         | no; the service it yields to is started once      |
 | Default (`AsDefault()`) that does not yield                 | as the same registration without `AsDefault()`    |
 
+<!-- snippet: starter-interface-opt-in -->
 ```go
 // The interface has no Start method: the instance is checked at Start.
 doger.Provide(root, NewLifecycle, doger.AsStarter())
@@ -63,6 +68,7 @@ doger.Provide(root, NewLifecycle, doger.AsStarter())
 
 ### Enabling auto-detection {#enable-auto-detection}
 
+<!-- snippet: starter-auto-detection -->
 ```go
 root := doger.NewWithOpts(&doger.InjectorOpts{
 	EnableStarterAutoDetection: true, // also start every type with a Start method
@@ -93,6 +99,7 @@ Starters with no dependency path between them start in a deterministic order:
 1. by scope depth: the root scope first, then its children, then grandchildren;
 2. then by registration order. An `Override` in the same scope keeps the position of the first registration; a clone keeps its source's positions, and services registered later in the clone come after them.
 
+<!-- snippet: starter-ties -->
 ```go
 request := root.Scope("request")
 doger.ProvideNamed(request, "z", NewZ) // registered first, but in a child scope
@@ -115,6 +122,7 @@ A cycle that only exists once services are built, for example a [declared edge](
 - The derived context is **cancelled when `Start` returns**. Do not keep it for long-running work: start your own goroutine with its own context in `Start`, and stop it in `Shutdown`.
 - `Start` checks the context before each build, each handler call and each starter. A cancelled or expired context stops `Start` with an error wrapping `ctx.Err()`, so `errors.Is(err, context.DeadlineExceeded)` works.
 
+<!-- snippet: starter-context -->
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 defer cancel()
@@ -124,6 +132,46 @@ if err := root.StartWithContext(ctx); err != nil {
 	return err
 }
 ```
+
+## A Start that never returns {#start-never-returns}
+
+`Start` waits for every `Start` method, and runs kind handlers such as a `Runner`'s `Run` inline. A method that runs until shutdown therefore makes `Start` block forever, and nothing names the culprit. A server is the usual case: `ListenAndServe` returns only once the server stops.
+
+<!-- snippet: starter-blocking-server -->
+```go
+// Wrong: Start blocks until Shutdown, so root.Start never returns.
+func (s *BlockingServer) Start(ctx context.Context) error {
+	return s.srv.ListenAndServe()
+}
+```
+
+Return once the service is ready: bind the listener in `Start`, so a bind error fails `Start`, serve in a goroutine, and stop serving in `Shutdown`.
+
+<!-- snippet: starter-listening-server -->
+```go
+// Right: Start returns once the server is listening.
+func (s *ListeningServer) Start(ctx context.Context) error {
+	addr := s.srv.Addr
+	if addr == "" {
+		addr = ":http" // as ListenAndServe does
+	}
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
+	if err != nil {
+		return err // fails root.Start, naming this service
+	}
+	go func() { _ = s.srv.Serve(ln) }() // http.ErrServerClosed after Shutdown
+	return nil
+}
+
+func (s *ListeningServer) Shutdown(ctx context.Context) error {
+	return s.srv.Shutdown(ctx)
+}
+```
+
+A `Start` method that ignores its context is awaited even when the context of `StartWithContext` has expired. Two [options](../container/options.md#start-timeout) help you find one:
+
+- **`SlowStartThreshold`** (default 10s, a negative value disables it): a step still running after it is logged once at Warn level as `start step is slow`, naming its scope and service. It needs `InjectorOpts.Logger`.
+- **`StartTimeout`** (default off): a step still running after it, or when the context ends, is abandoned. `Start` returns a `*doger.StartError` naming it that matches `doger.ErrStartTimeout`. The method keeps running in its own goroutine and is not called again while it runs; `Shutdown` still calls the service's `Shutdowner`.
 
 ## Errors {#errors}
 
@@ -136,6 +184,7 @@ On the first failure, `Start` stops and returns an error that names the service 
 
 Starters not reached yet are not started, and **nothing is rolled back**. Cleanup is the caller's job:
 
+<!-- snippet: starter-errors -->
 ```go
 if err := root.Start(); err != nil {
 	_ = root.Shutdown() // shuts down every built service, started or not
@@ -157,6 +206,7 @@ A failure of a service or of a kind handler is a `*doger.StartError`. Its `Error
 | `Op`      | `StartOpBuild`, `StartOpStart` or `StartOpHandle`                   |
 | `Cause`   | the underlying error                                                |
 
+<!-- snippet: starter-start-error -->
 ```go
 if startErr, ok := errors.AsType[*doger.StartError](err); ok {
 	log.Printf("%s failed at %s in scope %s: %v", startErr.Service, startErr.Op, startErr.Scope.Name(), startErr.Cause)
@@ -200,11 +250,12 @@ A clone starts independently of its source. Clones share eager instances, so sta
 
 `Start` takes a snapshot of the scope tree: services registered after it, and scopes created after it, are not started automatically. `root.Refresh()` (or `RefreshWithContext(ctx)`) starts them: it runs the same pipeline over everything not started or handled yet, with the same order, context, error and per-service hook rules as `Start`.
 
+<!-- snippet: starter-refresh -->
 ```go
 _ = root.Start()
 
 doger.Provide(root, NewReportsWorker) // registered after Start
-tenant := root.Scope("tenant")       // created after Start
+tenant := root.Scope("tenant")        // created after Start
 doger.Provide(tenant, NewTenantWorker)
 
 err := root.Refresh() // starts both workers
@@ -220,6 +271,7 @@ err := root.Refresh() // starts both workers
 
 `scope.Start()` (or `StartWithContext(ctx)`) does what `Refresh` does, restricted to that scope and its descendants. It is the natural way to start a tenant or plugin scope created after `Start`:
 
+<!-- snippet: starter-scope-start -->
 ```go
 tenant := root.Scope("tenant-a")
 doger.Provide(tenant, NewTenantSync)
@@ -233,6 +285,7 @@ Services of ancestor scopes that the subtree depends on are built as needed, but
 
 By default, Starters start one at a time. With `InjectorOpts.StartParallelism` set to `n > 1`, `Start`, `Refresh` and `Scope.Start` run up to `n` Starters concurrently:
 
+<!-- snippet: starter-parallel -->
 ```go
 root := doger.NewWithOpts(&doger.InjectorOpts{StartParallelism: 4})
 ```

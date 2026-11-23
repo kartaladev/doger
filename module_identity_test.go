@@ -365,6 +365,7 @@ func TestCompat_ErrorSentinelMessages(t *testing.T) {
 		{name: "ErrServiceNotMatch", sentinel: ErrServiceNotMatch, want: "doger: could not find service satisfying interface"},
 		{name: "ErrCircularDependency", sentinel: ErrCircularDependency, want: "doger: circular dependency detected"},
 		{name: "ErrHealthCheckTimeout", sentinel: ErrHealthCheckTimeout, want: "doger: health check timeout"},
+		{name: "ErrStartTimeout", sentinel: ErrStartTimeout, want: "doger: start timeout"},
 	}
 
 	for _, tt := range tests {
@@ -631,6 +632,7 @@ func TestModuleIdentity_AllSentinelsPrefixed(t *testing.T) {
 				"ErrServiceAlreadyDeclared":    ErrServiceAlreadyDeclared,
 				"ErrCircularDependency":        ErrCircularDependency,
 				"ErrHealthCheckTimeout":        ErrHealthCheckTimeout,
+				"ErrStartTimeout":              ErrStartTimeout,
 				"ErrHealthCheckPanic":          ErrHealthCheckPanic,
 				"ErrAlreadyStarted":            ErrAlreadyStarted,
 				"ErrShutdown":                  ErrShutdown,

@@ -5,8 +5,11 @@ import "context"
 // Runner is one-shot startup work, run by the built-in [Runnable] kind after
 // every Starter has started.
 //
-// Run must return: long-running work belongs in a Starter that spawns its
-// own goroutine, plus a Shutdowner that stops it. Run receives the Start-time
+// Run must return: long-running work, such as serving HTTP, belongs in a
+// Starter that spawns its own goroutine, plus a Shutdowner that stops it
+// (see [Starter]). A Run that does not return makes the container's Start
+// block; [InjectorOpts.SlowStartThreshold] logs it and
+// [InjectorOpts.StartTimeout] abandons it. Run receives the Start-time
 // context, which root Shutdown cancels; a Runner that honours it returns when
 // Shutdown cancels Start.
 type Runner interface {

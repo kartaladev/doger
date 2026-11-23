@@ -1,0 +1,175 @@
+# Design
+
+## Context
+
+See proposal.md for the motivation. Today's facts that shape the approach:
+
+- `Start`, `RefreshWithContext` and `Scope.StartWithContext` share `runPipeline` (`root_start.go`). Every Starter goes through `startCandidate` → `startInstance`, both in the sequential loop and in `startStartersParallel`. Every kind-handler call (including the default `Runnable` handler, `runRunner`) goes through `callKindHandler` from `runStage`. These two functions are the only places where user start code runs, so they are the only places this change needs to touch.
+- Both call user code inline, on the run's goroutine, with the Start-time context (`startCtx`, derived from the caller's ctx and cancelled by Shutdown with cause `ErrShutdown`). Both recover panics into errors.
+- `startCandidate` marks a Starter started on a nil return (`root_start.go:818`), before the run's next `checkAbort`. So a Starter that returns nil after the ctx ended is still recorded as started. This change keeps that.
+- Step failures are wrapped by `withAbortCause`, which appends "(start aborted: <cause>)" when the run ctx is done. `abortOutcome` in `finishStart` makes a Shutdown-aborted run match `ErrShutdown`, with each cause appearing once (spec "An aborted run matches ErrShutdown when the caller cancelled first").
+- The run holds `pipelineMu` for its whole duration, so a stuck step also blocks every later Refresh and Scope.Start.
+- Started and handled bookkeeping: `RootScope.started` and `handled`, guarded by `startedMu`. That is a leaf lock, "never held across user code" (`root_scope.go:152`). `forget` clears both maps when a shutdown removes a service. A shutdown marks its scope as closing under `lifecycleMu` before it removes services (`claimCandidates` relies on this). Discovery (`newStartCandidate`) reads `isStarted`/`isHandled` long before the step runs.
+- Timing uses `InjectorOpts.Clock` (`withClockTimeout`, `Clock.AfterFunc`, `beginServiceOp`/`elapsed`). The health-check bound (`HealthCheckTimeout`, where 0 means `DefaultHealthReportCheckTimeout` and a negative value means no bound, plus `ErrHealthCheckTimeout`) is the precedent for naming, zero-value semantics and the error shape.
+- Logging goes through `Scope.log` / `logEnabled` and is off unless `InjectorOpts.Logger` is set. Today every record is emitted on a caller-owned goroutine. Panics are logged by `Scope.logRecoveredPanic` (ERROR with the panic type, DEBUG with the value). The `RootScope` variant always logs the root scope.
+- README Go blocks are pinned by `TestReadme_SnippetsCompiled`. `docs_snippets_test.go` pins only `migrating/migrating-from-samber-do.md` (`TestDocs_MigrationSnippetsCompiled`/`Run`).
+
+## Goals / Non-Goals
+
+**Goals:**
+- One per-step guard used by both the Starter and the kind-handler call sites, so Start, Refresh, Scope.Start, sequential start and parallel start all behave the same.
+- With zero configuration: no extra goroutine, no change in ordering, errors, panics or bookkeeping. The only addition is a timer that is armed only when a Warn-enabled Logger exists.
+- User start code is never called twice at the same time within one container.
+- Abandonment never leaves a goroutine that cannot exit once the user's call returns, and nothing on an unowned goroutine can crash the process.
+
+**Non-Goals:**
+- Bounding Shutdown-side hooks, remote subscription stop, or HealthScheduler stop. These are sweep findings, listed in the proposal for separate changes.
+- Killing or interrupting user code. Go cannot do that; abandonment only stops waiting.
+- A bound on providers (builds). Invocation takes no ctx, and builds are already abandoned by Shutdown.
+- A whole-run deadline. The caller's ctx deadline already is one; with `StartTimeout` set, an ended context cancels the running step's context at once and the step is abandoned at its timeout at the latest (D4).
+- Preventing overlap across clones. Clones share eager instances but start independently; the guarantee is per container, and this is documented.
+
+## Decisions
+
+**D1. One guard, `runStartStep`, wraps both call sites.** It takes the run ctx and a `startStep` (candidate, op `start`/`handle`, kind id) plus the call `func(ctx) error`. `startCandidate` passes `startInstance` and `runStage` passes `callKindHandler`. The per-service hooks stay outside the guard, on the run's goroutine (`onBeforeStart` before it, `onAfterStart` after it), so hook panic semantics are unchanged.
+*Alternative:* separate logic in each site. Rejected because the two copies would drift, and parallel start would need a third.
+
+**D2. The slow warning is a `Clock.AfterFunc` timer, armed only when it can log, and stopped when the run stops waiting.** At step begin, the threshold is resolved (0 → `DefaultSlowStartThreshold` = 10s, negative → off). The timer is armed only if `logEnabled(slog.LevelWarn)` holds, so a container without a Logger, or with a level above Warn, never calls `AfterFunc` (checked with a counting Clock). When the timer fires it emits the WARN record once, inside a `recover` that drops a handler panic (D8). The timer is stopped on the step's return, and, with `StartTimeout` set, inside `awaitStep` right after its wait (review F4: stopping it only when `runStartStep` returned let a timer that fired with the abandonment still log). With `StartTimeout` set, a threshold at or above it arms nothing: the abandonment reports the step, and the outcome no longer depends on which of two timers due at the same instant fires first. A step abandoned before the threshold therefore never warns; its end is reported by the late-outcome record instead. A stopped `time.AfterFunc` timer never creates a goroutine, so the timer cannot leak. If the step returns exactly as the timer fires, 0 or 1 record is emitted, never 2. The timer lives on the container Clock, as the clock spec requires, so on a consumer's fake clock it is one more armed timer per step while a Warn-enabled Logger is set, and it counts toward that clock's `BlockUntil`. The `Clock` and `SlowStartThreshold` godoc and `options.md` say so, and `SlowStartThreshold: -1` removes it (review F6).
+*Alternatives:* a watcher goroutine per step (rejected: one goroutine per Starter for a log line). A `HookSlowStart` callback (deferred: it can be added later without breaking anything, and `Logger` already gives full control over the destination).
+
+**D3. With `StartTimeout` ≤ 0, the call stays inline.** No goroutine and no select: the code path is the same as today, including the started bookkeeping, so the "Start waits for every step by default" scenarios and the existing suite pin the unchanged behaviour.
+
+**D4. With `StartTimeout` > 0, the call runs in a goroutine and the run selects.** The step ctx is `context.WithCancelCause(runCtx)` plus a `Clock.AfterFunc(StartTimeout, …)` timer that cancels it with the internal cause `errStepTimedOut`. The callee receives it; the hooks keep the run ctx (spec "Per-service start hooks", modified). When the call returns in time, only the timer is stopped: the step ctx stays live until the run ctx ends, so it keeps the lifetime it has without the option (review F3). Its cancel function is called only at abandonment. Not calling it on a normal return leaks nothing, because the run ctx is always cancelled when the run returns (`finishStart`, `finishIncremental`), which releases the child. It reports no deadline: a step that returns in time keeps it past the timeout, so a reported deadline would be false. The call's goroutine records its outcome under the call's mutex and closes a `returned` channel, so it can always exit once the user call returns, even if nobody waits.
+- *Only the timer abandons (review F1).* The run waits on `returned` or on a `timedOut` channel closed by the timer callback, never on `stepCtx.Done()`. The run's context ending cancels the step's context at once, since it is its parent; a step that honours it returns, and the run keeps waiting until the step returns or its timer fires. So a Start that honours its context is never abandoned while it unwinds, and root Shutdown, which waits for the run bounded by its own context (`waitForStart`), never runs that service's Shutdowner before its Start returned. A Shutdown bounded below `StartTimeout` stops waiting and can still overlap a stuck Start; the `StartTimeout` godoc says so.
+- *The timeout is decided once (review F4).* The timer callback and the end of the call are ordered under the call's mutex. A callback that finds the call ended does nothing, so a step that returned in time keeps a live context. A callback that runs first marks the call timed out, registers the step as abandoned (D5), cancels the step ctx with `errStepTimedOut` and closes `timedOut`; the call's end, even one that comes before the run notices, is then its late outcome (D5). Registering the step in the callback, before the context is cancelled, guarantees that the late outcome always finds it registered.
+- *After the wait.* A call that ended and was not timed out is handled as today (error → `*StartError` via `withAbortCause`, panic → error). A `runtime.Goexit` in user code still runs the deferred send, and is reported as a step error with panic type `runtime.Goexit`. Without `StartTimeout` the call runs inline (D3), where a Goexit ends the caller's goroutine, as before this change; the `StartTimeout` godoc states the difference (review F7). A timed-out call yields `libErrorf("%w after %s: %w", ErrStartTimeout, StartTimeout, context.DeadlineExceeded)`, wrapped by `newStartError`; `withAbortCause` appends the run's cause once if the run's context has ended meanwhile (review F5): "…: start timeout after 5s: context deadline exceeded (start aborted: context canceled)". A Shutdown-triggered abort still goes through `abortOutcome`, which finds the error already matching `ErrShutdown` and leaves it unchanged.
+*Alternative:* always run in a goroutine. Rejected because it changes goroutine identity for user code with zero config (goroutine-local assumptions, stack traces), and D3 keeps the default byte-for-byte.
+
+**D5. Abandoned bookkeeping: one atomic claim per step, and a guarded late mark.**
+- *State:* `abandoned map[any]map[stepKey]struct{}`, keyed by service wrapper. `stepKey` is `start`, or the kind id for a handler. It lives next to `started`/`handled` under `startedMu`.
+- *Claim (fixes the discovery-to-start window):* in `startCandidate` and `runStage`, before any hook (the hooks sit outside `runStartStep`), one `startedMu` critical section decides:
+  - if the step is already recorded (started, or handled for that kind), skip it: return nil, with no hooks and no call;
+  - if it is abandoned, skip it with no hooks, and keep `newStartError(op, …, libErrorf("%w: a previous call is still running", ErrStartTimeout))` as the run's pending error (review F2);
+  - otherwise proceed.
+  Discovery's early `isStarted`/`isHandled` stays as a cheap filter, but the claim is authoritative.
+- *Skip, not stop (review F2):* the run keeps the set of services whose step it skipped as still running. A candidate that depends on one of them, directly or through others, is skipped too, with no hooks and no call; everything else is started. The run then returns its first failure if a step failed, and otherwise the pending error of the first still-running step it skipped. So one stuck step no longer blocks every later Refresh for services that do not need it.
+- *Abandonment:* the timer callback adds the step key under `startedMu` before it cancels the step's context (D4).
+- *After root Start (review F3):* when root Start is the run that abandoned the step, Start fails and the container stays in its failed start phase: Refresh and Scope.Start return `ErrNotStarted` and Start returns `ErrAlreadyStarted`, as for any failed Start. The late outcome is still recorded or logged, and Shutdown is the way on. The `StartTimeout` godoc says so.
+- *Late outcome:* the step goroutine handles it after the user call ends and it sees the abandoned flag. It takes `lifecycleMu` (outer) then `startedMu` (inner, the leaf lock, so the order is safe).
+  - Nil return: the step is recorded only if `scopeHolds` still holds the wrapper and `!closingInLine(scope)`, then re-checked (see *Record, then re-check* below).
+  - In every case: the step key is deleted from `abandoned`.
+  Because a shutdown marks the scope closing under `lifecycleMu` before it removes services, a late mark either happens before the closing mark (and the later `forget` clears it), or it sees closing and is skipped. `forget` also deletes the wrapper's `abandoned` entry, so a removed service leaves nothing behind.
+- *Record, then re-check (review F2, also the pre-existing inline path):* removers (`removeService`, an override in `registerLocked`, `shutdownTaken` for `ShutdownNamed` and root Shutdown) remove the wrapper under the scope lock and only then call `forget`, without `lifecycleMu`. So `closingInLine` covers only child-scope shutdowns. Every start record (`startCandidate` and `runStage` on a nil return, and `finishAbandoned`) is therefore made by one helper, `recordIfHeld(step)`: record under `startedMu`, then check `scopeHolds`, and undo the record (under `startedMu`) if the wrapper is gone. Because every removal happens before its `forget`, either the re-check sees the removal and undoes the record, or the removal comes after the re-check and its `forget` clears the record. The scope lock is never taken while holding `startedMu`, so no new lock order appears.
+- *Errors and panics:* nothing is recorded, so the next run retries, as for any failure.
+- *Logging:* the late outcome is logged per D8, with the candidate's own `*Scope`, so a child-scope service logs `scope=tenant`.
+*Alternatives:* retry an abandoned step immediately (rejected: two concurrent calls on one instance, including the library's own `runRunner`); "handler re-entry is the author's concern" (rejected: the library authors the built-in Runnable handler).
+
+**D6. Parallel start.** Each worker calls `startCandidate`, so each Starter gets its own guard and its own bound. A timeout outcome is an ordinary first error: scheduling stops, and the other running Starters are still awaited, each within its own `StartTimeout`, as the existing "first failure stops scheduling" rule says. So the run returns at most `StartTimeout` after its first failure. A step skipped because its abandoned call still runs (D5) is not a failure: scheduling continues, and its dependents are never scheduled.
+
+**D7. `HookAfterStart` on abandonment.** It is called once by the run, on the run's goroutine, at abandonment, with `elapsed` = the time waited and `err` = the timeout cause (it matches `ErrStartTimeout`). It is not called on the late return, and it is not called at all for a step skipped by the D5 claim or as a dependent of a still-running step, since no `Start` method is called for those. This keeps before and after calls paired one to one, and hook authors never see a call from an unowned goroutine. This is already the natural outcome of D1 + D4, so it is tested together with D4 (tasks group 3).
+
+**D8. Logging on unowned goroutines is panic-safe.** The WARN timer callback (D2) and the late-outcome records (D5) run on goroutines no caller owns. Each record is emitted through `logSafely(func())`, which recovers and drops a handler panic, since there is nobody to re-raise it to. The late-outcome records are:
+- WARN "abandoned start step returned": `scope`, `service`, `step`, `kind` (handle only), `elapsed`.
+- DEBUG "abandoned start step error": the same attributes plus `error`, emitted only when the call returned an error. Error text stays at Debug, as health-check error text does.
+- A late panic: `Scope.logRecoveredPanic(point "start", service, value)` on the candidate's scope.
+Shared attributes come from one `stepAttrs` helper.
+
+**D9. Names and zero values.** The new names are `SlowStartThreshold` / `DefaultSlowStartThreshold` and `StartTimeout` / `ErrStartTimeout`. They follow `HealthCheckTimeout` / `DefaultHealthReportCheckTimeout` / `ErrHealthCheckTimeout`. Zero means "default" so that the struct's zero value is the documented default: warning on, timeout off. This is why disabling the warning takes a negative value (see the deviation in the proposal). `Clone` copies `InjectorOpts`, so clones keep both settings.
+
+**D10. Docs: the right and wrong server shapes.** The wrong shape is `Start(ctx) error { return srv.ListenAndServe() }`, which blocks until Shutdown. The right shape: in `Start`, call `new(net.ListenConfig).Listen(ctx, "tcp", addr)` (so bind errors fail Start), with `addr` defaulting to `":http"` when `srv.Addr` is empty, as `ListenAndServe` does (review F6), then `go srv.Serve(ln)`, then return nil. `Shutdown(ctx) error` returns `srv.Shutdown(ctx)`. The runnable example's `Shutdown` never waits for a Serve loop that does not exist. `Start` sets an atomic `serving` flag just before it launches `go srv.Serve(ln)`. When the flag is unset (a failed or skipped `Start`), `Shutdown` returns `srv.Shutdown(ctx)` at once. Otherwise it also waits for the loop to end, in a `select` on `ctx.Done()`. So it returns whatever context it gets, including the context of `root.Shutdown()`, which has no deadline. If an abandoned `Start` sets the flag after `Shutdown` read it, `Serve` returns `http.ErrServerClosed` at once, because `srv.Shutdown` already ran, so nothing leaks. (Review F1. Verification V1: the first fix, a `served` channel made in the constructor, still waited until ctx ended, which is forever for `root.Shutdown()` after a failed bind.) A runnable `Example_starterHTTPServer` listens on `127.0.0.1:0`, so it is deterministic and offline. The `Runner` godoc gets the same "must return" note. The `starter.md` snippets live in a compiled snippet file and are pinned by a new `TestDocs_StarterSnippetsCompiled`, which reuses the `docsRegions` machinery of `docs_snippets_test.go`.
+
+**D11. An unexported test seam for interleavings.** Two review findings (F2, F5) are races whose window no public hook reaches. `RootScope` gets an unexported `startSeam` struct of optional callbacks, nil in production and set only by tests in package `doger`: `beforeRecord(step)`, called between the registration check and the record, and `afterStepDone(step)`, called in `awaitStep` between the `select` and the cause decision. A nil check is the only production cost. The seam is not part of the API and is not reachable from other packages.
+*Alternative:* stress tests under `-race`. Rejected because they are flaky as a RED test and as a regression guard, and the project requires a reproducing test for a defect.
+
+## Risks / Trade-offs
+
+- [The warning is invisible without a Logger, and zero-config consumers still hang silently] → Logging is off by default by contract. The Starter godoc, the README and the hang section of `starter.md` tell users to set a Logger, or a `StartTimeout`, when diagnosing. A future `HookSlowStart` stays possible.
+- [The abandoned goroutine keeps running user code after Start returned, possibly touching a service that Shutdown is releasing] → This is documented on `StartTimeout` and `ErrStartTimeout`. Shutdown still calls the service's Shutdowner, which is the stop path. A late nil return after removal or during a scope shutdown is not recorded (D5).
+- [A step returning exactly at the bound races the timer] → The outcome is either started with a live context or abandoned, never both: the call's mutex orders the timer callback and the call's end (D4), and on abandonment the late outcome goes through D5. "A step that returns exactly at the timeout" pins it over 200 runs.
+- [Shutdown bounded below StartTimeout] → Root Shutdown waits for the running Start only within its own context; past it, it shuts services down while a stuck step may still run, so a Shutdowner can overlap its Start. Documented on `StartTimeout`; a Start that honours its context returns before that point (D4).
+- [The default warning timer on a consumer's fake clock (review F6)] → With a Warn-enabled Logger, each start step arms one timer on the container Clock, which counts toward a fake clock's `BlockUntil`. Documented on `Clock` and `SlowStartThreshold`; `SlowStartThreshold: -1` removes it.
+- [Overlap across clones] → Documented on `StartTimeout`: the no-overlap guarantee is per container.
+- [Tests leave a blocked user goroutine and goleak fails] → Every test releases its blocking code (through its Shutdown or a test-owned channel) and waits for the late outcome before returning. Tests run inside `synctest.Test` (or `testWithTimeout` with a fake clock).
+- [A RED test hangs instead of failing] → Before the feature exists, a test whose Starter blocks until released makes Start block. Inside `synctest.Test` that shows up as a reported deadlock ("all goroutines are durably blocked"), which is the expected RED. Fake-clock tests use `testWithTimeout`, which fails rather than hangs.
+- [The step ctx outlives the step's timeout when the step returns in time] → This is intended (review F3). It ends with the run, exactly as without the option, and reports no deadline, so no code can mistake it for a bounded ctx.
+- [A test seam in production code] → Unexported, nil by default, no allocation; documented as test-only (D11).
+- [Per-step timer cost on the hot path] → One `Clock.AfterFunc` + `Stop` per step, and only with a Warn-enabled Logger. There is none in the default configuration, so no benchmark is required.
+
+## Public API & Defaults
+
+Additive only. No breaking change.
+
+| Identifier | Kind | Default / meaning |
+|---|---|---|
+| `InjectorOpts.SlowStartThreshold time.Duration` | field | 0 → `DefaultSlowStartThreshold`. Negative, or at or above a set `StartTimeout` → no warning. Measured on `Clock`. Needs a Warn-enabled `Logger` |
+| `DefaultSlowStartThreshold = 10 * time.Second` | const | The default threshold |
+| `InjectorOpts.StartTimeout time.Duration` | field | 0 or negative → off (wait for every step, as today). Positive → per-step abandoning bound, and an ended run ctx also abandons. The step ctx ends at abandonment or with the run, as without the option, and reports no deadline. The no-overlap guarantee is per container |
+| `ErrStartTimeout` | sentinel | `"doger: start timeout"`, added to `libSentinels`. Matched by the `*StartError` of an abandoned step and by a fail-fast re-run of a still-running abandoned step |
+
+Docs changes: the godoc of `StartWithContext`, the four Starter variants, `Runner`, `HookBeforeStart`/`HookAfterStart` (ctx wording, abandonment call), and `InjectorOpts.Clock` (now also measures these two). README Quickstart note, `docs/docs/service-lifecycle/starter.md` (new "A Start that never returns" section), and `docs/docs/container/options.md` (the two fields, plus the new log records in its logging table if it has one).
+
+Override paths: thresholds and timeout via the fields, log destination and level via `Logger`, time source via `Clock`. Abandonment is avoided altogether by honouring ctx or returning promptly.
+
+## Test Strategy
+
+All timing tests run in `testing/synctest` (virtual time on the real clock), as the existing deadline tests do, except the fake-clock rows, which use `testWithTimeout`. Blocking user code is always released before the test ends, so the `TestMain` goleak check guards against leaks. Run everything with `-race`.
+
+| Scenario | Test | Kind |
+|---|---|---|
+| container-start (MODIFIED, unchanged scenarios): Cancellation and deadline; Nil context; Start-time context ends when Start returns | existing `root_start_test.go` context tests; unchanged | regression |
+| container-start: Hooks around each Starter (MODIFIED, unchanged scenario) | existing per-service start hook test; unchanged | regression |
+| container-start (MODIFIED, unchanged scenarios): Refresh starts late registrations and new scopes once; Refresh with nothing new; A Starter that failed is tried again | existing `root_refresh_test.go` tests; unchanged | regression |
+| No start timeout waits for a slow step | `root_start_timeout_test.go: TestStartTimeout_DefaultWaits/{zero,negative,ctx_deadline}` | table, synctest |
+| A step that outlives the start timeout is abandoned | `root_start_timeout_test.go: TestStartTimeout_Abandons/{inside_bound,start_ctx_error,start_plain,runnable}` | table, synctest |
+| The abandoned step's context is cancelled | `root_start_timeout_test.go: TestStartTimeout_CancelsStepContext` | unit, synctest |
+| A step that ends with runtime.Goexit before the timeout | `root_start_timeout_test.go: TestStartTimeout_Goexit` | unit, synctest, goleak |
+| Start timeout waits for the container clock | `root_start_timeout_test.go: TestStartTimeout_FakeClock/{clockwork,manual}` | table, testWithTimeout |
+| Abandonment under parallel start | `root_start_timeout_test.go: TestStartTimeout_Parallel` | race, synctest, goleak |
+| An ended run context waits for a step that ignores it (review F1) | `root_start_timeout_test.go: TestStartTimeout_RunContextEnds/{deadline,cancel,shutdown}` (exact messages, returns at 5s) | table, race, synctest |
+| A Start that honours its context is awaited when Shutdown cancels it (review F1) | `root_start_timeout_test.go: TestStartTimeout_ShutdownAwaitsHonouringStart` | race, synctest |
+| Shutdown during a stuck step shuts the service down (review F1) | `root_start_timeout_test.go: TestStartTimeout_ShutdownDuringWait` | race, synctest |
+| A step that returns exactly at the timeout (review F4) | `root_start_timeout_test.go: TestStartTimeout_ReturnAtTimeout` (run with `-count=200`) | race, synctest |
+| Refresh starts what does not depend on a still-running step (review F2) | `root_start_timeout_test.go: TestStartTimeout_RefreshSkipsStillRunning/{sequential,parallel}` | table, race, synctest |
+| After root Start abandons a step, only Shutdown follows (review F3) | `root_start_timeout_test.go: TestStartTimeout_RootStartAbandonsThenOnlyShutdown` | unit, synctest |
+| HookAfterStart fires once at abandonment | `root_start_timeout_test.go: TestStartTimeout_AfterStartHookOnce` | unit, synctest |
+| Re-running while the abandoned call runs, and after it returns | `root_start_timeout_test.go: TestStartTimeout_AbandonedNotRestarted/{running,late_nil,late_error,late_panic,scope_start,runnable_running,runnable_late_nil,runnable_late_error}` | table, synctest |
+| A late return races a covering run | `root_start_timeout_test.go: TestStartTimeout_LateReturnRacesRun` | race, synctest |
+| A late return after the scope began shutting down is not recorded | `root_start_timeout_test.go: TestStartTimeout_LateReturnAfterScopeShutdown` | race, synctest |
+| component-kinds (MODIFIED, unchanged scenarios): Refresh handles only new components; Runners run once; Scope.Start handles only its subtree; A failed handler is called again | existing kind/Refresh tests; unchanged; the new exception is covered by the runnable rows above | regression |
+| container-clock (MODIFIED, unchanged scenarios): Reported durations come from the clock; Timeout errors read the same on any clock; Health-check timeouts wait for the clock, not for wall time | existing clock tests; unchanged; new delays covered by the two FakeClock tests | regression |
+| container-logging (MODIFIED): Message, level and attributes per event (3 new rows) | `logging_test.go: TestLogging_Events`, plus rows `slow_start`, `abandoned_returned`, `abandoned_error` | table |
+| container-logging (MODIFIED, unchanged scenarios): Records below the handler's level are dropped; Child scope events carry the child's scope name; Concurrent logging | existing `TestLogging_LevelFilter`, `TestLogging_ChildScopeAttr` and concurrency test; unchanged | regression |
+| Slow step warning per threshold | `root_start_slow_test.go: TestSlowStart_Warning/{default_below,default_above,default_long,custom_above,custom_below,disabled,runnable}` | table, synctest |
+| The warning names the scope of a child scope's step | `root_start_slow_test.go: TestSlowStart_ChildScope/{scope_start,refresh}` | table, synctest |
+| Only the slow Starter is named under parallel start | `root_start_slow_test.go: TestSlowStart_ParallelNamesOnlySlow` | race, synctest |
+| A step that panics after the warning | `root_start_slow_test.go: TestSlowStart_PanicAfterWarning` | unit, synctest |
+| The warning stops when the step is abandoned | `root_start_slow_test.go: TestSlowStart_StopsAtAbandonment/{threshold_2s,threshold_10s}` | table, synctest |
+| No warning timer without a Warn-enabled logger | `root_start_slow_test.go: TestSlowStart_NoTimerWithoutLogger/{no_logger,error_level,warn_level}` (counting Clock) | table, synctest |
+| Slow-start warning waits for the container clock | `root_start_slow_test.go: TestSlowStart_FakeClock` | testWithTimeout |
+| The warning timer leaves no goroutine | `root_start_slow_test.go: TestSlowStart_NoTimerLeak` | goleak |
+| A panicking log handler does not crash the process | `root_start_slow_test.go: TestSlowStart_PanickingHandler` | synctest |
+| Late outcome of an abandoned step | `root_start_slow_test.go: TestStartTimeout_LateOutcomeLogged/{nil,error_debug,error_info,panic,panic_child_scope}` | table, synctest |
+| A step that returns in time keeps its context until the run ends | `root_start_timeout_test.go: TestStartTimeout_StepContextLifetime/{no_timeout,timeout}` | table, synctest |
+| A timeout stays a timeout when the run's context ends right after it | `root_start_timeout_test.go: TestStartTimeout_TimeoutWinsOverLateCancel` (seam `afterStepDone`) | unit, synctest |
+| A removal between the registration check and the record | `root_start_timeout_test.go: TestStart_RemovalBeforeRecord/{inline,awaited,abandoned}` (seam `beforeRecord`) | table, race, synctest |
+| The warning stops when the step is abandoned (new 5s row) | `root_start_slow_test.go: TestSlowStart_StopsAtAbandonment/threshold_5s` | table, synctest |
+| Start timeout / slow warning through `dogerclockwork.Wrap` (review W1) | `clock/clockwork/clockwork_test.go: TestWrap_StartTimeout`, `TestWrap_SlowStartWarning` | unit, fake clock |
+| Example server Shutdown without a running Serve loop (review F1, verification V1) | `di_lifecycle_example_test.go: TestExampleServer_ShutdownWithoutStart/{no_start,failed_bind,no_start_background,failed_bind_background}`, `TestExampleServer_ContainerShutdownAfterFailedBind` | table, testWithTimeout |
+| Docs: zero-config defaults and overrides | `root_start_example_test.go: ExampleInjectorOpts_startTimeout`; `di_lifecycle_example_test.go: Example_starterHTTPServer`; `TestReadme_SnippetsCompiled`; new `TestDocs_StarterSnippetsCompiled` | Example, snippet |
+| API surface | `errors_test.go`: `ErrStartTimeout` in `libSentinels`, `errors.Is` across `StartError` | unit |
+
+Hot paths and their coverage:
+- `startCandidate` sequential: DefaultWaits, Abandons, AfterStartHookOnce, Goexit, plus the existing suite.
+- `startStartersParallel`: TestStartTimeout_Parallel, TestSlowStart_ParallelNamesOnlySlow, plus the existing parallel tests.
+- `callKindHandler` / `runStage`: the runnable rows of Abandons, Warning and AbandonedNotRestarted.
+- The D5 claim, the skip of dependents and the late mark: AbandonedNotRestarted, RefreshSkipsStillRunning, LateReturnRacesRun, LateReturnAfterScopeShutdown, RootStartAbandonsThenOnlyShutdown (race + goleak).
+- The timer and the call's end ordered once: ReturnAtTimeout, TimeoutWinsOverLateCancel, StepContextLifetime.
+- Shutdown interplay (`abortOutcome`, `startCancel`, `waitForStart`): RunContextEnds/shutdown, ShutdownAwaitsHonouringStart, ShutdownDuringWait.
+- Unowned-goroutine logging: PanickingHandler, LateOutcomeLogged.
+- Zero-config unchanged: the whole existing suite, plus DefaultWaits and NoTimerWithoutLogger.
+
+Also run `go test ./...` in each `./http/*` and `./examples/*` workspace module (the shared API only grows), and `make lint`.
+
+## Migration Plan
+
+Nothing for consumers. Upgrading surfaces a WARN for steps slower than 10s, but only if a Logger is set. Silence it with `SlowStartThreshold: -1`. Rollback means reverting the commit, since there is no persisted state.

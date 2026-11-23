@@ -424,6 +424,43 @@ func TestLogging_Events(t *testing.T) {
 			attrs: map[string]string{"scope": "[root]", "service": "svc", "error": "x"},
 		},
 		{
+			name: "slow_start",
+			opts: &InjectorOpts{SlowStartThreshold: 10 * time.Millisecond},
+			trigger: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				provideCounted(root, "svc", newStepProbe(100*time.Millisecond), AsStarter())
+				require.NoError(t, root.Start())
+			},
+			message: "start step is slow", level: slog.LevelWarn,
+			attrs: map[string]string{"scope": "[root]", "service": "svc", "step": "start", "threshold": "10ms"},
+		},
+		{
+			name: "abandoned_returned",
+			opts: &InjectorOpts{StartTimeout: 10 * time.Millisecond},
+			trigger: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				probe := provideCounted(root, "svc", newStepProbe(100*time.Millisecond), AsStarter())
+				require.ErrorIs(t, root.Start(), ErrStartTimeout)
+				<-probe.ended
+			},
+			message: "abandoned start step returned", level: slog.LevelWarn,
+			attrs: map[string]string{"scope": "[root]", "service": "svc", "step": "start"},
+		},
+		{
+			name: "abandoned_error",
+			opts: &InjectorOpts{StartTimeout: 10 * time.Millisecond},
+			trigger: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				probe := newStepProbe(100 * time.Millisecond)
+				probe.outcome = func(int32) error { return errors.New("x") }
+				provideCounted(root, "svc", probe, AsStarter())
+				require.ErrorIs(t, root.Start(), ErrStartTimeout)
+				<-probe.ended
+			},
+			message: "abandoned start step error", level: slog.LevelDebug,
+			attrs: map[string]string{"scope": "[root]", "service": "svc", "step": "start", "error": "x"},
+		},
+		{
 			name: "health_degraded",
 			trigger: func(t *testing.T, root *RootScope) {
 				t.Helper()

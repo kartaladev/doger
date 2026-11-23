@@ -155,11 +155,9 @@ func (s *RootScope) isStarted(service any) bool {
 	return ok
 }
 
-// markStarted records that the Starter service was started.
-func (s *RootScope) markStarted(service any) {
-	s.startedMu.Lock()
-	defer s.startedMu.Unlock()
-
+// markStartedLocked records that the Starter service was started.
+// startedMu must be held.
+func (s *RootScope) markStartedLocked(service any) {
 	if s.started == nil {
 		s.started = map[any]struct{}{}
 	}
@@ -217,11 +215,9 @@ func (s *RootScope) isHandled(service any, id *kindID) bool {
 	return ok
 }
 
-// markHandled records that kind id handled the service.
-func (s *RootScope) markHandled(service any, id *kindID) {
-	s.startedMu.Lock()
-	defer s.startedMu.Unlock()
-
+// markHandledLocked records that kind id handled the service. startedMu
+// must be held.
+func (s *RootScope) markHandledLocked(service any, id *kindID) {
 	if s.handled == nil {
 		s.handled = map[any]map[*kindID]struct{}{}
 	}
@@ -231,7 +227,134 @@ func (s *RootScope) markHandled(service any, id *kindID) {
 	s.handled[service][id] = struct{}{}
 }
 
-// forget drops service from the started and handled sets and its health
+// claimStep decides, just before step's hooks and call, whether it runs:
+// skip is true when step is already recorded (its Starter started, or its
+// component handled by its kind), and err matches ErrStartTimeout while an
+// abandoned call of step still runs. Discovery filters recorded steps
+// earlier; this check is the authoritative one, since an abandoned call can
+// end in between.
+func (s *RootScope) claimStep(step startStep) (skip bool, err error) {
+	service := step.candidate.service
+
+	s.startedMu.Lock()
+	defer s.startedMu.Unlock()
+
+	if s.recordedLocked(step) {
+		return true, nil
+	}
+	if _, running := s.abandoned[service][step.kind]; running {
+		return false, step.stillRunningError()
+	}
+
+	return false, nil
+}
+
+// recordedLocked reports whether step is recorded as started or handled.
+// startedMu must be held.
+func (s *RootScope) recordedLocked(step startStep) bool {
+	service := step.candidate.service
+	if step.op == StartOpStart {
+		_, ok := s.started[service]
+		return ok
+	}
+	_, ok := s.handled[service][step.kind]
+
+	return ok
+}
+
+// markAbandoned records that the run abandoned a call of step that still
+// runs.
+func (s *RootScope) markAbandoned(step startStep) {
+	service := step.candidate.service
+
+	s.startedMu.Lock()
+	defer s.startedMu.Unlock()
+
+	if s.abandoned == nil {
+		s.abandoned = map[any]map[*kindID]struct{}{}
+	}
+	if s.abandoned[service] == nil {
+		s.abandoned[service] = map[*kindID]struct{}{}
+	}
+	s.abandoned[service][step.kind] = struct{}{}
+}
+
+// finishAbandoned handles the end of an abandoned call of step with
+// outcome err. A nil outcome records step as started or handled, unless
+// its scope is shutting down or no longer holds the service: a scope
+// shutdown marks its scope closing under lifecycleMu before it removes
+// services, so a record made here is either cleared by that shutdown's
+// forget or not made at all, and recordIfHeld covers the removers that do
+// not take lifecycleMu. The step stops being abandoned only after that.
+func (s *RootScope) finishAbandoned(step startStep, err error) {
+	candidate := step.candidate
+
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	// recorded before it stops being abandoned, so a run never sees it as
+	// neither recorded nor abandoned while its scope still holds it
+	if err == nil && !closingInLine(candidate.scope) {
+		s.recordIfHeld(step)
+	}
+
+	s.startedMu.Lock()
+	defer s.startedMu.Unlock()
+
+	delete(s.abandoned[candidate.service], step.kind)
+	if len(s.abandoned[candidate.service]) == 0 {
+		delete(s.abandoned, candidate.service)
+	}
+}
+
+// recordIfHeld records step as started or handled while its scope holds
+// its service. Removers (ShutdownNamed, a scope or root Shutdown, an
+// override) remove a service under the scope lock and only then forget it,
+// so a check before the record alone can miss a removal and its forget
+// landing in between. The record is therefore checked again once made, and
+// undone when the service is gone: either that check sees the removal, or
+// the removal comes after it and its forget clears the record.
+func (s *RootScope) recordIfHeld(step startStep) {
+	if !stillRegistered(step.candidate) {
+		return
+	}
+	s.seamBeforeRecord(step)
+
+	s.startedMu.Lock()
+	s.recordLocked(step)
+	s.startedMu.Unlock()
+
+	if !stillRegistered(step.candidate) {
+		s.startedMu.Lock()
+		s.unrecordLocked(step)
+		s.startedMu.Unlock()
+	}
+}
+
+// recordLocked records step as started or handled. startedMu must be held.
+func (s *RootScope) recordLocked(step startStep) {
+	if step.op == StartOpStart {
+		s.markStartedLocked(step.candidate.service)
+		return
+	}
+	s.markHandledLocked(step.candidate.service, step.kind)
+}
+
+// unrecordLocked drops the record of step as started or handled. startedMu
+// must be held.
+func (s *RootScope) unrecordLocked(step startStep) {
+	service := step.candidate.service
+	if step.op == StartOpStart {
+		delete(s.started, service)
+		return
+	}
+	delete(s.handled[service], step.kind)
+	if len(s.handled[service]) == 0 {
+		delete(s.handled, service)
+	}
+}
+
+// forget drops service from the started, handled and abandoned sets and its health
 // record once shutdown removed it from its scope, so they only hold live
 // registrations.
 func (s *RootScope) forget(service any) {
@@ -243,4 +366,5 @@ func (s *RootScope) forget(service any) {
 
 	delete(s.started, service)
 	delete(s.handled, service)
+	delete(s.abandoned, service)
 }

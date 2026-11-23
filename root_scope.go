@@ -149,9 +149,14 @@ type RootScope struct {
 	// takes it while holding lifecycleMu.
 	pipelineMu sync.Mutex
 	runScopes  map[*Scope]struct{}          // scopes with candidates in the running pipeline; guarded by lifecycleMu
-	startedMu  sync.Mutex                   // guards started and handled; never held across user code
+	startedMu  sync.Mutex                   // guards started, handled and abandoned; never held across user code
 	started    map[any]struct{}             // Starters already started, keyed by wrapper
 	handled    map[any]map[*kindID]struct{} // kinds already handled, by wrapper
+	abandoned  map[any]map[*kindID]struct{} // steps whose abandoned call still runs, by wrapper; a nil kind is the Start method
+
+	// startSeam holds test-only callbacks into the start pipeline; it is
+	// zero (no callback) in production.
+	startSeam startSeam
 
 	// selfStorage and dagStorage hold self and dag in the container's own
 	// allocation; use self and dag. A clone points self at its cloned scope.

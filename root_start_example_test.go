@@ -250,3 +250,39 @@ func ExampleInjectorOpts_startParallelism() {
 	// Output:
 	// <nil>
 }
+
+// exampleBlockingServer has the wrong shape for a Starter: its Start
+// blocks until Shutdown, as ListenAndServe does.
+type exampleBlockingServer struct{ stop chan struct{} }
+
+func (s *exampleBlockingServer) Start(context.Context) error {
+	<-s.stop
+	return nil
+}
+
+func (s *exampleBlockingServer) Shutdown() error {
+	close(s.stop)
+	return nil
+}
+
+// StartTimeout abandons a Start method that does not return in time, so
+// Start names the stuck service instead of blocking forever. It is off by
+// default: Start then waits for every Start method.
+func ExampleInjectorOpts_startTimeout() {
+	root := NewWithOpts(&InjectorOpts{StartTimeout: 50 * time.Millisecond})
+	ProvideNamed(root, "server", func(Injector) (*exampleBlockingServer, error) {
+		return &exampleBlockingServer{stop: make(chan struct{})}, nil
+	}, AsStarter())
+
+	err := root.Start()
+	fmt.Println(err)
+	fmt.Println(errors.Is(err, ErrStartTimeout))
+
+	// Shutdown still calls the server's Shutdown, which ends the abandoned
+	// Start call.
+	root.Shutdown()
+
+	// Output:
+	// doger: failed to start service `server` in scope `[root]`: start timeout after 50ms: context deadline exceeded
+	// true
+}

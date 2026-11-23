@@ -211,8 +211,13 @@ type InjectorOpts struct {
 
 	// HookBeforeStart is called by Start, Refresh and Scope.Start just before
 	// a service's Start method, with the context the operation runs with.
-	// With StartParallelism > 1, calls for different services may run
-	// concurrently.
+	// With StartTimeout set, the Start method receives a context derived from
+	// it that also ends when the method is abandoned; it reports no deadline,
+	// and a method that returns in time keeps it until the operation ends, as
+	// without the option. No hook is called for a Starter the run
+	// skips (already started) or fails fast (an abandoned Start call of it
+	// still runs). With StartParallelism > 1, calls for different services
+	// may run concurrently.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddBeforeStartHook] adds a hook later, safely
@@ -224,6 +229,11 @@ type InjectorOpts struct {
 	// time the method took on the container Clock, and the error the method
 	// returned, unwrapped (nil on success; a recovered panic as an error). With StartParallelism
 	// > 1, calls for different services may run concurrently.
+	//
+	// For a Start method abandoned under StartTimeout, it is called once, on
+	// the operation's goroutine when the method is abandoned, with elapsed
+	// the time waited and err matching ErrStartTimeout; it is not called
+	// again when the abandoned method returns.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddAfterStartHook] adds a hook later, safely
@@ -515,8 +525,10 @@ type InjectorOpts struct {
 	// Clock is the time source of the container. It measures
 	// HealthCheckTimeout, HealthCheckSingleTimeout and HealthCheckGlobalTimeout,
 	// HealthReportCacheTTL and the report bound, the CheckedAt, Duration and
-	// PendingSince of HealthReport entries, lazy service build times, and
-	// shutdown durations, and it is passed to HealthScheduler. Child scopes
+	// PendingSince of HealthReport entries, lazy service build times,
+	// shutdown durations, SlowStartThreshold, StartTimeout and the elapsed
+	// time of start hooks and start-step log records, and it is passed to
+	// HealthScheduler. Child scopes
 	// and Clone use the root scope's clock.
 	// Default: nil, which means RealClock().
 	// Set a controllable Clock to drive time in tests, such as
@@ -540,6 +552,40 @@ type InjectorOpts struct {
 	// HookAfterStart may run concurrently and must synchronize their state.
 	// Kind handlers always run sequentially.
 	StartParallelism uint
+
+	// SlowStartThreshold is how long Start, Refresh and Scope.Start wait for
+	// a Starter's Start method, or a kind-handler call such as a Runner's
+	// Run, before logging one WARN record "start step is slow" naming the
+	// service, its scope and the step. The step itself is not interrupted.
+	// It needs a Logger at Warn level or below: without one, no timer is
+	// armed and nothing is logged. With StartTimeout set, the warning is
+	// armed only when the threshold is below it: a step that reaches the
+	// timeout is reported by its abandonment instead, and a step abandoned
+	// before the threshold never warns.
+	// Default: 0, which means DefaultSlowStartThreshold (10s). A negative
+	// value disables the warning. Measured on Clock.
+	SlowStartThreshold time.Duration
+
+	// StartTimeout bounds each Starter Start method and each kind-handler
+	// call of Start, Refresh and Scope.Start. A step still running after it,
+	// or when the run's context ends (the caller's deadline or cancellation,
+	// or root Shutdown), is abandoned: the run stops waiting, starts nothing
+	// further and returns a [*StartError] naming the step that matches
+	// [ErrStartTimeout]. Go cannot stop the call: it keeps running in its
+	// goroutine with a cancelled context. The step's context keeps the
+	// lifetime it has without this option: it ends when the run ends, and
+	// also when the step is abandoned. It reports no deadline, since a step
+	// that returns in time keeps it past the timeout. While it runs, the container never
+	// calls it again (a covering Refresh or Scope.Start fails fast with
+	// ErrStartTimeout); once it returns nil it is recorded as started (or
+	// handled) unless its scope is shutting down or no longer holds it, and
+	// once it fails the next run tries it again. Shutdown still calls the
+	// service's Shutdowner, its stop path. The guarantee is per container: a
+	// clone shares eager instances and starts them independently.
+	// Default: 0, no bound: Start waits for every step, however long, and an
+	// ended context is noticed only between steps. A negative value is the
+	// same as 0. Measured on Clock.
+	StartTimeout time.Duration
 
 	// EnableRunnerAutoDetection makes Start run, as a Runnable, every
 	// non-transient service whose registered type implements Runner. By

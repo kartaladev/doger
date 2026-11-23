@@ -50,6 +50,15 @@ var (
 	// panicked. The panic value follows it in the message, and an error value
 	// is wrapped, so errors.Is and errors.As also match it.
 	ErrHealthCheckPanic = errors.New("doger: health check panic")
+	// ErrStartTimeout is matched by the [*StartError] of a Starter Start
+	// method or kind-handler call that Start, Refresh or Scope.Start
+	// abandoned under [InjectorOpts.StartTimeout]: the step outlived the
+	// timeout (the error then also matches context.DeadlineExceeded), or the
+	// run's context ended while it ran (the error then also matches that
+	// context's cause, such as [ErrShutdown]). It is also matched by the
+	// error of a later run that reached a step whose abandoned call is still
+	// running: that call is never made a second time while it runs.
+	ErrStartTimeout = errors.New("doger: start timeout")
 
 	// ErrAlreadyStarted is returned by a Start call after the first one, whether
 	// the first one succeeded or failed, as long as root Shutdown has not
@@ -132,7 +141,7 @@ func (e *libError) Unwrap() error {
 var libSentinels = []error{
 	ErrServiceNotFound, ErrServiceNotMatch, ErrServiceTypeMismatch,
 	ErrServiceAlreadyDeclared, ErrScopeAlreadyDeclared, ErrCircularDependency,
-	ErrHealthCheckTimeout, ErrHealthCheckPanic,
+	ErrHealthCheckTimeout, ErrHealthCheckPanic, ErrStartTimeout,
 	ErrAlreadyStarted, ErrShutdown, ErrNotStarted, ErrNilInjector,
 	ErrStructInjection, ErrProviderPanic, ErrShutdownPanic,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,

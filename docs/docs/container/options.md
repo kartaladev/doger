@@ -78,6 +78,8 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
     Clock: nil, // nil: the real clock
     EnableStarterAutoDetection: false, // true: Start also starts every type with a Start method
     StartParallelism: 0, // 0 or 1: sequential; n > 1: up to n Starters at a time
+    SlowStartThreshold: 0, // 0: 10s; negative: no warning. Logs a start step still running after it
+    StartTimeout: 0,       // 0: wait for every step; > 0: abandon a step still running after it
 })
 ```
 
@@ -87,23 +89,40 @@ injector := doger.NewWithOpts(&doger.InjectorOpts{
 
 | Level | Messages                                                                                                                                                                                                                                                                                                                                                                |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Debug | `service registered`, `service overridden`, `service invoked`, `service exported`, `requested shutdown`, `health check started`, `health check failed` (with `error`), `property source selected`, `panic value` (with `value`)                                                                                                                                         |
+| Debug | `service registered`, `service overridden`, `service invoked`, `service exported`, `requested shutdown`, `health check started`, `health check failed` (with `error`), `property source selected`, `panic value` (with `value`), `abandoned start step error` (with `step`, `elapsed` and `error`) for an abandoned start step that later returned an error |
 | Info  | `container started`, `container ready`, `container closing`, `container closed`, `extension disabled`, `container health changed` back to healthy                                                                                                                                                                                                                       |
-| Warn  | `property source unavailable` (with `source_type`), `properties read after extend`, `container health changed` to another state                                                                                                                                                                                                                                         |
+| Warn  | `property source unavailable` (with `source_type`), `properties read after extend`, `container health changed` to another state, `start step is slow` (with `step`, `kind` for a handler call, and `threshold`) for a Starter's `Start` method or a kind-handler call still running after `SlowStartThreshold`, `abandoned start step returned` (with `step` and `elapsed`) when a step abandoned under `StartTimeout` later returns |
 | Error | `service shutdown failed` (with `error`), `health scheduler failed` (with `error`), `health scheduler stop failed` (with `error`), `panic recovered` (with `point` and `panic_type`) for a recovered panic not passed to `HookContainerPanic`: the first panic of an operation goes to that hook when it is set (logged only when it is not), and later ones are logged |
 
 A recovered panic's value and a health check's error text appear only at Debug level, so they stay out of production logs that could expose secrets.
 
-The handler must not panic: a panic it raises on a goroutine the container runs in the background, such as a service shutdown or a health check, cannot be recovered by the caller and crashes the process.
+The handler must not panic: a panic it raises on a goroutine the container runs in the background, such as a service shutdown or a health check, cannot be recovered by the caller and crashes the process. The start step records (`start step is slow`, and the records of an abandoned step that ended, including its `panic recovered` record with point `start`) are the exception: a handler panic while emitting them is dropped.
 
 ```go
 logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 injector := doger.NewWithOpts(&doger.InjectorOpts{Logger: logger})
 ```
 
+### Slow and stuck start steps {#start-timeout}
+
+`Start`, `Refresh` and `Scope.Start` call each Starter's `Start` method and each kind handler (such as a `Runner`'s `Run`) and wait for it. A method that never returns, such as an HTTP server calling `ListenAndServe` in `Start`, makes the whole call block. Two options make such a step visible:
+
+- **`SlowStartThreshold`** (default `0`, meaning 10s): a step still running after it is logged once at Warn level as `start step is slow`, naming its `scope`, `service` and `step`. It needs a `Logger` that keeps Warn records; without one, no timer is armed. A negative value disables it. With `StartTimeout` set, the warning is armed only when the threshold is below it: a step that reaches the timeout is reported by its abandonment instead, and a step abandoned before the threshold never warns.
+- **`StartTimeout`** (default `0`, off): a step still running after it, or when the context of `StartWithContext` ends, is abandoned. The call returns a `*doger.StartError` naming the step that matches `doger.ErrStartTimeout`. Go cannot stop the method: it keeps running in its own goroutine and is never called a second time while it runs, and `Shutdown` still calls the service's `Shutdowner`. The guarantee is per container: a clone starts shared eager instances independently.
+
+Both are measured on `Clock`. The fix for a blocking `Start` is to return once the service is ready; see [A Start that never returns](../service-lifecycle/starter.md#start-never-returns).
+
+```go
+injector := doger.NewWithOpts(&doger.InjectorOpts{
+    Logger:       logger,
+    StartTimeout: 30 * time.Second,
+})
+err := injector.Start() // names the stuck service instead of blocking forever
+```
+
 ### Clock {#clock}
 
-`InjectorOpts.Clock` is the container's time source, a `doger.Clock`: any type with `Now() time.Time`, `Since(time.Time) time.Duration` and `AfterFunc(time.Duration, func()) doger.Timer`. The container reads time only from it: the `HealthCheckTimeout`, `HealthCheckSingleTimeout` and `HealthCheckGlobalTimeout` deadlines, the health report cache and bounds, lazy service build times (`ServiceBuildTime` in explain output), and `ShutdownReport.ShutdownTime`/`ServiceShutdownTime`. It is also passed to the `HealthScheduler`.
+`InjectorOpts.Clock` is the container's time source, a `doger.Clock`: any type with `Now() time.Time`, `Since(time.Time) time.Duration` and `AfterFunc(time.Duration, func()) doger.Timer`. The container reads time only from it: the `HealthCheckTimeout`, `HealthCheckSingleTimeout` and `HealthCheckGlobalTimeout` deadlines, the health report cache and bounds, lazy service build times (`ServiceBuildTime` in explain output), `ShutdownReport.ShutdownTime`/`ServiceShutdownTime`, and `SlowStartThreshold` and `StartTimeout`. It is also passed to the `HealthScheduler`.
 
 - **Default:** `nil`, which means `doger.RealClock()`, backed by the `time` package.
 - **Override:** pass a controllable clock to drive time in tests, for example to reach a health-check timeout without waiting for it. The module `github.com/kartaladev/doger/clock/clockwork` wraps a [clockwork](https://github.com/jonboulle/clockwork) clock; `dogerclockwork.Wrap(nil)` is a nil clock, so the default.
