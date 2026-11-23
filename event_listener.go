@@ -466,13 +466,14 @@ type deliveryKey struct{}
 type delivery struct {
 	scope    *Scope       // the listener's scope
 	parent   *delivery    // the delivery whose context published this one, if any
-	inSubmit *atomic.Bool // true while the Submit of this delivery has not returned
+	inSubmit *atomic.Bool // true while the Submit of this delivery has not returned; nil when it never blocks its submitter
 	ended    atomic.Bool
 }
 
 // withDelivery returns ctx marked as the context of a delivery to a
 // listener of scope, submitted by a Submit call running while inSubmit is
-// true, and the function ending the delivery.
+// true (nil: the delivery never blocks its submitter), and the function
+// ending the delivery.
 func withDelivery(ctx context.Context, scope *Scope, inSubmit *atomic.Bool) (context.Context, func()) {
 	parent, _ := ctx.Value(deliveryKey{}).(*delivery)
 	d := &delivery{scope: scope, parent: parent, inSubmit: inSubmit}
@@ -484,7 +485,8 @@ func withDelivery(ctx context.Context, scope *Scope, inSubmit *atomic.Bool) (con
 // caller with context ctx blocks: the delivery ctx marks, and each
 // publishing delivery still inside the Submit of the one it published, as
 // an executor running the task inline keeps it. A publishing delivery whose
-// Submit returned runs on its own and is waited for.
+// Submit returned, or whose task a BoundedEventExecutor runs on a goroutine
+// of its own, runs on its own and is waited for.
 func callerDeliveries(ctx context.Context, s *Scope) int {
 	n := 0
 	d, _ := ctx.Value(deliveryKey{}).(*delivery)
@@ -492,7 +494,7 @@ func callerDeliveries(ctx context.Context, s *Scope) int {
 		if !d.ended.Load() && isScopeOrDescendant(d.scope, s) {
 			n++
 		}
-		if !d.inSubmit.Load() {
+		if d.inSubmit == nil || !d.inSubmit.Load() {
 			break
 		}
 	}

@@ -372,18 +372,19 @@ func (s *RootScope) submitAsync(ctx context.Context, listener *plannedListener, 
 	inSubmit := &atomic.Bool{}
 	inSubmit.Store(true)
 	defer inSubmit.Store(false)
+	executor := events.asyncExecutor()
 	task := func(executorCtx context.Context) {
 		defer done()
 		abortable, release := followAbort(executorCtx, events.abortCtx)
 		defer release()
-		taskCtx, end := withDelivery(abortable, listener.scope, inSubmit)
+		taskCtx, end := withDelivery(abortable, listener.scope, blockingSubmit(executorCtx, executor, inSubmit))
 		defer end()
 		if err := recoverListenerError(func() error { return deliver(taskCtx, event) }); err != nil {
 			s.reportEventError(taskCtx, listenerError(listener.id, eventType, err))
 		}
 	}
 
-	err = recoverListenerError(func() error { return events.asyncExecutor().Submit(ctx, task) })
+	err = recoverListenerError(func() error { return executor.Submit(ctx, task) })
 	if err != nil {
 		done()
 		if errors.Is(err, ErrPublishAfterShutdown) { // an executor shut down
@@ -392,6 +393,21 @@ func (s *RootScope) submitAsync(ctx context.Context, listener *plannedListener, 
 	}
 
 	return err
+}
+
+// blockingSubmit returns inSubmit, set while the Submit of the task's
+// delivery has not returned, or nil when that Submit is not blocked on the
+// task: executor, the one Submit was called on, is a BoundedEventExecutor
+// that started the task on a goroutine of its own, maybe before Submit
+// returned. A wrapping or custom executor keeps inSubmit, since its Submit
+// may wait for the task. executorCtx is the context the executor gave the
+// task.
+func blockingSubmit(executorCtx context.Context, executor EventExecutor, inSubmit *atomic.Bool) *atomic.Bool {
+	if task := taskOf(executorCtx); task != nil && task.counted && EventExecutor(task.executor) == executor {
+		return nil
+	}
+
+	return inSubmit
 }
 
 // closedForEvents reports whether a Publish through s must fail: s is a

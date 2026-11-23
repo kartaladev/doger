@@ -480,3 +480,117 @@ func TestScopeShutdown_PublishingDelivery(t *testing.T) {
 		})
 	}
 }
+
+// waiting reports whether a drain waits on c.
+func (c *inflightCounter) waiting() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return len(c.waiters) > 0
+}
+
+// A delivery that the BoundedEventExecutor runs on its own goroutine does not
+// block its publisher, even before the publisher's Submit returned: a scope
+// shutdown it calls still waits for the publishing delivery. afterStart keeps
+// each Submit from returning until the drain waits, widening that window.
+func TestScopeShutdown_PublishingDeliveryBeforeSubmitReturns(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	var req *Scope
+	shutdownReturned := make(chan struct{})
+	executor := NewBoundedEventExecutor(4)
+	executor.afterStart = func() { // until the drain of req waits, or returned without waiting
+		for !req.eventState().inflight.waiting() {
+			select {
+			case <-shutdownReturned:
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}
+	root := NewWithOpts(&InjectorOpts{EventExecutor: executor})
+	defer root.Shutdown()
+	req = root.Scope("req")
+	rec := &syncRecorder{}
+	Listen(req, func(ctx context.Context, _ OrderPlaced) error {
+		if err := Publish(ctx, req, OrderCancelled{ID: "1"}); err != nil {
+			return err
+		}
+		rec.add("publisher:done")
+		return nil
+	}, ListenerAsync())
+	reports := make(chan *ShutdownReport, 1)
+	Listen(req, func(ctx context.Context, _ OrderCancelled) error {
+		report := req.ShutdownWithContext(ctx)
+		rec.add("shutdown:returned")
+		close(shutdownReturned)
+		reports <- report
+		return nil
+	}, ListenerAsync())
+
+	require.NoError(t, Publish(context.Background(), req, OrderPlaced{ID: "1"}))
+	report := <-reports
+
+	assert.True(t, report.Succeed, report.Error())
+	assert.Equal(t, []string{"publisher:done", "shutdown:returned"}, rec.list())
+}
+
+// waitingExecutor runs tasks on its BoundedEventExecutor, but a submission
+// made from one of its tasks (a nested publish) returns from Submit only
+// once the task ended: the publisher stays blocked on the nested delivery,
+// although that delivery runs on a goroutine of its own.
+type waitingExecutor struct {
+	*BoundedEventExecutor
+}
+
+func (e *waitingExecutor) Submit(ctx context.Context, task func(context.Context)) error {
+	if taskOf(ctx) == nil {
+		return e.BoundedEventExecutor.Submit(ctx, task)
+	}
+
+	ended := make(chan struct{})
+	err := e.BoundedEventExecutor.Submit(ctx, func(taskCtx context.Context) {
+		defer close(ended)
+		task(taskCtx)
+	})
+	if err == nil {
+		<-ended
+	}
+	return err
+}
+
+// A custom executor wrapping the BoundedEventExecutor may keep a publisher
+// inside Submit until the published delivery ends: a scope shutdown that
+// delivery calls does not wait for the publisher, which would never end.
+func TestScopeShutdown_WaitingWrapperExecutor(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, 5*time.Second)
+
+	root := NewWithOpts(&InjectorOpts{EventExecutor: &waitingExecutor{BoundedEventExecutor: NewBoundedEventExecutor(4)}})
+	defer root.Shutdown()
+	req := root.Scope("req")
+	rec := &syncRecorder{}
+	Listen(req, func(ctx context.Context, _ OrderPlaced) error {
+		if err := Publish(ctx, req, OrderCancelled{ID: "1"}); err != nil {
+			return err
+		}
+		rec.add("publisher:done")
+		return nil
+	}, ListenerAsync())
+	reports := make(chan *ShutdownReport, 1)
+	Listen(req, func(ctx context.Context, _ OrderCancelled) error {
+		shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		reports <- req.ShutdownWithContext(shutdownCtx)
+		rec.add("shutdown:returned")
+		return nil
+	}, ListenerAsync())
+
+	require.NoError(t, Publish(context.Background(), req, OrderPlaced{ID: "1"}))
+	report := <-reports
+
+	assert.True(t, report.Succeed, report.Error())
+	assert.Eventually(t, func() bool { return len(rec.list()) == 2 }, time.Second, 5*time.Millisecond)
+	assert.Equal(t, []string{"shutdown:returned", "publisher:done"}, rec.list())
+}
