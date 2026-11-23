@@ -112,7 +112,7 @@ func TestLease(t *testing.T) {
 	t.Run("crashed_member", func(t *testing.T) {
 		t.Parallel()
 		forEachEngine(t, func(t *testing.T, db *testDB) {
-			testWithTimeout(t, time.Minute)
+			testWithBackstop(t)
 			tr := schemaTransport(t, db, fast(eventsql.Lease(lease))...)
 			seedGroup(t, db, dest, "mail", false)
 			send(t, tr, "e1", dest)
@@ -140,7 +140,7 @@ func TestLease(t *testing.T) {
 	t.Run("slow_handler", func(t *testing.T) {
 		t.Parallel()
 		forEachEngine(t, func(t *testing.T, db *testDB) {
-			testWithTimeout(t, time.Minute)
+			testWithBackstop(t)
 			logs := &logRecorder{}
 			// one worker, busy with the slow handler: i1 claims nothing
 			// else meanwhile, so e1 goes to i2 once the lease expired
@@ -203,7 +203,7 @@ func TestLease(t *testing.T) {
 	t.Run("skipped_claims", func(t *testing.T) {
 		t.Parallel()
 		forEachEngine(t, func(t *testing.T, db *testDB) {
-			testWithTimeout(t, time.Minute)
+			testWithBackstop(t)
 			tr := schemaTransport(t, db, fast(eventsql.Lease(lease), eventsql.Workers(1), eventsql.BatchSize(3))...)
 			seedGroup(t, db, dest, "mail", false)
 			for _, id := range []string{"e1", "e2", "e3"} {
@@ -259,7 +259,7 @@ func TestLease(t *testing.T) {
 	t.Run("fast_handler", func(t *testing.T) {
 		t.Parallel()
 		forEachEngine(t, func(t *testing.T, db *testDB) {
-			testWithTimeout(t, time.Minute)
+			testWithBackstop(t)
 			// one worker, busy until e1 is settled: i1 claims nothing
 			// meanwhile, and i2 subscribes once e1 was removed, so the
 			// acknowledgement holds the lease however late it comes
@@ -293,7 +293,7 @@ func TestLease(t *testing.T) {
 func TestLease_AttemptInContext(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, time.Minute)
+		testWithBackstop(t)
 		const dest = "orders.placed"
 		tr := schemaTransport(t, db, fast(eventsql.MaxAttempts(5), eventsql.Backoff(eventsql.FixedBackoff(10*time.Millisecond)))...)
 		got := &attempts{}

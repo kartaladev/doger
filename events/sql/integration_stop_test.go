@@ -21,11 +21,11 @@ import (
 // never handed over, released, and the running handler's delivery, acked
 // when stop waited for it or requeued when stop cancelled it. Nothing in
 // it depends on how fast the machine is: the running handler returns only
-// when the test lets it or its context ends, and i2 receives the
-// deliveries within the wait timeout, shorter than the lease, so through
-// the release and never through an expired lease.
+// when the test lets it or its context ends, and no lease expires while
+// the test runs, so i2 receives the deliveries through the release or
+// not at all.
 func TestStop(t *testing.T) {
-	const lease = 30 * time.Second // longer than waitTimeout
+	const lease = hangBackstop
 	const leased = "SELECT COUNT(*) FROM doger_event_deliveries WHERE lease_token IS NOT NULL"
 	tests := []struct {
 		name        string
@@ -40,7 +40,7 @@ func TestStop(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				const dest = "orders.placed"
 				opts := fast(eventsql.Lease(lease), eventsql.BatchSize(8), eventsql.Workers(1))
 				i1 := schemaTransport(t, db, opts...)
@@ -54,7 +54,6 @@ func TestStop(t *testing.T) {
 				finish := make(chan struct{}) // closed to let the running handler return
 				letFinish := sync.OnceFunc(func() { close(finish) })
 				var finished, cancelled atomic.Bool
-				beforeClaim := time.Now()
 				stop := subscribe(t, i1, group(dest, "mail"), func(ctx context.Context, _ doger.Envelope) error {
 					running <- struct{}{}
 					select {
@@ -102,7 +101,6 @@ func TestStop(t *testing.T) {
 				c := newCollector()
 				subscribe(t, i2, group(dest, "mail"), c.handle)
 				assert.Len(t, distinct(c.expect(t, tt.wantI2)), tt.wantI2)
-				assert.Less(t, time.Since(beforeClaim), lease, "i2 waited for the lease instead of the release")
 				c.quiet(t)
 			})
 		})
@@ -115,7 +113,7 @@ func TestStop(t *testing.T) {
 // as long as for any other outcome.
 func TestStop_NoGoroutine(t *testing.T) {
 	forEachEngineInTurn(t, func(t *testing.T, tdb *testDB) {
-		testWithTimeout(t, time.Minute)
+		testWithBackstop(t)
 		ignore := goleak.IgnoreCurrent()
 		db, err := sql.Open(tdb.driver, scopedDSN(t, tdb.engine, tdb.schema))
 		require.NoError(t, err)
@@ -152,7 +150,7 @@ func TestStop_NoGoroutine(t *testing.T) {
 func TestStop_HandlerIgnoresContext(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, time.Minute)
+		testWithBackstop(t)
 		const dest = "orders.placed"
 		tr := schemaTransport(t, db, fast()...)
 		seedGroup(t, db, dest, "mail", false)
@@ -176,7 +174,7 @@ func TestStop_HandlerIgnoresContext(t *testing.T) {
 		select {
 		case err := <-stopped:
 			assert.ErrorIs(t, err, context.DeadlineExceeded)
-		case <-time.After(2 * time.Second):
+		case <-time.After(waitTimeout):
 			t.Error("stop did not return once its context ended")
 			once.Do(func() { close(unblock) })
 			<-stopped

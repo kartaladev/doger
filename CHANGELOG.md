@@ -25,6 +25,19 @@ break is listed under **BREAKING** with its migration.
   start step error`, and its panic as `panic recovered` (Error) and `panic
   value` (Debug) with `step` and `kind`. See the upgrading guide, "A child scope shutdown
   cancels its subtree's running start steps".
+- `eventtransporttest`: the conformance kit's waits are no-progress windows
+  of one minute instead of 10s totals, so a slow but live transport (a
+  loaded CI machine) passes, while a stalled one fails about a minute
+  after its last progress instead of after 10s.
+
+### Fixed
+
+- A scope shutdown called from an async listener now waits for another
+  async delivery to that scope whose publisher's `Submit` already returned
+  (the default `BoundedEventExecutor` starts the delivery inside `Submit`);
+  it could return while that delivery still ran. A custom executor,
+  including one wrapping `NewBoundedEventExecutor`, keeps the previous
+  rule; see the events docs, "Shutdown".
 
 ## v0.3.0 - 2026-11-22
 

@@ -13,10 +13,15 @@ import (
 	eventsql "github.com/kartaladev/doger/events/sql"
 )
 
-// Waits of the integration tests: how long a test waits for an expected
-// outcome, and how long it watches for one that must not happen.
+// Waits of the integration tests. waitTimeout is how long a test waits
+// without progress: for the next expected envelope or for a condition.
+// No wait fails on its total time. A minute is four times the longest
+// stall of a database seen on a machine loaded far past its cores (load
+// average 285 on 14: no delivery for 15s), and still fails a stalled
+// transport within a minute. quietPeriod is how long a test watches for
+// an outcome that must not happen.
 const (
-	waitTimeout = 15 * time.Second
+	waitTimeout = time.Minute
 	quietPeriod = 300 * time.Millisecond
 )
 

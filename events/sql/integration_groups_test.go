@@ -59,7 +59,7 @@ func TestGroups_History(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				tr := schemaTransport(t, db, fast()...)
 				tt.before(t, db, tr)
 				c := newCollector()
@@ -134,7 +134,7 @@ func TestGroups_Ephemeral(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				const ttl = time.Second
 				tr := schemaTransport(t, db, eventsql.EphemeralTTL(ttl), eventsql.PollInterval(50*time.Millisecond))
 				tt.setup(t, db, tr)
@@ -172,7 +172,7 @@ func TestGroups_Ephemeral(t *testing.T) {
 func TestGroups_EphemeralStopDuringOutbox(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, time.Minute)
+		testWithBackstop(t)
 		const dest = "orders.placed"
 		tr := schemaTransport(t, db, eventsql.EphemeralTTL(time.Second), eventsql.PollInterval(50*time.Millisecond))
 		// "mail" runs the maintenance

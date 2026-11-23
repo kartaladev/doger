@@ -47,7 +47,7 @@ func TestRetry(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				const dest = "orders.placed"
 				tr := schemaTransport(t, db, fast(eventsql.MaxAttempts(tt.max), eventsql.Backoff(eventsql.FixedBackoff(10*time.Millisecond)))...)
 				var runs atomic.Int32
@@ -103,7 +103,7 @@ func TestRetry_ExhaustedAtClaim(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				const dest = "orders.placed"
 				tr := schemaTransport(t, db, fast(eventsql.MaxAttempts(tt.max))...)
 				seedGroup(t, db, dest, "mail", false)
@@ -143,7 +143,7 @@ func TestRetry_ExhaustedAtClaim(t *testing.T) {
 func TestRetry_InterruptedAttemptCounts(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, time.Minute)
+		testWithBackstop(t)
 		const dest = "orders.placed"
 		tr := schemaTransport(t, db, fast(eventsql.MaxAttempts(2))...)
 		seedGroup(t, db, dest, "mail", false)

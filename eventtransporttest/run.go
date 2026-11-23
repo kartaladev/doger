@@ -40,6 +40,7 @@ type Option func(*config)
 type config struct {
 	tx           TxHarness
 	noDeliverAll bool
+	wait         time.Duration // the no-progress window; see waitTimeout
 }
 
 // WithTx adds the outbox subtests, OutboxCommitDelivers and
@@ -61,12 +62,24 @@ func WithoutDeliverAll() Option {
 	}
 }
 
-// Timing of the suite: how long a subtest waits for an expected delivery,
-// and how long it watches for a delivery that must not happen.
+// Timing of the suite. waitTimeout is how long a subtest waits without
+// progress: for the next expected delivery, or for a stop or a handler it
+// waits on. A subtest never fails on its total time, so a slow transport
+// on a loaded machine passes as long as it makes progress; a minute
+// covers the stalls of a database starved by a loaded machine (over 15s
+// seen) and still fails a stalled transport within a minute. quietPeriod
+// is how long it watches for a delivery that must not happen.
 const (
-	waitTimeout = 10 * time.Second
+	waitTimeout = time.Minute
 	quietPeriod = 200 * time.Millisecond
 )
+
+// withWait sets the no-progress window, for the suite's own tests.
+func withWait(d time.Duration) Option {
+	return func(c *config) {
+		c.wait = d
+	}
+}
 
 // Run runs the conformance subtests against the transports factory
 // returns, one per subtest: SendReceive, DeliverOnceGroup,
@@ -102,7 +115,7 @@ func (t testingT) Run(name string, f func(tester)) bool {
 // run runs the subtests on t.
 func run(t tester, factory func(tester) doger.EventTransport, opts ...Option) {
 	t.Helper()
-	cfg := config{}
+	cfg := config{wait: waitTimeout}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
@@ -146,13 +159,14 @@ type fixture struct {
 	t           tester
 	transport   doger.EventTransport
 	destination string
+	wait        time.Duration
 }
 
 // newFixture returns the fixture of a subtest.
 func (s suite) newFixture(t tester) *fixture {
 	t.Helper()
 
-	return &fixture{t: t, transport: s.factory(t), destination: "eventtransporttest." + newID()}
+	return &fixture{t: t, transport: s.factory(t), destination: "eventtransporttest." + newID(), wait: s.cfg.wait}
 }
 
 // envelope returns an envelope for the fixture's destination.
@@ -181,7 +195,7 @@ func (f *fixture) subscribe(group string, mode doger.EventDelivery, h doger.Enve
 	var stopped atomic.Bool // set on the goroutine calling stop, read at cleanup
 	f.t.Cleanup(func() {
 		if !stopped.Load() {
-			ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+			ctx, cancel := context.WithTimeout(context.Background(), f.wait)
 			defer cancel()
 			_ = stop(ctx)
 		}
@@ -203,10 +217,13 @@ func (f *fixture) send(env doger.Envelope) {
 
 // collector records the IDs of the envelopes a handler receives.
 type collector struct {
-	ids chan string
+	ids  chan string
+	wait time.Duration
 }
 
-func newCollector() *collector { return &collector{ids: make(chan string, 1024)} }
+func (s suite) newCollector() *collector {
+	return &collector{ids: make(chan string, 1024), wait: s.cfg.wait}
+}
 
 // handler records each envelope and acknowledges it.
 func (c *collector) handler(_ context.Context, env doger.Envelope) error {
@@ -214,18 +231,20 @@ func (c *collector) handler(_ context.Context, env doger.Envelope) error {
 	return nil
 }
 
-// expect waits for n envelopes, failing t when they do not arrive in
-// time, and returns their IDs.
+// expect waits for n envelopes, failing t once none arrived for the wait
+// window, and returns their IDs.
 func (c *collector) expect(t tester, n int) []string {
 	t.Helper()
 	ids := make([]string, 0, n)
-	timeout := time.After(waitTimeout)
+	idle := time.NewTimer(c.wait)
+	defer idle.Stop()
 	for len(ids) < n {
 		select {
 		case id := <-c.ids:
 			ids = append(ids, id)
-		case <-timeout:
-			t.Fatalf("received %d envelopes, want %d", len(ids), n)
+			idle.Reset(c.wait)
+		case <-idle.C:
+			t.Fatalf("received %d envelopes, want %d: none for %v", len(ids), n, c.wait)
 		}
 	}
 
@@ -260,7 +279,7 @@ func (s suite) sendReceive(t tester) {
 			got.Destination != env.Destination || !got.PublishedAt.Equal(env.PublishedAt) {
 			t.Errorf("received %+v, want %+v", got, env)
 		}
-	case <-time.After(waitTimeout):
+	case <-time.After(s.cfg.wait):
 		t.Fatalf("the envelope was not delivered")
 	}
 }
@@ -269,7 +288,7 @@ func (s suite) sendReceive(t tester) {
 // group.
 func (s suite) deliverOnceGroup(t tester) {
 	f := s.newFixture(t)
-	c := newCollector()
+	c := s.newCollector()
 	f.subscribe("g", doger.DeliverOnce, c.handler)
 	f.subscribe("g", doger.DeliverOnce, c.handler)
 	const n = 10
@@ -288,7 +307,7 @@ func (s suite) deliverAllGroups(t tester) {
 		t.Skipf("the transport cannot broadcast (WithoutDeliverAll)")
 	}
 	f := s.newFixture(t)
-	c1, c2 := newCollector(), newCollector()
+	c1, c2 := s.newCollector(), s.newCollector()
 	f.subscribe("g/"+newID(), doger.DeliverAll, c1.handler)
 	f.subscribe("g/"+newID(), doger.DeliverAll, c2.handler)
 	const n = 5
@@ -321,7 +340,7 @@ func (s suite) deliverAllRejected(t tester) {
 func (s suite) newGroupAtLatest(t tester) {
 	f := s.newFixture(t)
 	f.send(f.envelope())
-	c := newCollector()
+	c := s.newCollector()
 	f.subscribe("late", doger.DeliverOnce, c.handler)
 	env := f.envelope()
 	f.send(env)
@@ -348,7 +367,7 @@ func (s suite) redelivery(t tester) {
 	env := f.envelope()
 	f.send(env)
 
-	ids := (&collector{ids: attempts}).expect(t, 2)
+	ids := (&collector{ids: attempts, wait: s.cfg.wait}).expect(t, 2)
 	if ids[0] != env.ID || ids[1] != env.ID {
 		t.Errorf("attempts %v, want %s twice", ids, env.ID)
 	}
@@ -358,7 +377,7 @@ func (s suite) redelivery(t tester) {
 // delivered again.
 func (s suite) permanentError(t tester) {
 	f := s.newFixture(t)
-	c := newCollector()
+	c := s.newCollector()
 	f.subscribe("g", doger.DeliverOnce, func(ctx context.Context, env doger.Envelope) error {
 		_ = c.handler(ctx, env)
 		return doger.PermanentError(errors.New("eventtransporttest: permanent failure"))
@@ -380,7 +399,7 @@ func (s suite) stopWaitsHandlers(t tester) {
 		return nil
 	})
 	f.send(f.envelope())
-	waitClosed(t, handling, "the handler was not called")
+	s.waitClosed(t, handling, "the handler was not called")
 
 	stopped := make(chan error, 1)
 	go func() { stopped <- stop(context.Background()) }()
@@ -396,7 +415,7 @@ func (s suite) stopWaitsHandlers(t tester) {
 		if err != nil {
 			t.Errorf("stop: %v", err)
 		}
-	case <-time.After(waitTimeout):
+	case <-time.After(s.cfg.wait):
 		t.Fatalf("stop did not return once the handler returned")
 	}
 }
@@ -413,7 +432,7 @@ func (s suite) cancellation(t tester) {
 		return ctx.Err()
 	})
 	f.send(f.envelope())
-	waitClosed(t, handling, "the handler was not called")
+	s.waitClosed(t, handling, "the handler was not called")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -422,15 +441,15 @@ func (s suite) cancellation(t tester) {
 		defer close(stopped)
 		_ = stop(ctx)
 	}()
-	waitClosed(t, stopped, "stop did not return once its context ended")
-	waitClosed(t, cancelled, "the handler context was not cancelled")
+	s.waitClosed(t, stopped, "stop did not return once its context ended")
+	s.waitClosed(t, cancelled, "the handler context was not cancelled")
 }
 
 // outboxCommitDelivers: an envelope written in a transaction is delivered
 // once it committed, not before.
 func (s suite) outboxCommitDelivers(t tester) {
 	f, sender := s.outboxFixture(t)
-	c := newCollector()
+	c := s.newCollector()
 	f.subscribe("g", doger.DeliverOnce, c.handler)
 	txCtx := s.begin(t)
 	env := f.envelope()
@@ -452,7 +471,7 @@ func (s suite) outboxCommitDelivers(t tester) {
 // back is never delivered.
 func (s suite) outboxRollbackDiscards(t tester) {
 	f, sender := s.outboxFixture(t)
-	c := newCollector()
+	c := s.newCollector()
 	f.subscribe("g", doger.DeliverOnce, c.handler)
 	txCtx := s.begin(t)
 	if err := sender.SendTx(txCtx, f.envelope()); err != nil {
@@ -511,12 +530,12 @@ func closeOnce(ch chan struct{}) {
 }
 
 // waitClosed waits for ch to be closed, failing t with message after the
-// wait timeout.
-func waitClosed(t tester, ch <-chan struct{}, message string) {
+// wait window.
+func (s suite) waitClosed(t tester, ch <-chan struct{}, message string) {
 	t.Helper()
 	select {
 	case <-ch:
-	case <-time.After(waitTimeout):
+	case <-time.After(s.cfg.wait):
 		t.Fatalf("%s", message)
 	}
 }

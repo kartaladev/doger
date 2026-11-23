@@ -220,7 +220,7 @@ func TestSend_RoundTrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				const dest = "orders.placed"
 				tr := schemaTransport(t, db, fast()...)
 				got := make(chan doger.Envelope, 1)

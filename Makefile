@@ -14,9 +14,12 @@ SQL_COMPOSE := events/sql/compose.yaml
 SQL_POSTGRES_DSN ?= postgres://postgres:doger@127.0.0.1:54317/doger?sslmode=disable postgres://postgres:doger@127.0.0.1:54313/doger?sslmode=disable
 SQL_MYSQL_DSN ?= root:doger@tcp(127.0.0.1:33084)/doger root:doger@tcp(127.0.0.1:33080)/doger
 
+# -timeout: the tests fail on a minute without progress, so a loaded
+# machine may run them past go test's default 10m; each test has a 15m
+# backstop of its own
 test-sql:
 	docker compose -f $(SQL_COMPOSE) up -d --wait
-	cd events/sql && DOGER_SQL_REQUIRE=1 DOGER_SQL_POSTGRES_DSN="$(SQL_POSTGRES_DSN)" DOGER_SQL_MYSQL_DSN="$(SQL_MYSQL_DSN)" go test -race -count=1 ./...
+	cd events/sql && DOGER_SQL_REQUIRE=1 DOGER_SQL_POSTGRES_DSN="$(SQL_POSTGRES_DSN)" DOGER_SQL_MYSQL_DSN="$(SQL_MYSQL_DSN)" go test -race -count=1 -timeout 30m ./...
 test-sql-down:
 	docker compose -f $(SQL_COMPOSE) down -v
 

@@ -87,7 +87,7 @@ func TestSendTx(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				a := schemaTransport(t, db, fast()...)
 				db2, err := sql.Open(db.driver, scopedDSN(t, db.engine, db.schema))
 				require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestOutbox_EndToEnd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				a := schemaTransport(t, db, fast()...)
 
 				rootA := doger.NewWithOpts(&doger.InjectorOpts{EventTransport: a})
@@ -203,7 +203,7 @@ func TestTxSource_SameSourceTwice(t *testing.T) {
 func TestGroups_RegistrationRace(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, time.Minute)
+		testWithBackstop(t)
 		const dest = "orders.placed"
 		tr := schemaTransport(t, db, fast()...)
 		ctx1, t1, err := sqltx.BeginTx(context.Background(), db.DB, nil)

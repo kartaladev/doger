@@ -80,7 +80,7 @@ func probe(e engine) (engine, error) {
 		return e, fmt.Errorf("open %s: %w", e.kind, err)
 	}
 	defer db.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 
 	var version string
@@ -161,7 +161,7 @@ func runEngines(t *testing.T, parallel bool, fn func(t *testing.T, db *testDB), 
 // returns a *sql.DB using it.
 func newTestDB(t *testing.T, e engine) *testDB {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 	admin, err := sql.Open(e.driver, e.dsn)
 	if err != nil {
@@ -190,7 +190,7 @@ func newTestDB(t *testing.T, e engine) *testDB {
 	// scoped pool, then drop the schema with the admin one
 	t.Cleanup(func() {
 		_ = db.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 		defer cancel()
 		if _, err := admin.ExecContext(ctx, drop); err != nil {
 			t.Errorf("%s: %s: %v", e.name, drop, err)

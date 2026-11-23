@@ -37,7 +37,7 @@ func TestRetention(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				const dest = "orders.placed"
 				opts := []eventsql.Option{eventsql.PollInterval(50 * time.Millisecond)}
 				if tt.keep > 0 {
@@ -145,7 +145,7 @@ func TestRetention_StaleGroupWarning(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				logs := &logRecorder{}
 				tr := schemaTransport(t, db, fast(eventsql.Logger(slog.New(logs)))...)
 				// "removed" lost its listener two days ago
