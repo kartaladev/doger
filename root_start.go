@@ -540,15 +540,23 @@ type stepSkip struct {
 	// stillRunning is the step's timeout error while its call, abandoned
 	// at StartTimeout, still runs, or nil
 	stillRunning error
+	// removedFrom is, for an export whose source scope a bounded shutdown
+	// removed during the run (detachedExportSkip), the name of that scope;
+	// service is then the export
+	removedFrom string
 }
 
 // dependentError is the run's error for step, skipped outside a closing
 // scope because it depends on the skipped service: the service's timeout
 // error while its abandoned call still runs, otherwise a *StartError naming
-// step's service that matches ErrShutdown.
+// step's service that matches ErrShutdown, and that names the removed
+// export when the dependency is one.
 func (skip stepSkip) dependentError(step startStep) error {
 	if skip.stillRunning != nil {
 		return skip.stillRunning
+	}
+	if skip.removedFrom != "" {
+		return step.startError(libErrorf("dependency `%s` (export of scope `%s`) was removed by the scope's shutdown: %w", skip.service, skip.removedFrom, skip.closing))
 	}
 
 	return step.startError(libErrorf("dependency `%s` was not started: %w", skip.service, skip.closing))

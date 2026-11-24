@@ -490,7 +490,16 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // the ended context, so it skips the services it then reaches (see below).
 // The run still skips the later steps of this subtree once that shutdown
 // completed, and still skips and reports a dependent outside it, whenever
-// its edge to an export of this scope was declared.
+// its edge to an export of this scope was declared. As that shutdown
+// removed the export's source with the dependency edges inside this
+// subtree, a dependent of an export of it is then skipped once the run
+// skipped any step of this subtree, even one it did not depend on, and the
+// run reports it with a [*StartError] that matches [ErrShutdown] and names
+// the removed export ("dependency `S` (export of scope `c`) was removed by
+// the scope's shutdown"), or with the [ErrStartTimeout] error of a step of
+// this subtree whose abandoned call still runs. A shutdown that waits for
+// the run removes nothing before it returns: such a dependent then starts
+// when its own dependencies did.
 // Never shut down, synchronously from code running in such a start, a scope
 // that the start is starting: it would wait for itself.
 //

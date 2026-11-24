@@ -155,54 +155,94 @@ func (c *dependentsCheck) skips(step startStep) bool {
 	return true
 }
 
-// neighbors returns the services v depends on for the walk: its
-// dependencyNeighbors, plus the source of an export whose source scope a
-// bounded shutdown detached during the run (detachedExportSource).
-func (c *dependentsCheck) neighbors(v ServiceDescription) []ServiceDescription {
-	return append(c.run.root.dependencyNeighbors(v), c.run.detachedExportSources(v)...)
+// checkDetachedExport adds desc to the reasons when it is an export whose
+// source scope a bounded shutdown detached during the run while the run
+// skipped a step of that scope or of its descendants (see
+// startRun.detachedExportSkip).
+func (c *dependentsCheck) checkDetachedExport(desc ServiceDescription) {
+	if _, known := c.reasons[desc]; known {
+		return
+	}
+	if skip, ok := c.run.detachedExportSkip(desc, c.reasons); ok {
+		c.reasons[desc] = skip
+	}
 }
 
-// detachedExportSources returns, when desc is an export whose source scope
-// is no longer a child of the export's scope, every candidate the run
-// claimed in that source scope or its descendants, and nil otherwise. A
-// bounded child scope shutdown that gave up waiting for the run removes
-// the services of that subtree, with their dependency edges, and detaches
-// the scope, so dependencyNeighbors no longer leads from the export to its
-// source, nor from the source to what it depends on there, while the run
-// may still skip a step of that subtree afterwards: a dependent of the
-// export outside the subtree must then be skipped and reported all the
-// same. The edges inside the subtree are gone, so the export is taken to
-// depend on all of its claimed candidates: a dependent of a scope that
-// shut down is skipped once any step there was. Resolving this here,
-// rather than snapshotting the graph, keeps an edge declared at any time
-// during the run; it costs a scope lookup per service a walk visits, and
-// walks run only once the run skipped a step.
-func (r *startRun) detachedExportSources(desc ServiceDescription) []ServiceDescription {
+// detachedExportSkip returns why a dependent of desc is skipped when desc
+// is an export whose source scope, as the run claimed it, is no longer the
+// one the export resolves from, and the run skipped a step of that scope or
+// of its descendants (one of reasons); ok is false otherwise. A bounded
+// child scope shutdown that gave up waiting for the run removes the
+// services of that subtree, with their dependency edges, and detaches the
+// scope, so the walk no longer leads from the export to its source, nor
+// from the source to what it depends on there, while a dependent of the
+// export outside the subtree must be skipped and reported all the same.
+// Detachment is decided by scope identity, since the export looks its
+// source scope up by name and a new scope may reuse that name. The edges
+// inside the subtree are gone, so the dependent is taken to depend on the
+// whole subtree: a still-running step of it decides the error, as for a
+// dependent that reaches one; otherwise the run blames the removed export,
+// not an unrelated skipped step. Resolving this as the walk reaches the
+// export, rather than snapshotting the graph, keeps an edge declared at any
+// time during the run. Cost: once per service a batch's walk reaches, a
+// scope lookup by ID (scopeByID, which searches the scope tree) and a
+// service lookup; for an export, a pass over the run's candidates. A walk
+// runs only while the run has skipped a step, an abandoned call still
+// runs, or the instance tracker holds one (newDependentsCheck); a run with
+// none of these pays nothing.
+func (r *startRun) detachedExportSkip(desc ServiceDescription, reasons map[ServiceDescription]stepSkip) (stepSkip, bool) {
 	scope := r.root.scopeByID(desc.ScopeID)
 	if scope == nil {
-		return nil
+		return stepSkip{}, false
 	}
 	serviceAny, ok := scope.serviceGet(desc.Service)
 	if !ok {
-		return nil
+		return stepSkip{}, false
 	}
 	export, ok := asExport(serviceAny)
 	if !ok {
-		return nil
+		return stepSkip{}, false
 	}
-	if _, _, found := export.exportSource(); found {
-		// dependencyNeighbors follows a live source
-		return nil
-	}
+	live, _, found := export.exportSource()
 
-	var sources []ServiceDescription
+	var best ServiceDescription
+	var source *Scope
 	for _, candidate := range r.candidates {
-		if export.withinSource(candidate.scope) {
-			sources = append(sources, candidate.desc())
+		if !export.withinSource(candidate.scope) {
+			continue
+		}
+		claimed := sourceScopeOf(export, candidate.scope)
+		if found && live == claimed {
+			// dependencyNeighbors follows a live source
+			continue
+		}
+		if _, skipped := reasons[candidate.desc()]; !skipped {
+			continue
+		}
+		if source == nil || compareSkipped(reasons, candidate.desc(), best) < 0 {
+			best, source = candidate.desc(), claimed
 		}
 	}
+	if source == nil {
+		return stepSkip{}, false
+	}
 
-	return sources
+	skip := reasons[best]
+	if skip.stillRunning != nil {
+		return skip, true
+	}
+
+	return stepSkip{service: desc.Service, removedFrom: source.name, closing: skip.closing}, true
+}
+
+// sourceScopeOf returns the source scope of export that scope is, or is a
+// descendant of, scope being within that source.
+func sourceScopeOf(export serviceWrapperExport, scope *Scope) *Scope {
+	for scope.parentScope != nil && export.withinSource(scope.parentScope) {
+		scope = scope.parentScope
+	}
+
+	return scope
 }
 
 // reached returns the best skipped service that desc reaches.
@@ -222,16 +262,20 @@ func (c *dependentsCheck) connect(v ServiceDescription) {
 	c.low[v] = c.index[v]
 	c.stack = append(c.stack, v)
 	c.onStack[v] = true
+	// once per service, before any service that depends on it reads its
+	// reasons (asReached, below its own connect)
+	c.checkDetachedExport(v)
 
 	var best reachedSkip
-	for _, n := range c.neighbors(v) {
-		best = c.better(best, c.asReached(n))
+	for _, n := range c.run.root.dependencyNeighbors(v) {
 		if _, seen := c.index[n]; !seen {
 			c.connect(n)
 			c.low[v] = min(c.low[v], c.low[n])
 		} else if c.onStack[n] {
 			c.low[v] = min(c.low[v], c.index[n])
 		}
+		// n's own reasons are known once its connect began
+		best = c.better(best, c.asReached(n))
 		// final once n's component is complete; otherwise n is in v's
 		// component, which merges what its members reach below
 		best = c.better(best, c.best[n])

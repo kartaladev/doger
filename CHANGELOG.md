@@ -45,9 +45,15 @@ break is listed under **BREAKING** with its migration.
   value` (Debug) with `step` and `kind`. This applies to the child scope's
   own shutdown: a child step that a root `Shutdown` reaches is reported
   like a root step, with a `*StartError` naming it that matches
-  `ErrShutdown` (and `ErrStartTimeout` once abandoned). See the upgrading
-  guide, "A child scope shutdown cancels its subtree's running start
-  steps".
+  `ErrShutdown` (and `ErrStartTimeout` once abandoned). A child scope
+  shutdown bounded by its context that gives up waiting for the run
+  removes the scope's services before the run ends: a dependent of an
+  export of that scope is then skipped once any step of the scope was,
+  even one it did not depend on, and reported as depending on the removed
+  export ("dependency `S` (export of scope `c`) was removed by the scope's
+  shutdown"), while under an unbounded shutdown it starts when its own
+  dependencies did. See the upgrading guide, "A child scope shutdown
+  cancels its subtree's running start steps".
 - `HealthReport`/`HealthReportWithContext` reads and `HealthScheduler`
   rounds now skip a component that a kind with a handler has not handled
   yet, as they already skipped a Starter not started yet: it is listed as

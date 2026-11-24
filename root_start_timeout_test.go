@@ -3561,11 +3561,14 @@ func TestChildShutdown_TransitiveDetachedPath(t *testing.T) {
 		name          string
 		parallelism   uint
 		sourceStarter bool // "S" is a Starter too
+		reuseName     bool // a new scope "c" is created once the shutdown detached the first one
 	}{
 		{name: "plain_source_sequential"},
 		{name: "plain_source_parallel", parallelism: 2},
 		{name: "starter_source_sequential", sourceStarter: true},
 		{name: "starter_source_parallel", parallelism: 2, sourceStarter: true},
+		{name: "name_reused_sequential", reuseName: true},
+		{name: "name_reused_parallel", parallelism: 2, reuseName: true},
 	}
 
 	for _, tt := range tests {
@@ -3606,6 +3609,11 @@ func TestChildShutdown_TransitiveDetachedPath(t *testing.T) {
 				cancel()
 				require.False(t, report.Succeed, "the bounded shutdown gave up waiting for the run")
 				require.Empty(t, root.Children(), "the shutdown detached c")
+				if tt.reuseName {
+					// the export now resolves its source by name in the new
+					// scope, which holds no "S"
+					require.NotSame(t, c, root.Scope("c"), "a new scope reuses the name c")
+				}
 				gate.gate <- struct{}{}
 
 				err := <-runErr
@@ -3691,6 +3699,114 @@ func TestEndParallelStart(t *testing.T) {
 				require.ErrorAs(t, err, &startErr)
 				assert.Equal(t, tt.wantNaming, startErr.Service, "the error names the pending Starter: %v", err)
 			}
+		})
+	}
+}
+
+// TestChildShutdown_DetachedExportBlame pins container-start "A dependent
+// of an export whose scope a bounded shutdown removed": "S" in "c",
+// exported to the root, started in an earlier Refresh; "U" in "c", a
+// component of StageBeforeStart kind "early" whose handler ignores its
+// context, blocks the run; root "P" depends on the export only. A bounded
+// c.ShutdownWithContext removes "S" with "c", so "P" is skipped, and the
+// run blames the removed export, not "U". An unbounded c.Shutdown() waits
+// for the run, so "S" is still there and "P" starts.
+func TestChildShutdown_DetachedExportBlame(t *testing.T) {
+	t.Parallel()
+
+	const removed = "dependency `S` (export of scope `c`) was removed by the scope's shutdown: container is shut down: scope `c` is shutting down"
+	tests := []struct {
+		name         string
+		bounded      bool
+		component    bool // "P" is a component of StageAfterStart kind "late", not a Starter
+		stillRunning bool // StartTimeout 5s; "U"'s call is abandoned and still runs when "P" is checked
+		wantErr      string
+	}{
+		{name: "bounded_starter", bounded: true, wantErr: "doger: failed to start service `P` in scope `[root]`: " + removed},
+		{name: "bounded_component", bounded: true, component: true, wantErr: "doger: kind `late` failed for service `P` in scope `[root]`: " + removed},
+		{name: "bounded_still_running", bounded: true, stillRunning: true},
+		{name: "unbounded_starter"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				var timeout time.Duration
+				if tt.stillRunning {
+					timeout = 5 * time.Second
+				}
+				root := NewWithOpts(&InjectorOpts{StartTimeout: timeout})
+				early := NewKind[*gateProbe, struct{}]("early")
+				early.Handle(root, StageBeforeStart, func(ctx context.Context, component Component[*gateProbe, struct{}]) error {
+					return component.Instance.Run(ctx)
+				})
+				late := NewKind[*countedStarter, struct{}]("late")
+				late.Handle(root, StageAfterStart, func(_ context.Context, component Component[*countedStarter, struct{}]) error {
+					return component.Instance.Start()
+				})
+				require.NoError(t, root.Start())
+				c := root.Scope("c")
+				starts := &countingStarters{}
+				provideCountedStarter(c, starts, "S")
+				require.NoError(t, ExportNamed[*countedStarter](c, "S"))
+				require.NoError(t, root.Refresh(), "S starts")
+				require.Equal(t, 1, starts.count("S"))
+
+				gate := provideCounted(c, "U", newGateProbe(), early.With(struct{}{}))
+				pOpt := AsStarter()
+				if tt.component {
+					pOpt = late.With(struct{}{})
+				}
+				ProvideNamed(root, "P", func(Injector) (*countedStarter, error) {
+					return &countedStarter{name: "P", starts: starts}, nil
+				}, pOpt, DependsOnNamed("S"))
+				defer func() {
+					close(gate.gate)
+					root.Shutdown()
+				}()
+
+				runErr := make(chan error, 1)
+				go func() { runErr <- root.Refresh() }()
+				synctest.Wait()
+				require.Equal(t, int32(1), gate.calls.Load(), "U's handler has been called")
+
+				if tt.bounded {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+					report := c.ShutdownWithContext(ctx)
+					cancel()
+					require.False(t, report.Succeed, "the bounded shutdown gave up waiting for the run")
+					require.Empty(t, root.Children(), "the shutdown detached c")
+					if tt.stillRunning {
+						// U is abandoned at its StartTimeout and still runs: as
+						// for a dependent that reaches it, its error decides
+						err := <-runErr
+						require.ErrorIs(t, err, ErrStartTimeout)
+						var startErr *StartError
+						require.ErrorAs(t, err, &startErr)
+						assert.Equal(t, "U", startErr.Service, "the still-running step decides the error: %v", err)
+						assert.Equal(t, 0, starts.count("P"), "P was skipped")
+						return
+					}
+					gate.gate <- struct{}{}
+
+					err := <-runErr
+					require.ErrorIs(t, err, ErrShutdown)
+					assert.EqualError(t, err, tt.wantErr, "the run blames the removed export, not U")
+					assert.Equal(t, 0, starts.count("P"), "P was skipped: S was removed with c")
+					return
+				}
+
+				reports := make(chan *ShutdownReport, 1)
+				go func() { reports <- c.Shutdown() }()
+				synctest.Wait() // the shutdown waits for the run
+				gate.gate <- struct{}{}
+
+				assert.NoError(t, <-runErr, "U was skipped; P depends on S only")
+				assert.Equal(t, 1, starts.count("P"), "S was still there: P started")
+				assert.True(t, (<-reports).Succeed)
+			})
 		})
 	}
 }
