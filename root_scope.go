@@ -68,8 +68,9 @@ func NewWithOpts(opts *InjectorOpts, packages ...func(Injector)) *RootScope {
 	opts.initDefaults()
 
 	root := &RootScope{
-		opts:  opts,
-		kinds: defaultKinds,
+		opts:      opts,
+		kinds:     defaultKinds,
+		instances: &abandonedInstances{},
 	}
 	root.hooks.take(opts)
 	root.health.root = root
@@ -150,12 +151,16 @@ type RootScope struct {
 	pipelineMu sync.Mutex
 	runScopes  map[*Scope]struct{}           // scopes with candidates in the running pipeline; guarded by lifecycleMu
 	runSteps   map[*runningStep]struct{}     // contexts of the start steps the pipeline runs or awaits now; guarded by lifecycleMu
-	startedMu  sync.Mutex                    // guards started, handled and abandoned; never held across user code
+	startedMu  sync.Mutex                    // guards started, handled and abandoned; never held across user code; only instances.mu is taken under it
 	started    map[any]struct{}              // Starters already started, keyed by wrapper
 	handled    map[any]map[*kindID]struct{}  // kinds already handled, by wrapper
 	abandoned  map[any]map[*kindID]startStep // steps whose abandoned call still runs, by wrapper; a nil kind is the Start method
 	// abandonedChanges counts the changes of abandoned; guarded by startedMu
 	abandonedChanges uint64
+	// instances tracks the abandoned calls that still run by instance, so
+	// that no run calls an instance again through an override or a clone.
+	// A container and its clones share it; it has its own mutex.
+	instances *abandonedInstances
 	// registrations counts the services stored in any scope of the
 	// container (registrations, overrides, defaults replaced), which can
 	// change what a name resolves to; see dependentsCheck.current
@@ -900,6 +905,11 @@ func (s *RootScope) Clone() *RootScope {
 // is taken is not copied, nor is its partly built private scope, so the
 // clone can install that extension itself.
 //
+// Start state is not copied, except one record the clone shares with the
+// source: the abandoned start calls that still run, by instance, so that
+// neither container calls an instance again while such a call runs (see
+// [InjectorOpts.StartTimeout]).
+//
 // Events: service listeners come with their registrations, and function
 // listeners are copied as the same functions; stopping or adding a listener
 // on one container leaves the other unchanged. The clone gets its own
@@ -914,6 +924,9 @@ func (s *RootScope) Clone() *RootScope {
 // InjectorOpts.InstanceID is set.
 func (s *RootScope) CloneWithOpts(opts *InjectorOpts) *RootScope {
 	clone := NewWithOpts(opts)
+	// the clone shares the eager instances, so it shares their abandoned
+	// calls too: no container calls an instance whose call still runs
+	clone.instances = s.instances
 	s.cloneWithExtensions(clone)
 	s.copyKindsTo(clone)
 	s.copyEventsTo(clone)

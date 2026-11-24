@@ -16,13 +16,17 @@ type dependentsCheck struct {
 	run *startRun
 	// what the snapshot reflects: the run's skips, the abandoned steps, the
 	// graph's edges and the registrations, as change counts (see current)
-	skipCount, abandonedChanges, dagChanges, registrations uint64
+	skipCount, abandonedChanges, dagChanges, registrations, instanceChanges uint64
 	// skipped is the run's skips when the batch began
 	skipped map[ServiceDescription]stepSkip
 	// reasons is skipped plus the services with an abandoned call still
 	// running that the run did not skip, which a dependent must not start
-	// before either
+	// before either; the walk adds the services whose instance is tracked
 	reasons map[ServiceDescription]stepSkip
+	// tracked is the instance tracker's snapshot, nil when it was empty;
+	// instanceChecked holds the services the walk looked up in it
+	tracked         map[any][]*kindID
+	instanceChecked map[ServiceDescription]struct{}
 
 	// the memoized walk: Tarjan's strongly connected components, so that
 	// the members of a cycle share what they reach
@@ -52,19 +56,23 @@ func (r *startRun) newDependentsCheck() *dependentsCheck {
 	r.mu.Unlock()
 
 	running, abandonedChanges := r.root.stillRunningErrors()
+	tracked, instanceChanges := r.root.instances.snapshot()
 	check := &dependentsCheck{
 		run:              r,
 		skipCount:        skipCount,
 		abandonedChanges: abandonedChanges,
 		dagChanges:       dagChanges,
 		registrations:    registrations,
+		instanceChanges:  instanceChanges,
 		skipped:          skipped,
+		tracked:          tracked,
 	}
-	if len(skipped) == 0 && len(running) == 0 {
+	if len(skipped) == 0 && len(running) == 0 && tracked == nil {
 		return check
 	}
 
 	check.reasons = make(map[ServiceDescription]stepSkip, len(skipped)+len(running))
+	check.instanceChecked = map[ServiceDescription]struct{}{}
 	for desc, err := range running {
 		check.reasons[desc] = stepSkip{service: desc.Service, stillRunning: err}
 	}
@@ -90,13 +98,14 @@ func (r *startRun) dependentsCheckSince(previous *dependentsCheck) *dependentsCh
 
 // current reports whether nothing c read changed since: the run skipped
 // nothing more, no step became or stopped being abandoned, the dependency
-// graph gained no edge and lost no service, and no scope stored a service
+// graph gained no edge and lost no service, no scope stored a service
 // (a registration or an override can change what a DependsOn name
-// resolves to, or a service's own DependsOn).
+// resolves to, or a service's own DependsOn), and the instance tracker,
+// which clones share, did not change.
 func (c *dependentsCheck) current() bool {
 	root := c.run.root
 	if root.dag.changeCount() != c.dagChanges || root.registrations.Load() != c.registrations ||
-		root.abandonedChangeCount() != c.abandonedChanges {
+		root.instances.changes.Load() != c.instanceChanges || root.abandonedChangeCount() != c.abandonedChanges {
 		return false
 	}
 
@@ -121,7 +130,7 @@ func (c *dependentsCheck) skips(step startStep) bool {
 	if _, self := c.skipped[desc]; self {
 		return true
 	}
-	if len(c.reasons) == 0 {
+	if len(c.reasons) == 0 && c.tracked == nil {
 		return false
 	}
 
@@ -206,9 +215,30 @@ func (c *dependentsCheck) connect(v ServiceDescription) {
 // asReached returns desc as a reached skipped service when it is one: a
 // service reaches its neighbours, and a member of a cycle reaches itself.
 func (c *dependentsCheck) asReached(desc ServiceDescription) reachedSkip {
+	c.checkInstance(desc)
 	_, skipped := c.reasons[desc]
 
 	return reachedSkip{desc: desc, ok: skipped}
+}
+
+// checkInstance adds desc to the reasons, once per batch, when the batch's
+// tracker snapshot holds an abandoned call still running on its built
+// instance that this container has not recorded: the same instance,
+// registered again or shared with a clone, is still starting.
+func (c *dependentsCheck) checkInstance(desc ServiceDescription) {
+	if c.tracked == nil {
+		return
+	}
+	if _, checked := c.instanceChecked[desc]; checked {
+		return
+	}
+	c.instanceChecked[desc] = struct{}{}
+	if _, known := c.reasons[desc]; known {
+		return
+	}
+	if err := c.run.root.trackedStillRunning(desc, c.tracked); err != nil {
+		c.reasons[desc] = stepSkip{service: desc.Service, stillRunning: err}
+	}
 }
 
 // better returns the better of two reached skipped services, by

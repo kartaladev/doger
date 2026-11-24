@@ -776,6 +776,352 @@ func TestStartTimeout_AbandonedNotRestarted(t *testing.T) {
 	}
 }
 
+// TestStartTimeout_InstanceNotCalledAgain pins container-start "A
+// still-running instance is not called again through an override or a
+// clone": the guarantee holds per instance, so a clone sharing the instance,
+// or an override that registers it again, skips its still-running Start.
+// The *_dependent and *_earlier_stage rows pin its dependents: a run skips
+// a dependent of such a service in any scope or stage, as for a
+// still-running step of the same registration.
+func TestStartTimeout_InstanceNotCalledAgain(t *testing.T) {
+	t.Parallel()
+
+	// abandonInRefresh starts root, then registers inst as "srv" and
+	// returns the error of the Refresh that abandons its Start
+	abandonInRefresh := func(root *RootScope, inst *stepProbe, _ *stepProbe) error {
+		if err := root.Start(); err != nil {
+			return err
+		}
+		ProvideNamedValue(root, "srv", inst, AsStarter())
+		return root.Refresh()
+	}
+
+	tests := []struct {
+		name string
+		// first registers inst as "srv" in root and returns the error of the
+		// run that abandons its Start; dep is a Runner that returns at once
+		first func(root *RootScope, inst, dep *stepProbe) error
+		// second runs again over inst, returning the containers it created
+		// besides root, and its error
+		second func(root *RootScope, inst, dep *stepProbe) ([]*RootScope, error)
+		// depCalls is the number of calls of dep in total
+		depCalls int32
+	}{
+		{
+			name: "clone",
+			first: func(root *RootScope, inst, _ *stepProbe) error {
+				ProvideNamedValue(root, "srv", inst, AsStarter())
+				return root.Start()
+			},
+			second: func(root *RootScope, _, _ *stepProbe) ([]*RootScope, error) {
+				clone := root.Clone()
+				return []*RootScope{clone}, clone.Start()
+			},
+		},
+		{
+			name:  "override",
+			first: abandonInRefresh,
+			second: func(root *RootScope, inst, _ *stepProbe) ([]*RootScope, error) {
+				OverrideNamedValue(root, "srv", inst, AsStarter())
+				return nil, root.Refresh()
+			},
+		},
+		{
+			// the tenant run does not claim root "srv", whose old
+			// registration the override removed
+			name:  "override_dependent",
+			first: abandonInRefresh,
+			second: func(root *RootScope, inst, dep *stepProbe) ([]*RootScope, error) {
+				OverrideNamedValue(root, "srv", inst, AsStarter())
+				tenant := root.Scope("tenant")
+				ProvideNamed(tenant, "w", func(Injector) (startOnly, error) { return startOnly{dep}, nil }, AsStarter(), DependsOnNamed("srv"))
+				return nil, tenant.Start()
+			},
+		},
+		{
+			// the clone reaches "dep", a StageBeforeStart component, before
+			// it claims "srv"; root handled "dep" before it abandoned "srv"
+			name: "clone_earlier_stage",
+			first: func(root *RootScope, inst, dep *stepProbe) error {
+				early := NewKind[Runner, struct{}]("early")
+				early.Handle(root, StageBeforeStart, func(ctx context.Context, c Component[Runner, struct{}]) error {
+					return c.Instance.Run(ctx)
+				})
+				ProvideNamedValue(root, "srv", inst, AsStarter())
+				ProvideNamed(root, "dep", func(Injector) (startOnly, error) { return startOnly{dep}, nil }, early.With(struct{}{}), DependsOnNamed("srv"))
+				return root.Start()
+			},
+			second: func(root *RootScope, _, _ *stepProbe) ([]*RootScope, error) {
+				clone := root.Clone()
+				return []*RootScope{clone}, clone.Start()
+			},
+			depCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				inst := newStepProbe(0)
+				dep := newStepProbe(0)
+				dep.unblock()
+				var others []*RootScope
+				defer func() {
+					inst.unblock()
+					<-inst.ended
+					root.Shutdown()
+					for _, other := range others {
+						other.Shutdown()
+					}
+				}()
+
+				require.ErrorIs(t, tt.first(root, inst, dep), ErrStartTimeout)
+
+				others, err := tt.second(root, inst, dep)
+
+				assert.Equal(t, int32(1), inst.calls.Load(), "Start calls of inst")
+				assert.Equal(t, tt.depCalls, dep.calls.Load(), "calls of the dependent")
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.Equal(t, "srv", startErr.Service)
+				assert.ErrorIs(t, err, ErrStartTimeout)
+			})
+		})
+	}
+}
+
+// unhashableStarter is a Starter value whose type is comparable but whose
+// value is not: its meta field holds a slice, so hashing it panics.
+type unhashableStarter struct {
+	p    *stepProbe
+	meta any
+}
+
+func (s unhashableStarter) Start(ctx context.Context) error { return s.p.call(ctx) }
+
+// mapStarter is a Starter whose instance is a map, which cannot be hashed.
+type mapStarter map[string]*stepProbe
+
+func (m mapStarter) Start(ctx context.Context) error { return m["probe"].call(ctx) }
+
+// TestStartTimeout_NonComparableInstancePerRegistration pins the limit of
+// container-start "An abandoned step is not started again while it runs":
+// an instance that cannot be hashed is tracked per registration only, so
+// an override that registers it again calls it again, and tracking it never
+// panics, even when its type is comparable (unhashable_struct) or its kind
+// is a reference kind (map).
+func TestStartTimeout_NonComparableInstancePerRegistration(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		register func(root *RootScope, probe *stepProbe, override bool)
+	}{
+		{
+			name: "unhashable_struct",
+			register: func(root *RootScope, probe *stepProbe, override bool) {
+				inst := unhashableStarter{p: probe, meta: []string{"not hashable"}}
+				if override {
+					OverrideNamedValue(root, "srv", inst, AsStarter())
+					return
+				}
+				ProvideNamedValue(root, "srv", inst, AsStarter())
+			},
+		},
+		{
+			name: "map",
+			register: func(root *RootScope, probe *stepProbe, override bool) {
+				inst := mapStarter{"probe": probe}
+				if override {
+					OverrideNamedValue(root, "srv", inst, AsStarter())
+					return
+				}
+				ProvideNamedValue(root, "srv", inst, AsStarter())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				probe := newStepProbe(0)
+				defer func() {
+					probe.unblock()
+					<-probe.ended
+					root.Shutdown()
+				}()
+				require.NoError(t, root.Start())
+				tt.register(root, probe, false)
+				require.ErrorIs(t, root.Refresh(), ErrStartTimeout)
+
+				// the same registration is still tracked
+				require.ErrorIs(t, root.Refresh(), ErrStartTimeout)
+				assert.Equal(t, int32(1), probe.calls.Load(), "Start calls before the override")
+
+				tt.register(root, probe, true)
+				require.NoError(t, root.Refresh())
+				assert.Equal(t, int32(2), probe.calls.Load(), "Start calls after the override")
+			})
+		})
+	}
+}
+
+// TestStartTimeout_YieldedDefaultNotTracked pins that a default
+// registration that yielded holds no instance for the per-instance
+// guarantee: its own value p, whose abandoned call still runs in a clone,
+// does not make its dependents skipped (default_tracked), since they get
+// the target x it yields to; and the target is checked instead, through
+// the dependency edge of the yield (target_tracked).
+func TestStartTimeout_YieldedDefaultNotTracked(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		targetTracked bool // the clone abandons x, the target, instead of p
+	}{
+		{name: "default_tracked"},
+		{name: "target_tracked", targetTracked: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				x, p, w := newStepProbe(0), newStepProbe(0), newStepProbe(0)
+				w.unblock()
+				abandoned := p
+				if tt.targetTracked {
+					abandoned = x
+				}
+				// the clone shares the instance tracker, and nothing else
+				clone := root.Clone()
+				defer func() {
+					abandoned.unblock()
+					<-abandoned.ended
+					clone.Shutdown()
+					root.Shutdown()
+				}()
+				ProvideNamedValue(clone, "q", abandoned, AsStarter())
+				require.ErrorIs(t, clone.Start(), ErrStartTimeout, "the clone abandons q")
+
+				ProvideNamedValue(root, "srv", x) // not a Starter in root
+				tenant := root.Scope("tenant")
+				ProvideNamedValue(tenant, "srv", p, AsDefault()) // yields to root "srv"
+				ProvideNamed(tenant, "w", func(Injector) (startOnly, error) { return startOnly{w}, nil }, AsStarter(), DependsOnNamed("srv"))
+
+				err := root.Start()
+
+				assert.Equal(t, int32(1), abandoned.calls.Load(), "Start calls of q: the clone's only")
+				if !tt.targetTracked {
+					require.NoError(t, err)
+					assert.Equal(t, int32(1), w.calls.Load(), "Start calls of w")
+					return
+				}
+				assert.Zero(t, w.calls.Load(), "Start calls of w, whose srv yields to the still-running x")
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.Equal(t, "srv", startErr.Service)
+				assert.Same(t, root.self, startErr.Scope, "the error names the target, in the root")
+				assert.ErrorIs(t, err, ErrStartTimeout)
+			})
+		})
+	}
+}
+
+// probeKey is the context key of the stepProbe that zeroStarter and
+// nilStarter call.
+type probeKey struct{}
+
+// zeroStarter is a Starter of zero size: distinct pointers to it may share
+// one address. It calls the stepProbe of its context.
+type zeroStarter struct{}
+
+func (*zeroStarter) Start(ctx context.Context) error {
+	return ctx.Value(probeKey{}).(*stepProbe).call(ctx)
+}
+
+// nilStarter is a Starter registered as a typed nil pointer. It calls the
+// stepProbe of its context.
+type nilStarter struct{ _ int }
+
+func (*nilStarter) Start(ctx context.Context) error {
+	return ctx.Value(probeKey{}).(*stepProbe).call(ctx)
+}
+
+// TestStartTimeout_EqualValuesPerRegistration pins the per-registration
+// fallback of the per-instance guarantee for instances that two
+// registrations can hold without sharing an object: equal struct values
+// (copies), distinct pointers to a zero-size type (which may share an
+// address) and typed nil pointers. An abandoned call of "a" does not stop
+// the run from calling "b".
+func TestStartTimeout_EqualValuesPerRegistration(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// instances returns the instances of "a" and "b"
+		instances func(probe *stepProbe) (any, any)
+	}{
+		{
+			name: "equal_values",
+			instances: func(probe *stepProbe) (any, any) {
+				return startOnly{probe}, startOnly{probe}
+			},
+		},
+		{
+			name: "zero_size_pointers",
+			instances: func(*stepProbe) (any, any) {
+				return &zeroStarter{}, &zeroStarter{}
+			},
+		},
+		{
+			name: "nil_pointers",
+			instances: func(*stepProbe) (any, any) {
+				return (*nilStarter)(nil), (*nilStarter)(nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				probe := newStepProbe(0)
+				ctx := context.WithValue(t.Context(), probeKey{}, probe)
+				defer func() {
+					probe.unblock()
+					<-probe.ended
+					root.Shutdown()
+				}()
+				a, b := tt.instances(probe)
+				require.True(t, a == b, "precondition: a and b hold equal instances, as map keys") //nolint:testifylint // identity, not deep equality
+				require.NoError(t, root.Start())
+				ProvideNamedValue(root, "a", a, AsStarter())
+				require.ErrorIs(t, root.RefreshWithContext(ctx), ErrStartTimeout, "a first run abandons a")
+
+				ProvideNamedValue(root, "b", b, AsStarter())
+				err := root.RefreshWithContext(ctx)
+
+				assert.Equal(t, int32(2), probe.calls.Load(), "Start calls: a once, then b")
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.Equal(t, "a", startErr.Service, "the run reports a, still running, not b")
+				assert.ErrorIs(t, err, ErrStartTimeout)
+			})
+		})
+	}
+}
+
 // startOnly exposes only the Start and Run methods of a stepProbe, so that
 // Shutdown does not release it.
 type startOnly struct{ p *stepProbe }

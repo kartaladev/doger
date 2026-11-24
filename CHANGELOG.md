@@ -44,6 +44,16 @@ break is listed under **BREAKING** with its migration.
   start step error`, and its panic as `panic recovered` (Error) and `panic
   value` (Debug) with `step` and `kind`. See the upgrading guide, "A child scope shutdown
   cancels its subtree's running start steps".
+- With `StartTimeout` set, a clone or a same-instance override never calls
+  an instance whose abandoned call still runs: `Clone`/`CloneWithOpts`
+  share with the source the record of abandoned calls by instance, so a
+  clone's `Start`, or a `Refresh` after `OverrideNamedValue` with the same
+  instance, skips that step, and every service that depends on it in any
+  scope, and fails with its `ErrStartTimeout` error instead of calling it
+  a second time. This holds per instance for non-nil pointers to non-empty
+  values and non-nil channels; any other instance (a value, a map, a nil
+  pointer, a pointer to a zero-size type) is tracked per registration
+  only.
 - `eventtransporttest`: the conformance kit's waits are no-progress windows
   of one minute instead of 10s totals, so a slow but live transport (a
   loaded CI machine) passes, while a stalled one fails about a minute

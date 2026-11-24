@@ -305,6 +305,12 @@ func (s *serviceLazy[T]) builtInstance() (instance T, built bool) {
 	return *published, true
 }
 
+// builtInstanceAny is builtInstance as an any.
+func (s *serviceLazy[T]) builtInstanceAny() (any, bool) {
+	instance, built := s.builtInstance()
+	return instance, built
+}
+
 func (s *serviceLazy[T]) isHealthchecker() bool {
 	instance, built := s.builtInstance()
 	if !built {

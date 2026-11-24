@@ -624,8 +624,18 @@ type InjectorOpts struct {
 	// Refresh and Scope.Start return [ErrNotStarted] and Start returns
 	// [ErrAlreadyStarted]; the late return is still recorded or logged, and
 	// Shutdown is the way on. Shutdown still calls the service's Shutdowner,
-	// its stop path. The guarantee is per container: a clone shares eager
-	// instances and starts them independently.
+	// its stop path. The guarantee holds per instance for non-nil pointers
+	// to non-empty values and non-nil channels: a run skips the same way,
+	// with its dependents in any scope, a step whose instance has an
+	// abandoned call of that step still running, also after an override
+	// registers the instance again, and in a clone, which shares eager
+	// instances and so shares with its source the record of the abandoned
+	// calls that still run. Any other instance (a struct or other value, a
+	// map, a nil pointer, a pointer to a zero-size type) is tracked per
+	// registration only: a clone or an override calls it again, and two
+	// registrations never block each other through it. A default
+	// registration that yielded holds no instance of its own: its
+	// dependents wait for the target's.
 	// Default: 0, no bound: Start waits for every step, however long, and an
 	// ended context is noticed only between steps. A negative value is the
 	// same as 0. Measured on Clock.

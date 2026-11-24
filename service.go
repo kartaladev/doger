@@ -200,6 +200,23 @@ type serviceWrapperBuildTime interface {
 	getBuildTime() (time.Duration, bool)
 }
 
+// serviceWrapperBuiltInstance is implemented by the wrappers that hold an
+// instance once built: eager, lazy and default ones. A transient service
+// never holds one, and an alias or an export resolves from its target.
+type serviceWrapperBuiltInstance interface {
+	builtInstanceAny() (any, bool)
+}
+
+// builtInstanceOf returns the instance service holds and whether it holds
+// one, without building it or waiting for a build in flight.
+func builtInstanceOf(service any) (any, bool) {
+	if holder, ok := service.(serviceWrapperBuiltInstance); ok {
+		return holder.builtInstanceAny()
+	}
+
+	return nil, false
+}
+
 // buildStateOf returns the build time of a service and whether it is built,
 // read without waiting for a build in flight; a service with no build time
 // reports 0 and false.

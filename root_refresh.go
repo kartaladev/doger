@@ -240,7 +240,9 @@ func (s *RootScope) markHandledLocked(service any, id *kindID) {
 // claimStep decides, just before step's hooks and call, whether it runs:
 // skip is true when step is already recorded (its Starter started, or its
 // component handled by its kind), and err matches ErrStartTimeout while an
-// abandoned call of step still runs. Discovery filters recorded steps
+// abandoned call of step still runs, or one of the same step on its
+// instance (a pointer-like one) in this container or a container sharing
+// s.instances. Discovery filters recorded steps
 // earlier; this check is the authoritative one, since an abandoned call can
 // end in between.
 func (s *RootScope) claimStep(step startStep) (skip bool, err error) {
@@ -253,6 +255,10 @@ func (s *RootScope) claimStep(step startStep) (skip bool, err error) {
 		return true, nil
 	}
 	if _, running := s.abandoned[service][step.kind]; running {
+		return false, step.stillRunningError()
+	}
+	// the same instance, registered again or shared with a clone
+	if s.instances.running(step) {
 		return false, step.stillRunningError()
 	}
 
@@ -341,6 +347,7 @@ func (s *RootScope) markAbandoned(step startStep) {
 	}
 	s.abandoned[service][step.kind] = step
 	s.abandonedChanges++
+	s.instances.add(step)
 }
 
 // finishAbandoned handles the end of an abandoned call of step with
@@ -373,6 +380,7 @@ func (s *RootScope) finishAbandoned(step startStep, err error) {
 		delete(s.abandoned, candidate.service)
 	}
 	s.abandonedChanges++
+	s.instances.remove(step)
 }
 
 // recordIfHeld records step as started or handled while its scope holds
@@ -424,7 +432,8 @@ func (s *RootScope) unrecordLocked(step startStep) {
 
 // forget drops service from the started, handled and abandoned sets and its health
 // record once shutdown removed it from its scope, so they only hold live
-// registrations.
+// registrations. The instance tracker keeps an abandoned call of it: the
+// call still runs, and only its late outcome ends it there.
 func (s *RootScope) forget(service any) {
 	s.health.forget(service, true)
 	s.deliverTransitions()

@@ -458,7 +458,7 @@ And "srv" is not recorded as started once the test released its Start call
 <!-- cases: 10 compatibility: without StartTimeout an ended context still waits without bound, see "Start waits for every step by default" -->
 
 ### Requirement: An abandoned step is not started again while it runs
-While an abandoned Starter `Start` call or kind-handler call runs, its service or component SHALL NOT be recorded as started or handled, and no run SHALL call it again: a run SHALL skip that step, without hook calls, and skip every candidate that depends on its service, directly or through others, whether that service lives in the run's scopes or in an ancestor scope, start everything else, and then fail with a `*StartError` naming the step that matches `ErrStartTimeout`. When another step of the run fails, that failure SHALL be the run's error instead. The guarantee SHALL hold per instance: a step whose instance (when it is comparable, such as a pointer) has an abandoned call still running SHALL be skipped the same way, in this container and in its clones, also after an override registers the same instance. Once the call returns nil it SHALL be recorded, unless its scope is shutting down (by its own, an ancestor's or root Shutdown) or no longer holds it; once it errs or panics, the next run SHALL try it again. When root Start is the run that abandoned the step, Start has failed, so no later run follows: Refresh and Scope.Start return `ErrNotStarted` and Start returns `ErrAlreadyStarted`; the late outcome is still recorded or logged, and Shutdown is the way on.
+While an abandoned Starter `Start` call or kind-handler call runs, its service or component SHALL NOT be recorded as started or handled, and no run SHALL call it again: a run SHALL skip that step, without hook calls, and skip every candidate that depends on its service, directly or through others, whether that service lives in the run's scopes or in an ancestor scope, start everything else, and then fail with a `*StartError` naming the step that matches `ErrStartTimeout`. When another step of the run fails, that failure SHALL be the run's error instead. The guarantee SHALL hold per instance: a step whose instance (when it is a non-nil pointer to a non-empty value or a non-nil channel) has an abandoned call still running SHALL be skipped the same way, with its dependents in any scope or stage, in this container and in its clones, also after an override registers the same instance. Any other instance (a struct or other value, a map, a nil pointer, a pointer to a zero-size type) is tracked per registration only, so two registrations never block each other through it. A default registration that yielded holds no instance of its own: its dependents wait for its target's. Once the call returns nil it SHALL be recorded, unless its scope is shutting down (by its own, an ancestor's or root Shutdown) or no longer holds it; once it errs or panics, the next run SHALL try it again. When root Start is the run that abandoned the step, Start has failed, so no later run follows: Refresh and Scope.Start return `ErrNotStarted` and Start returns `ErrAlreadyStarted`; the late outcome is still recorded or logged, and Shutdown is the way on.
 
 #### Scenario: Re-running while the abandoned call runs, and after it returns
 ```gherkin
@@ -536,6 +536,60 @@ Examples:
   | Start(), then root.Refresh() for "srv" registered after Start | the consumer overrides "srv" with OverrideNamedValue(root, "srv", inst) and calls root.Refresh() | root.Refresh() |
 ```
 
+#### Scenario: The dependents of a still-running instance are skipped in any scope or stage
+```gherkin
+Given a root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test
+And a Starter instance "inst" (a pointer) whose first Start call blocks until the test releases it
+And "dep" is <dependent>, which depends on "srv" with DependsOnNamed("srv") and returns at once
+And "inst" is registered as eager value "srv" and <first> returned an error matching ErrStartTimeout
+When <second> before the test releases "inst"
+Then <second-op> returns an error naming "srv" that matches ErrStartTimeout
+And "inst"'s Start was called 1 time in total
+And "dep" was called <dep-calls> times in total
+
+Examples:
+  | dependent                                                                    | first                                                         | second                                                                                                                   | second-op      | dep-calls |
+  | lazy Starter "w" in child scope "tenant", registered by <second>             | Start(), then root.Refresh() for "srv" registered after Start | the consumer overrides "srv" with OverrideNamedValue(root, "srv", inst), registers "w" and calls tenant.Start()        | tenant.Start() | 0         |
+  | a lazy component of a StageBeforeStart kind in the root, handled by root.Start() before it abandoned "srv" | root.Start()                                                  | the consumer calls clone := root.Clone() and clone.Start(), which reaches "dep"'s stage before it claims "srv"       | clone.Start()  | 1         |
+```
+
+#### Scenario: An instance that is not one shared object is tracked per registration only
+```gherkin
+Given a started root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test
+And a shared stepProbe whose first call blocks until the test releases it and whose later calls return nil
+And eager Starter value "a" holding <instance-a>, registered after Start, whose Start calls the probe
+And root.Refresh() returned an error matching ErrStartTimeout, abandoning "a"
+When <second> before the test releases the probe
+Then <second-op> returns <result>
+And the probe was called <calls> times in total
+And no call panics
+
+Examples:
+  | instance-a                                              | second                                                                       | second-op      | result                                       | calls |
+  | a struct value startOnly{probe}                         | the consumer registers "b" holding an equal startOnly{probe} and calls root.Refresh() | root.Refresh() | an error naming "a" matching ErrStartTimeout | 2     |
+  | &zeroStarter{}, a pointer to a zero-size type          | the consumer registers "b" holding another &zeroStarter{} at the same address and calls root.Refresh() | root.Refresh() | an error naming "a" matching ErrStartTimeout | 2     |
+  | (*nilStarter)(nil), a typed nil pointer                 | the consumer registers "b" holding (*nilStarter)(nil) and calls root.Refresh() | root.Refresh() | an error naming "a" matching ErrStartTimeout | 2     |
+  | a struct value holding a slice in an interface field    | the consumer overrides "a" with the same value and calls root.Refresh()      | root.Refresh() | nil                                          | 2     |
+  | a map-kind Starter                                      | the consumer overrides "a" with the same map and calls root.Refresh()        | root.Refresh() | nil                                          | 2     |
+```
+
+#### Scenario: A yielded default holds no instance of its own
+```gherkin
+Given a root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test, and clone := root.Clone() taken while empty
+And root "srv" is eager value x, a *stepProbe that is not a Starter in the root
+And child scope "tenant" registers "srv" with ProvideNamedValue(tenant, "srv", p, AsDefault()), which yields to root "srv"
+And tenant lazy Starter "w" depends on "srv" with DependsOnNamed("srv")
+And the clone registers <abandoned> as Starter "q", and clone.Start() abandoned it
+When the consumer calls root.Start() before the test releases <abandoned>
+Then root.Start() returns <result>
+And "w" was called <w-calls> times
+
+Examples:
+  | abandoned | result                                                              | w-calls |
+  | p         | nil                                                                 | 1       |
+  | x         | an error naming "srv" in the root scope that matches ErrStartTimeout | 0       |
+```
+
 #### Scenario: A late return during a shutdown is not recorded
 ```gherkin
 Given a started root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test
@@ -592,7 +646,7 @@ And the start bookkeeping holds no entry for "late"
 <!-- cases: 7 lifecycle: Refresh and Scope.Start rows; a child scope shutting down before the late return. A child scope Shutdown waits for a running run ("Child scope shutdown waits for a start that is starting its services"), and an abandoned run has returned, so it does not wait for the abandoned call -->
 <!-- cases: 8 concurrency: the late return races the next run; the rows pin it with release channels; runs under -race with goleak -->
 <!-- cases: 9 panics: the late panic row -->
-<!-- cases: 10 compatibility: a failed (not abandoned) Starter or handler is still retried as in "Refresh starts what is not started yet" and component-kinds "Handlers run for new components on incremental start". The guarantee is per instance: a clone shares eager instances and otherwise starts them independently, but never calls an instance whose abandoned call, made by its source or by another clone, still runs; nor does an override that registers the same instance. A non-comparable instance (a struct value holding a slice or map) is tracked per registration only -->
+<!-- cases: 10 compatibility: a failed (not abandoned) Starter or handler is still retried as in "Refresh starts what is not started yet" and component-kinds "Handlers run for new components on incremental start". The guarantee is per instance: a clone shares eager instances and otherwise starts them independently, but never calls an instance whose abandoned call, made by its source or by another clone, still runs; nor does an override that registers the same instance, and the dependents of such an instance are skipped in any scope or stage ("The dependents of a still-running instance are skipped in any scope or stage"). Only a non-nil pointer to a non-empty value or a non-nil channel is tracked by instance; a value, a map, a nil pointer and a pointer to a zero-size type are tracked per registration only, and a yielded default holds no instance ("An instance that is not one shared object is tracked per registration only", "A yielded default holds no instance of its own") -->
 <!-- cases: 11 cross-scope: a dependent of a still-running step in an ancestor scope is skipped by Scope.Start as by Refresh; an ancestor that merely failed or never started keeps the rule that Scope.Start does not start ancestors -->
 <!-- cases: 12 shutdown: a late nil return during root Shutdown is not recorded, as during a child scope shutdown ("A late return during a shutdown is not recorded") -->
 
