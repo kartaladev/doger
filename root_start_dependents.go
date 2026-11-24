@@ -203,6 +203,10 @@ func (c *dependentsCheck) connect(v ServiceDescription) {
 	for _, m := range members {
 		c.onStack[m] = false
 		component = c.better(component, c.best[m])
+		// defensive: each member of a cycle is a neighbour of another
+		// member, whose best already holds it (asReached in the loop
+		// above), so this changes nothing; it keeps the rule "a member of
+		// a cycle reaches itself" explicit here
 		if cycle {
 			component = c.better(component, c.asReached(m))
 		}

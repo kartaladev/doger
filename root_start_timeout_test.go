@@ -823,8 +823,21 @@ func TestStartTimeout_Parallel(t *testing.T) {
 	})
 }
 
+// handlerThenStart is a component whose Run calls its stepProbe and whose
+// Start only counts its calls.
+type handlerThenStart struct {
+	p      *stepProbe
+	starts *atomic.Int32
+}
+
+func (h handlerThenStart) Run(ctx context.Context) error { return h.p.call(ctx) }
+func (h handlerThenStart) Start(context.Context) error   { h.starts.Add(1); return nil }
+
 // TestStartTimeout_AbandonedNotRestarted pins container-start "Re-running
-// while the abandoned call runs, and after it returns".
+// while the abandoned call runs, and after it returns". The handler_then_start
+// row pins D5's rule that a service with a skipped step has its later steps
+// in the run skipped: its StageBeforeStart handler call still runs, so its
+// Start is not called.
 func TestStartTimeout_AbandonedNotRestarted(t *testing.T) {
 	t.Parallel()
 
@@ -846,6 +859,9 @@ func TestStartTimeout_AbandonedNotRestarted(t *testing.T) {
 	tests := []struct {
 		name     string
 		runnable bool
+		// handler: "late" is a Starter and a component of a StageBeforeStart
+		// kind whose handler calls the probe; its Start must not be called
+		handler  bool
 		child    bool // "late" in child scope "tenant", run with tenant.Start()
 		outcome  func(call int32) error
 		released bool // the second run comes after the first call returned
@@ -860,6 +876,7 @@ func TestStartTimeout_AbandonedNotRestarted(t *testing.T) {
 		{name: "runnable_running", runnable: true, outcome: nilOutcome, wantErr: true, calls: 1},
 		{name: "runnable_late_nil", runnable: true, outcome: nilOutcome, released: true, calls: 1},
 		{name: "runnable_late_error", runnable: true, outcome: errOnFirst, released: true, calls: 2},
+		{name: "handler_then_start", handler: true, outcome: nilOutcome, wantErr: true, calls: 1},
 	}
 
 	for _, tt := range tests {
@@ -886,11 +903,21 @@ func TestStartTimeout_AbandonedNotRestarted(t *testing.T) {
 				}
 				probe := newStepProbe(0)
 				probe.outcome = tt.outcome
-				opt := AsStarter()
-				if tt.runnable {
-					opt = AsRunnable()
+				var starts atomic.Int32
+				switch {
+				case tt.handler:
+					early := NewKind[Runner, struct{}]("early")
+					early.Handle(root, StageBeforeStart, func(ctx context.Context, c Component[Runner, struct{}]) error {
+						return c.Instance.Run(ctx)
+					})
+					ProvideNamed(scope, "late", func(Injector) (handlerThenStart, error) {
+						return handlerThenStart{p: probe, starts: &starts}, nil
+					}, AsStarter(), early.With(struct{}{}))
+				case tt.runnable:
+					ProvideNamed(scope, "late", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, AsRunnable())
+				default:
+					ProvideNamed(scope, "late", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, AsStarter())
 				}
-				ProvideNamed(scope, "late", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, opt)
 				defer func() {
 					probe.unblock()
 					<-probe.ended
@@ -915,7 +942,11 @@ func TestStartTimeout_AbandonedNotRestarted(t *testing.T) {
 					require.NoError(t, err)
 				}
 				assert.Equal(t, tt.calls, probe.calls.Load(), "calls of late")
-				if !tt.runnable {
+				switch {
+				case tt.handler:
+					assert.Zero(t, starts.Load(), "Start calls of late, whose StageBeforeStart handler call still runs")
+					assert.Zero(t, befores.Load(), "HookBeforeStart calls for late, whose Start is skipped")
+				case !tt.runnable:
 					assert.Equal(t, tt.calls, befores.Load(), "HookBeforeStart calls for late: none for a skipped or failed-fast step")
 				}
 			})
@@ -1038,6 +1069,156 @@ func TestStartTimeout_InstanceNotCalledAgain(t *testing.T) {
 			})
 		})
 	}
+}
+
+// gateProbe is a Starter and a Runner whose every call blocks until it
+// receives from gate or gate is closed, then returns nil. It counts its
+// calls and the calls that ended.
+type gateProbe struct {
+	gate  chan struct{}
+	calls atomic.Int32
+	ended atomic.Int32
+}
+
+func newGateProbe() *gateProbe { return &gateProbe{gate: make(chan struct{})} }
+
+func (g *gateProbe) call() error {
+	g.calls.Add(1)
+	defer g.ended.Add(1)
+	<-g.gate
+	return nil
+}
+
+func (g *gateProbe) Start(context.Context) error { return g.call() }
+func (g *gateProbe) Run(context.Context) error   { return g.call() }
+
+// TestStartTimeout_StillRunningStepOrder pins the still-running error of a
+// service whose instance has several abandoned steps still running: root
+// registrations of one *gateProbe abandon its Start and the handler calls
+// of kinds "b" and "a" (handled in that order, one per Refresh, since a run
+// fails at the step it abandons), and tenant "d" depends on
+// root "x", which holds the same instance and has no step of its own. The
+// error names "x" with its Start step first, then the kinds by name.
+func TestStartTimeout_StillRunningStepOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		starter  bool // a registration of the instance abandons its Start too
+		wantOp   StartOp
+		wantKind string
+	}{
+		{name: "start_first", starter: true, wantOp: StartOpStart, wantKind: ""},
+		{name: "kinds_by_name", wantOp: StartOpHandle, wantKind: "a"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				require.NoError(t, root.Start())
+				inst := newGateProbe()
+				defer func() {
+					close(inst.gate)
+					synctest.Wait() // every abandoned call ended
+					root.Shutdown()
+				}()
+
+				for _, name := range []string{"b", "a"} {
+					kind := NewKind[Runner, struct{}](name)
+					kind.Handle(root, StageBeforeStart, func(ctx context.Context, c Component[Runner, struct{}]) error {
+						return c.Instance.Run(ctx)
+					})
+					ProvideNamedValue(root, "h"+name, inst, kind.With(struct{}{}))
+				}
+				if tt.starter {
+					ProvideNamedValue(root, "s", inst, AsStarter())
+				}
+				// a run fails at the step it abandons, so each Refresh
+				// abandons the next step on inst
+				steps := int32(2)
+				if tt.starter {
+					steps = 3
+				}
+				for range steps {
+					require.ErrorIs(t, root.Refresh(), ErrStartTimeout)
+				}
+				abandoned := inst.calls.Load()
+				require.Equal(t, steps, abandoned, "every step on inst was called once and abandoned")
+
+				ProvideNamedValue(root, "x", inst)
+				tenant := root.Scope("tenant")
+				starts := &countingStarters{}
+				provideCountedStarter(tenant, starts, "d", DependsOnNamed("x"))
+
+				err := tenant.Start()
+
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.ErrorIs(t, err, ErrStartTimeout)
+				assert.Equal(t, "x", startErr.Service)
+				assert.Equal(t, tt.wantOp, startErr.Op)
+				assert.Equal(t, tt.wantKind, startErr.Kind)
+				assert.Zero(t, starts.count("d"), "starts of d")
+				assert.Equal(t, abandoned, inst.calls.Load(), "calls of inst after the Refresh")
+			})
+		})
+	}
+}
+
+// TestStartTimeout_SharedInstanceAbandonedTwice pins that an instance two
+// containers sharing it each abandoned a call of stays tracked until both
+// calls ended: root and its clone call the Start of one *gateProbe at the
+// same time, both calls are abandoned, and a third container, also a clone,
+// skips the step until the second call ends.
+func TestStartTimeout_SharedInstanceAbandonedTwice(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+		inst := newGateProbe()
+		ProvideNamedValue(root, "srv", inst, AsStarter())
+		clone := root.Clone()
+		afterFirst := root.Clone()
+		afterBoth := root.Clone()
+		gateClosed := false
+		defer func() {
+			if !gateClosed {
+				close(inst.gate)
+			}
+			synctest.Wait()
+			for _, c := range []*RootScope{root, clone, afterFirst, afterBoth} {
+				c.Shutdown()
+			}
+		}()
+
+		rootErr := make(chan error, 1)
+		go func() { rootErr <- root.Start() }()
+		require.ErrorIs(t, clone.Start(), ErrStartTimeout, "the clone abandons its call")
+		require.ErrorIs(t, <-rootErr, ErrStartTimeout, "root abandons its call")
+		require.Equal(t, int32(2), inst.calls.Load(), "both containers called inst before either abandoned it")
+
+		inst.gate <- struct{}{} // one of the two calls ends
+		synctest.Wait()         // its late outcome is handled
+		require.Equal(t, int32(1), inst.ended.Load())
+
+		err := afterFirst.Start()
+
+		var startErr *StartError
+		require.ErrorAs(t, err, &startErr, "the other call still runs")
+		assert.Equal(t, "srv", startErr.Service)
+		assert.ErrorIs(t, err, ErrStartTimeout)
+		assert.Equal(t, int32(2), inst.calls.Load(), "calls of inst while one abandoned call still runs")
+
+		close(inst.gate) // the other call ends; later calls return at once
+		gateClosed = true
+		synctest.Wait()
+
+		require.NoError(t, afterBoth.Start())
+		assert.Equal(t, int32(3), inst.calls.Load(), "calls of inst once both abandoned calls ended")
+	})
 }
 
 // unhashableStarter is a Starter value whose type is comparable but whose
@@ -1573,6 +1754,56 @@ func TestStartTimeout_LateRegistrationSkipsDependent(t *testing.T) {
 			})
 		})
 	}
+}
+
+// TestStartTimeout_DependentsCheckOverCycle pins the dependents check over
+// a dependency cycle that reaches a still-running step: in tenant.Start(),
+// Starter "gate" overrides root "b" with DependsOnNamed("a") while the run
+// runs, closing the cycle a -> b -> a, where root "a" also depends on
+// "stuck", whose abandoned call still runs. "dep1" (on "a") and "dep2" (on
+// "b") are checked in one batch: the walk from "dep1" enters "a" before
+// "b", so "b" learns that it reaches "stuck" only once the cycle's
+// component is complete, and "dep2" must be skipped too.
+func TestStartTimeout_DependentsCheckOverCycle(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+		require.NoError(t, root.Start())
+		stuck := newStepProbe(0)
+		ProvideNamed(root, "stuck", func(Injector) (startOnly, error) { return startOnly{stuck}, nil }, AsStarter())
+		defer func() {
+			stuck.unblock()
+			<-stuck.ended
+			root.Shutdown()
+		}()
+		require.ErrorIs(t, root.Refresh(), ErrStartTimeout, "a first run abandons stuck")
+
+		newCache := func(Injector) (*CleanupJob, error) { return &CleanupJob{name: "cache"}, nil }
+		ProvideNamed(root, "a", newCache, DependsOnNamed("b"), DependsOnNamed("stuck"))
+		ProvideNamed(root, "b", newCache) // no cycle when the run checks for one
+		tenant := root.Scope("tenant")
+		starts := &countingStarters{}
+		ProvideNamed(tenant, "gate", func(Injector) (*registeringStarter, error) {
+			return &registeringStarter{register: func() {
+				starts.record("gate")
+				OverrideNamed(root, "b", newCache, DependsOnNamed("a"))
+			}}, nil
+		}, AsStarter())
+		provideCountedStarter(tenant, starts, "dep1", DependsOnNamed("gate"), DependsOnNamed("a"))
+		provideCountedStarter(tenant, starts, "dep2", DependsOnNamed("gate"), DependsOnNamed("b"))
+
+		err := tenant.Start()
+
+		var startErr *StartError
+		require.ErrorAs(t, err, &startErr)
+		assert.Equal(t, "stuck", startErr.Service)
+		require.ErrorIs(t, err, ErrStartTimeout)
+		assert.Equal(t, 1, starts.count("gate"), "starts of gate")
+		assert.Zero(t, starts.count("dep1"), "starts of dep1, whose a leads to stuck")
+		assert.Zero(t, starts.count("dep2"), "starts of dep2, whose b leads to stuck through a")
+		assert.Equal(t, int32(1), stuck.calls.Load(), "calls of stuck")
+	})
 }
 
 // provideStarterShape registers n Starters s0…s{n-1} in root: in a chain
@@ -2508,6 +2739,78 @@ func TestChildShutdown_CancelsSubtreeSteps(t *testing.T) {
 					})
 				})
 			}
+		})
+	}
+}
+
+// ctxReturner is a Starter whose Start returns its context's error once
+// the context ends.
+type ctxReturner struct{}
+
+func (ctxReturner) Start(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// afterStartCall is one HookAfterStart call.
+type afterStartCall struct {
+	elapsed time.Duration
+	err     error
+}
+
+// TestChildShutdown_AfterStartHookOnCancelledStep pins container-start
+// "Per-service start hooks" for a step that a child scope shutdown
+// cancelled: HookAfterStart is called once for it, with the time the
+// method took and the error it returned, context.Canceled itself, and the
+// run does not fail.
+func TestChildShutdown_AfterStartHookOnCancelledStep(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+	}{
+		{name: "timeout_0", timeout: 0},
+		{name: "timeout_5s", timeout: 5 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				var mu sync.Mutex
+				var calls []afterStartCall
+				root := NewWithOpts(&InjectorOpts{
+					StartTimeout: tt.timeout,
+					HookAfterStart: []func(context.Context, *Scope, string, time.Duration, error){
+						func(_ context.Context, _ *Scope, name string, elapsed time.Duration, err error) {
+							if name != "w" {
+								return
+							}
+							mu.Lock()
+							defer mu.Unlock()
+							calls = append(calls, afterStartCall{elapsed: elapsed, err: err})
+						},
+					},
+				})
+				require.NoError(t, root.Start())
+				defer root.Shutdown()
+				tenant := root.Scope("tenant")
+				ProvideNamed(tenant, "w", func(Injector) (ctxReturner, error) { return ctxReturner{}, nil }, AsStarter())
+
+				runErr := make(chan error, 1)
+				go func() { runErr <- tenant.Start() }()
+				time.Sleep(100 * time.Millisecond)
+				tenant.Shutdown()
+
+				require.NoError(t, <-runErr, "the cancelled step of the closing scope does not fail the run")
+				mu.Lock()
+				defer mu.Unlock()
+				require.Len(t, calls, 1, "HookAfterStart calls for w")
+				assert.Equal(t, context.Canceled, calls[0].err, "the error w's Start returned, unwrapped")
+				assert.Equal(t, 100*time.Millisecond, calls[0].elapsed)
+			})
 		})
 	}
 }

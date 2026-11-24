@@ -26,18 +26,6 @@ break is listed under **BREAKING** with its migration.
   abandoned step that ends, `abandoned start step returned` (Warn) and
   `abandoned start step error` (Debug), or the `panic recovered` records.
   See the logging table of `docs/docs/container/options.md`.
-- With `StartTimeout` set, a clone or a same-instance override never calls
-  an instance whose abandoned call still runs: `Clone`/`CloneWithOpts`
-  share with the source the record of abandoned calls by instance, so a
-  clone's `Start`, or a `Refresh` after `OverrideNamedValue` with the same
-  instance, skips that step, and every service that depends on it in any
-  scope, and fails with its `ErrStartTimeout` error instead of calling it
-  a second time. This holds per instance for non-nil pointers to non-zero-size
-  values, non-nil channels and non-nil unsafe pointers; any other instance
-  (a value, a map, a nil pointer, a pointer to a zero-size type) is tracked
-  per registration only. An instance is recorded only once a call on it is
-  abandoned, so two containers can still call a shared instance at the
-  same time while neither call has been abandoned.
 
 ### Changed
 
@@ -54,8 +42,12 @@ break is listed under **BREAKING** with its migration.
   start step now always receives its own child of the run's context. With
   a `Logger`, a cancelled step's error is logged at Debug as `cancelled
   start step error`, and its panic as `panic recovered` (Error) and `panic
-  value` (Debug) with `step` and `kind`. See the upgrading guide, "A child
-  scope shutdown cancels its subtree's running start steps".
+  value` (Debug) with `step` and `kind`. This applies to the child scope's
+  own shutdown: a child step that a root `Shutdown` reaches is reported
+  like a root step, with a `*StartError` naming it that matches
+  `ErrShutdown` (and `ErrStartTimeout` once abandoned). See the upgrading
+  guide, "A child scope shutdown cancels its subtree's running start
+  steps".
 - `HealthReport`/`HealthReportWithContext` reads and `HealthScheduler`
   rounds now skip a component that a kind with a registered handler has
   not handled yet, as they already skipped a Starter not started yet: it
@@ -65,7 +57,24 @@ break is listed under **BREAKING** with its migration.
   nil. A kind without a registered handler holds no component back, and
   `HealthCheck()` and the single-service functions still check every
   service. See `docs/docs/service-lifecycle/healthchecker.md` ("Services
-  whose start is not complete").
+  whose start is not complete") and the upgrading guide, [Health reports
+  wait for a component's kind
+  handlers](docs/docs/upgrading/start-lifecycle.md#health-waits-for-kind-handlers).
+- With `StartTimeout` set, a clone or a same-instance override never calls
+  an instance whose abandoned call still runs: `Clone`/`CloneWithOpts`,
+  which shared no start state with their source, now share with it the
+  record of abandoned calls by instance, so a clone's `Start`, or a
+  `Refresh` after `OverrideNamedValue` with the same instance, skips that
+  step, and every service that depends on it in any scope, and fails with
+  its `ErrStartTimeout` error instead of calling it a second time. This
+  holds per instance for non-nil pointers to non-zero-size values, non-nil
+  channels and non-nil unsafe pointers; any other instance (a value, a
+  map, a nil pointer, a pointer to a zero-size type) is tracked per
+  registration only. An instance is recorded only once a call on it is
+  abandoned, so two containers can still call a shared instance at the
+  same time while neither call has been abandoned. See the upgrading guide,
+  [With StartTimeout, a shared instance is never called
+  twice](docs/docs/upgrading/start-lifecycle.md#start-timeout-shared-instance).
 - `eventtransporttest`: the conformance kit's waits are no-progress windows
   of one minute instead of 10s totals, so a slow but live transport (a
   loaded CI machine) passes, while a stalled one fails about a minute

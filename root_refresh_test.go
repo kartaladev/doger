@@ -935,3 +935,34 @@ func TestIncrementalStart_CallerContext(t *testing.T) {
 		})
 	}
 }
+
+// TestCompareStepKinds pins the order of the step kinds of one service in a
+// still-running error: the Start method (a nil kind) first, then the kinds
+// by name. The equal rows cover the comparator's reflexive case, which no
+// run reaches (the kinds it compares are distinct map keys);
+// TestStartTimeout_StillRunningStepOrder pins the order through the API.
+func TestCompareStepKinds(t *testing.T) {
+	t.Parallel()
+
+	a, b := &kindID{name: "a"}, &kindID{name: "b"}
+	tests := []struct {
+		name string
+		x, y *kindID
+		want int
+	}{
+		{name: "start_equal", x: nil, y: nil, want: 0},
+		{name: "kind_equal", x: a, y: a, want: 0},
+		{name: "start_before_kind", x: nil, y: a, want: -1},
+		{name: "kind_after_start", x: a, y: nil, want: 1},
+		{name: "kinds_by_name", x: a, y: b, want: -1},
+		{name: "kinds_by_name_reversed", x: b, y: a, want: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, compareStepKinds(tt.x, tt.y))
+		})
+	}
+}

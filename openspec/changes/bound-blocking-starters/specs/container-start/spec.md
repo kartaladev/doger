@@ -36,7 +36,7 @@ Then Start returns nil
 And the kept context's Err() is context.Canceled
 ```
 
-<!-- cases: 2 overrides: with StartTimeout unset, a Starter that ignores an ended context is still awaited; InjectorOpts.StartTimeout makes the run stop waiting for it, see "A start timeout abandons a stuck step" and "With a start timeout, an ended run context abandons a stuck step" -->
+<!-- cases: 2 overrides: with StartTimeout unset, a Starter that ignores an ended context is still awaited; InjectorOpts.StartTimeout makes the run stop waiting for it, see "A start timeout abandons a stuck step" and "With a start timeout, an ended run context waits for the step up to the timeout" -->
 <!-- cases: 3 zero values: nil context is covered by "Nil context" -->
 <!-- cases: 8 concurrency: deadline scenarios run under testing/synctest, so time is virtual and no goroutine leaks -->
 <!-- cases: N/A 9 panics: covered by "Start errors and panics" -->
@@ -55,9 +55,24 @@ Then the recorded calls are: before a, after a nil, late-after a, before b, afte
 And the err passed for "b" is errBoom itself, not a wrapping error
 ```
 
+#### Scenario: HookAfterStart for a step a child scope shutdown cancelled
+```gherkin
+Given a started root container created with InjectorOpts{StartTimeout: <timeout>} and a HookAfterStart recording its calls for "w", inside synctest.Test
+And child scope "tenant", created after Start, with lazy Starter "w" whose Start(ctx) waits for ctx to end and returns ctx.Err()
+And the consumer called tenant.Start() in another goroutine
+When 100ms of virtual time passes and the consumer calls tenant.Shutdown()
+Then tenant.Start() returns nil
+And HookAfterStart was called <calls> times for "w", with elapsed <elapsed> and err <err>
+
+Examples:
+  | timeout | calls | elapsed | err                                   |
+  | 0       | 1     | 100ms   | context.Canceled itself, not wrapped |
+  | 5s      | 1     | 100ms   | context.Canceled itself, not wrapped |
+```
+
 <!-- cases: N/A 3 zero values: no hooks registered means no calls (default; covered by every other scenario) -->
 <!-- cases: N/A 4 boundaries: 0, 1 and many hooks follow the same slice iteration as the existing shutdown hooks -->
-<!-- cases: 7 lifecycle: an abandoned Starter is covered by "Start hooks for an abandoned step"; a Starter skipped by "An abandoned step is not started again while it runs", because it is recorded or its abandoned call still runs, gets no hook call -->
+<!-- cases: 7 lifecycle: an abandoned Starter is covered by "Start hooks for an abandoned step"; a Starter skipped by "An abandoned step is not started again while it runs", because it is recorded or its abandoned call still runs, gets no hook call; a Starter a child scope shutdown cancelled gets its HookAfterStart call, with the error it returned ("HookAfterStart for a step a child scope shutdown cancelled") -->
 <!-- cases: 9 panics: a panicking start hook propagates (start hooks are not recovered; shutdown hooks are, see container-shutdown); container state is still released, see "A panic escaping Start still releases Shutdown" -->
 <!-- cases: N/A 8 concurrency: hooks run on the Start goroutine, also with StartTimeout set -->
 <!-- cases: 10 compatibility: new hooks; the Starter now receives a child of the hook ctx, also with StartTimeout unset: it carries the same values and ends with it, and ends earlier only when its scope shuts down (D3, D12) -->
@@ -504,7 +519,10 @@ Examples:
   | lazy "late" opted in with AsRunnable() | Run | root.Refresh() | returns nil     | before the test releases "late"                      | an error naming "late" matching ErrStartTimeout | 1     |
   | lazy "late" opted in with AsRunnable() | Run | root.Refresh() | returns nil     | after the test released "late" and its call returned | nil                                             | 1     |
   | lazy "late" opted in with AsRunnable() | Run | root.Refresh() | returns errBoom | after the test released "late" and its call returned | nil                                             | 2     |
+  | lazy Starter "late" that is also a component of a StageBeforeStart kind whose handler calls its Run; the handler call blocks | Start | root.Refresh() | returns nil | before the test releases "late" | an error naming "late" matching ErrStartTimeout | 0 (its handler: 1) |
 ```
+
+<!-- The last row pins D5's rule that a service with a skipped step has its later steps in the run skipped: its abandoned StageBeforeStart handler call still runs, so the second run skips that call and then the Starter's Start too, with no hook call. -->
 
 #### Scenario: Refresh starts what does not depend on a still-running step
 ```gherkin
@@ -559,6 +577,22 @@ Examples:
   | first          | second                                                                              | second-op     |
   | root.Start()   | the consumer calls clone := root.Clone() and clone.Start()                          | clone.Start() |
   | Start(), then root.Refresh() for "srv" registered after Start | the consumer overrides "srv" with OverrideNamedValue(root, "srv", inst) and calls root.Refresh() | root.Refresh() |
+```
+
+#### Scenario: An instance two containers abandoned stays tracked until both calls return
+```gherkin
+Given a root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test
+And a Starter instance "inst" (a pointer) registered as eager value "srv", whose every Start call blocks until the test releases it
+And clones of root taken before any Start
+And root.Start() and one clone's Start(), called at the same time, each called "inst"'s Start and abandoned it
+When the test releases <released> and another clone, not started yet, calls Start()
+Then that Start() returns <result>
+And "inst"'s Start was called <calls> times in total
+
+Examples:
+  | released                 | result                                          | calls |
+  | one of the two calls     | an error naming "srv" matching ErrStartTimeout  | 2     |
+  | both calls               | nil                                             | 3     |
 ```
 
 #### Scenario: The dependents of a still-running instance are skipped in any scope or stage
