@@ -1172,53 +1172,75 @@ func TestStartTimeout_StillRunningStepOrder(t *testing.T) {
 // containers sharing it each abandoned a call of stays tracked until both
 // calls ended: root and its clone call the Start of one *gateProbe at the
 // same time, both calls are abandoned, and a third container, also a clone,
-// skips the step until the second call ends.
+// skips the step while one of the calls still runs (one_call_released) and
+// calls it once both ended (both_calls_released).
 func TestStartTimeout_SharedInstanceAbandonedTwice(t *testing.T) {
 	t.Parallel()
 
-	synctest.Test(t, func(t *testing.T) {
-		root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
-		inst := newGateProbe()
-		ProvideNamedValue(root, "srv", inst, AsStarter())
-		clone := root.Clone()
-		afterFirst := root.Clone()
-		afterBoth := root.Clone()
-		gateClosed := false
-		defer func() {
-			if !gateClosed {
-				close(inst.gate)
-			}
-			synctest.Wait()
-			for _, c := range []*RootScope{root, clone, afterFirst, afterBoth} {
-				c.Shutdown()
-			}
-		}()
+	tests := []struct {
+		name      string
+		bothEnded bool // both abandoned calls are released, not only one
+		wantErr   bool // the third container's Start fails with the still-running error of "srv"
+		wantCalls int32
+	}{
+		{name: "one_call_released", wantErr: true, wantCalls: 2},
+		{name: "both_calls_released", bothEnded: true, wantCalls: 3},
+	}
 
-		rootErr := make(chan error, 1)
-		go func() { rootErr <- root.Start() }()
-		require.ErrorIs(t, clone.Start(), ErrStartTimeout, "the clone abandons its call")
-		require.ErrorIs(t, <-rootErr, ErrStartTimeout, "root abandons its call")
-		require.Equal(t, int32(2), inst.calls.Load(), "both containers called inst before either abandoned it")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-		inst.gate <- struct{}{} // one of the two calls ends
-		synctest.Wait()         // its late outcome is handled
-		require.Equal(t, int32(1), inst.ended.Load())
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				inst := newGateProbe()
+				ProvideNamedValue(root, "srv", inst, AsStarter())
+				clone := root.Clone()
+				later := root.Clone()
+				gateClosed := false
+				defer func() {
+					if !gateClosed {
+						close(inst.gate)
+					}
+					synctest.Wait()
+					for _, c := range []*RootScope{root, clone, later} {
+						c.Shutdown()
+					}
+				}()
 
-		err := afterFirst.Start()
+				rootErr := make(chan error, 1)
+				go func() { rootErr <- root.Start() }()
+				require.ErrorIs(t, clone.Start(), ErrStartTimeout, "the clone abandons its call")
+				require.ErrorIs(t, <-rootErr, ErrStartTimeout, "root abandons its call")
+				require.Equal(t, int32(2), inst.calls.Load(), "both containers called inst before either abandoned it")
 
-		var startErr *StartError
-		require.ErrorAs(t, err, &startErr, "the other call still runs")
-		assert.Equal(t, "srv", startErr.Service)
-		assert.ErrorIs(t, err, ErrStartTimeout)
-		assert.Equal(t, int32(2), inst.calls.Load(), "calls of inst while one abandoned call still runs")
+				if tt.bothEnded {
+					close(inst.gate) // both calls end; later calls return at once
+					gateClosed = true
+				} else {
+					inst.gate <- struct{}{} // one of the two calls ends
+				}
+				synctest.Wait() // the late outcomes are handled
+				wantEnded := int32(1)
+				if tt.bothEnded {
+					wantEnded = 2
+				}
+				require.Equal(t, wantEnded, inst.ended.Load())
 
-		close(inst.gate) // the other call ends; later calls return at once
-		gateClosed = true
-		synctest.Wait()
+				err := later.Start()
 
-		require.NoError(t, afterBoth.Start())
-		assert.Equal(t, int32(3), inst.calls.Load(), "calls of inst once both abandoned calls ended")
-	})
+				if tt.wantErr {
+					var startErr *StartError
+					require.ErrorAs(t, err, &startErr, "the other call still runs")
+					assert.Equal(t, "srv", startErr.Service)
+					assert.ErrorIs(t, err, ErrStartTimeout)
+				} else {
+					require.NoError(t, err)
+				}
+				assert.Equal(t, tt.wantCalls, inst.calls.Load(), "calls of inst in total")
+			})
+		})
+	}
 }
 
 // unhashableStarter is a Starter value whose type is comparable but whose
@@ -3497,6 +3519,72 @@ func TestChildShutdown_LaterStepOfDetachedScope(t *testing.T) {
 	}
 }
 
+// TestChildShutdown_DetachedScopeAfterRootShutdown pins the limit of
+// container-start "The later steps of a scope whose bounded shutdown
+// completed are skipped": the skip holds only while root Shutdown has not
+// begun (closingScope). Starter "S" in "c" ignores its context; Starter
+// "T" in "c" depends on "S"; a bounded c.ShutdownWithContext gives up,
+// removes them and detaches "c"; then root Shutdown begins, cancelling the
+// run, and only then "S" returns. "T" is never called. In parallel, "T" is
+// still pending when scheduling ends, and is reported like a step outside
+// a shut-down scope, a *StartError naming it, not dropped silently.
+func TestChildShutdown_DetachedScopeAfterRootShutdown(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		parallelism uint
+		wantNaming  string // the service the run's *StartError names; "" when the run is only aborted
+	}{
+		{name: "sequential"},
+		{name: "parallel", parallelism: 2, wantNaming: "T"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartParallelism: tt.parallelism})
+				require.NoError(t, root.Start())
+				c := root.Scope("c")
+				gate := provideCounted(c, "S", newGateProbe(), AsStarter())
+				starts := &countingStarters{}
+				provideCountedStarter(c, starts, "T", DependsOnNamed("S"))
+				defer close(gate.gate)
+
+				runErr := make(chan error, 1)
+				go func() { runErr <- root.Refresh() }()
+				synctest.Wait()
+				require.Equal(t, int32(1), gate.calls.Load(), "S has entered Start")
+
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+				report := c.ShutdownWithContext(ctx)
+				cancel()
+				require.False(t, report.Succeed, "the bounded shutdown gave up waiting for the run")
+				require.Empty(t, root.Children(), "the shutdown detached c")
+
+				rootShutdown := make(chan *ShutdownReport, 1)
+				go func() { rootShutdown <- root.Shutdown() }()
+				synctest.Wait() // root Shutdown cancelled the run and waits for it
+				gate.gate <- struct{}{}
+
+				err := <-runErr
+				<-rootShutdown
+				assert.Equal(t, 0, starts.count("T"), "T in the detached scope was not called")
+				require.ErrorIs(t, err, ErrShutdown, "root Shutdown interrupted the run")
+				var startErr *StartError
+				if tt.wantNaming == "" {
+					assert.NotErrorAs(t, err, &startErr, "the run is only aborted: %v", err)
+					return
+				}
+				require.ErrorAs(t, err, &startErr, "the pending T is reported: %v", err)
+				assert.Equal(t, tt.wantNaming, startErr.Service, "the run's error names T: %v", err)
+			})
+		})
+	}
+}
+
 // closingStarter is a Starter whose Start begins a shutdown of scope the
 // way shutdownWithContext does, by closing it, and stops there: the
 // shutdown has not joined (joinClose) yet.
@@ -3553,7 +3641,9 @@ func TestChildShutdown_ClosedBeforeJoinClose(t *testing.T) {
 // its context. A bounded c.ShutdownWithContext removes "S" and "T" with
 // their edges and detaches "c"; then "T" returns and is skipped. "P" is
 // skipped and reported, sequentially and in parallel, whether "S" is a
-// plain service or a Starter.
+// plain service or a Starter. When "T" is in grandchild "d" of "c" instead,
+// and only "d" is shut down, the export's source "c" stays live: "P" is
+// not skipped for "T", and starts (live_source_detached_descendant).
 func TestChildShutdown_TransitiveDetachedPath(t *testing.T) {
 	t.Parallel()
 
@@ -3562,6 +3652,9 @@ func TestChildShutdown_TransitiveDetachedPath(t *testing.T) {
 		parallelism   uint
 		sourceStarter bool // "S" is a Starter too
 		reuseName     bool // a new scope "c" is created once the shutdown detached the first one
+		// "T" is in grandchild "d" of "c", "S" does not invoke it, and the
+		// bounded shutdown is d's: "c", the export's source, stays live
+		descendant bool
 	}{
 		{name: "plain_source_sequential"},
 		{name: "plain_source_parallel", parallelism: 2},
@@ -3569,6 +3662,7 @@ func TestChildShutdown_TransitiveDetachedPath(t *testing.T) {
 		{name: "starter_source_parallel", parallelism: 2, sourceStarter: true},
 		{name: "name_reused_sequential", reuseName: true},
 		{name: "name_reused_parallel", parallelism: 2, reuseName: true},
+		{name: "live_source_detached_descendant", descendant: true},
 	}
 
 	for _, tt := range tests {
@@ -3579,20 +3673,38 @@ func TestChildShutdown_TransitiveDetachedPath(t *testing.T) {
 				root := NewWithOpts(&InjectorOpts{StartParallelism: tt.parallelism})
 				require.NoError(t, root.Start())
 				c := root.Scope("c")
-				gate := provideCounted(c, "T", newGateProbe(), AsStarter())
+				tScope := c
+				if tt.descendant {
+					tScope = c.Scope("d")
+				}
+				gate := provideCounted(tScope, "T", newGateProbe(), AsStarter())
 				starts := &countingStarters{}
 				var sourceOpts []ProvideOption
 				if tt.sourceStarter {
 					sourceOpts = append(sourceOpts, AsStarter())
 				}
 				ProvideNamed(c, "S", func(i Injector) (*countedStarter, error) {
-					if _, err := InvokeNamed[*gateProbe](i, "T"); err != nil {
-						return nil, err
+					if !tt.descendant {
+						if _, err := InvokeNamed[*gateProbe](i, "T"); err != nil {
+							return nil, err
+						}
 					}
 					return &countedStarter{name: "S", starts: starts}, nil
 				}, sourceOpts...)
 				require.NoError(t, ExportNamed[*countedStarter](c, "S"))
-				provideCountedStarter(root, starts, "P", DependsOnNamed("S"))
+				if tt.descendant {
+					// a root Starter would start before "T", which is deeper:
+					// a StageAfterStart component runs after every Starter
+					late := NewKind[*countedStarter, struct{}]("late")
+					late.Handle(root, StageAfterStart, func(_ context.Context, component Component[*countedStarter, struct{}]) error {
+						return component.Instance.Start()
+					})
+					ProvideNamed(root, "P", func(Injector) (*countedStarter, error) {
+						return &countedStarter{name: "P", starts: starts}, nil
+					}, late.With(struct{}{}), DependsOnNamed("S"))
+				} else {
+					provideCountedStarter(root, starts, "P", DependsOnNamed("S"))
+				}
 				defer func() {
 					close(gate.gate)
 					root.Shutdown()
@@ -3605,10 +3717,15 @@ func TestChildShutdown_TransitiveDetachedPath(t *testing.T) {
 				require.Equal(t, 0, starts.count("P"), "P waits for T")
 
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-				report := c.ShutdownWithContext(ctx)
+				report := tScope.ShutdownWithContext(ctx)
 				cancel()
 				require.False(t, report.Succeed, "the bounded shutdown gave up waiting for the run")
-				require.Empty(t, root.Children(), "the shutdown detached c")
+				if tt.descendant {
+					require.Empty(t, c.Children(), "the shutdown detached d")
+					require.Len(t, root.Children(), 1, "c stays attached to the root")
+				} else {
+					require.Empty(t, root.Children(), "the shutdown detached c")
+				}
 				if tt.reuseName {
 					// the export now resolves its source by name in the new
 					// scope, which holds no "S"
@@ -3617,6 +3734,11 @@ func TestChildShutdown_TransitiveDetachedPath(t *testing.T) {
 				gate.gate <- struct{}{}
 
 				err := <-runErr
+				if tt.descendant {
+					assert.NoError(t, err, "P depends on the live export only, not on T")
+					assert.Equal(t, 1, starts.count("P"), "P was started")
+					return
+				}
 				assert.Equal(t, 0, starts.count("P"), "P's Start was not called though T never started")
 				require.ErrorIs(t, err, ErrShutdown, "the run reports the skipped dependent")
 				var startErr *StartError
@@ -3628,8 +3750,10 @@ func TestChildShutdown_TransitiveDetachedPath(t *testing.T) {
 }
 
 // TestEndParallelStart pins the guard of the parallel scheduler, which no
-// public scenario reaches once the dependents walk follows a detached
-// export (it is a backstop for an edge that vanishes mid-run): a parallel
+// public scenario reaches while root Shutdown has not begun, once the
+// dependents walk follows a detached export (it is a backstop for an edge
+// that vanishes mid-run; TestChildShutdown_DetachedScopeAfterRootShutdown
+// reaches its report once root Shutdown began): a parallel
 // start never returns nil with a Starter outside a shut-down scope still
 // pending, and reports it as the dependent of the skipped Starter it
 // waits for; a pending Starter of a scope whose shutdown completed is

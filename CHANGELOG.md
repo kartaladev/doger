@@ -54,6 +54,16 @@ break is listed under **BREAKING** with its migration.
   shutdown"), while under an unbounded shutdown it starts when its own
   dependencies did. See the upgrading guide, "A child scope shutdown
   cancels its subtree's running start steps".
+- `Scope.Start` no longer runs the `HookScopeStarted` hooks when a
+  shutdown of the scope, or of an ancestor, that began after it collected
+  its services cancels their start steps: it skips them and returns nil,
+  and the shutdown waits for it, bounded by its context, before running
+  its `HookScopeClosing` hooks. The Started hooks used to run then, and
+  Closing could run during or before them. A shutdown of a descendant
+  scope keeps them, and so does a shutdown that completed before
+  `Scope.Start` collected the services. See the upgrading guide, [Scope.Start
+  skips the Started hooks when a shutdown cancels its
+  steps](docs/docs/upgrading/start-lifecycle.md#scope-started-skipped-on-cancel).
 - `HealthReport`/`HealthReportWithContext` reads and `HealthScheduler`
   rounds now skip a component that a kind with a handler has not handled
   yet, as they already skipped a Starter not started yet: it is listed as
