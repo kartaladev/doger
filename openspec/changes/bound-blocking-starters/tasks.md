@@ -247,6 +247,16 @@ Every test seen failing intermittently while applying this change is fixed here,
 
 ## 38. Release checks after the code review and consistency fixes
 
+### Fix found by the release triage
+
+The 38.4 matrix (triages A and E) found a root/child difference: a root `ShutdownWithContext` bounded at 1s, below `StartTimeout: 5s`, made a run whose step ignores its context return a `*StartError` naming the step (matching `ErrStartTimeout` and `ErrShutdown`) for a root step, but a bare `doger: start aborted: container is shut down` for a step in child scope "tenant" (run by `tenant.Start()` or `root.Refresh()`). Root Shutdown also marks the child scopes it shuts down closing, and the D12 skip rule treated that as the child's own Shutdown. Decided (I1, I3): under a root Shutdown a child step is cancelled and reported like a root step; the skip rule applies only to a child scope's own Shutdown, while the root is open. These run before 38.1–38.5 are re-run.
+
+- [x] 38.6 RED: add the `tenant/tenant_start` and `tenant/root_refresh` rows to `TestStartTimeout_ShutdownBoundedBelowTimeout`, and `TestStartTimeout_ShutdownBoundedBelowTimeoutBeforeStep` (the bounded root Shutdown reaches "tenant" while the step's HookBeforeStart runs), each with a root row, asserting the exact message, the `*StartError` naming "srv" in its scope, `ErrStartTimeout` and `ErrShutdown`, in synctest with every blocked call released; verify the child rows fail with `doger: start aborted: container is shut down` and the root rows pass
+- [x] 38.7 GREEN: `scopeShutdownSkipsSteps` (true only while `closePhase` is `closeOpen`, read under `lifecycleMu`) gates `cancelSubtreeSteps` and the closing check of `registerStep`, so a step root Shutdown reaches in a child scope keeps the run's `ErrShutdown` cancellation and is not flagged as scope-cancelled; verify the new rows and `TestChildShutdown_*` at `-race -count=200`, `TestStartTimeout_|TestScopeShutdown_|TestPhase_|TestShutdown` at `-race -count=5`, `make test`, `go vet ./...`, `golangci-lint run` and the triage A and E rows matching the root row
+- [x] 38.8 Docs: the scenario's child rows and the new scenario, the D12 sentence and the Risks entry, the `StartTimeout` godoc, `options.md` and the upgrading guide say the skip rule is for a child scope's own Shutdown; the Test Strategy table names the new rows, and (38.3 wording) the real `TestChildShutdown_CancelsSubtreeSteps` and `TestStartTimeout_RefreshSkipsStillRunning` subtests, the API-surface tests and the regression rows' test names; verify `openspec validate bound-blocking-starters` and `go test -run 'TestDocs_' .`
+
+### Release checks
+
 - [ ] 38.1 Run `make test`, `make lint`, and `go test -race ./...` in every `go.work` module; verify all green
 - [ ] 38.2 Run `make test-sql` and `make test-watermill`; verify both green and that `go test -v` in `events/sql` and `events/watermill/wmsql` reports no test skipped for a missing database or DSN; then `make test-sql-down`
 - [ ] 38.3 Run `openspec validate bound-blocking-starters` (without `--strict`) and cross-check the Test Strategy table; verify valid and every scenario maps to a passing test

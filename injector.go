@@ -618,7 +618,9 @@ type InjectorOpts struct {
 	// Shutdown waits for the run within its own context: a Shutdown bounded
 	// below StartTimeout stops waiting at its deadline and skips the
 	// services it then reaches, so a stuck step keeps running until its call
-	// returns, as without this option.
+	// returns, as without this option. The run's error is then the same
+	// for a step in any scope: a step of a child scope that root Shutdown
+	// reaches is reported like a root step.
 	//
 	// Go cannot stop the call: it keeps running in its own goroutine with a
 	// cancelled context. So a runtime.Goexit in a Start method or kind
@@ -631,9 +633,11 @@ type InjectorOpts struct {
 	// ends or when a shutdown of the step's child scope, or of an ancestor
 	// child scope, begins, and also when the step is abandoned. It reports
 	// no deadline, since a step that returns in time keeps it past the
-	// timeout. A step that such a scope shutdown cancelled is skipped, not a
-	// failure, even once abandoned, unless a service outside that scope
-	// depends on it (see [Scope.ShutdownWithContext]).
+	// timeout. A step that the child scope's own shutdown cancelled, while
+	// root Shutdown has not begun, is skipped, not a failure, even once
+	// abandoned, unless a service outside that scope depends on it (see
+	// [Scope.ShutdownWithContext]); under root Shutdown it fails the run as
+	// a root step does.
 	//
 	// While it runs, the container never calls it again: a covering Refresh
 	// or Scope.Start skips it, with no hooks, and skips every candidate of

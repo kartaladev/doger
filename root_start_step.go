@@ -69,7 +69,9 @@ func (s *RootScope) seamAfterStepDone(step startStep) {
 // scope, cancels it (see Scope.ShutdownWithContext). The step is then
 // neither recorded nor a failure of the run, whatever it returned, and
 // end.cancelled holds the shutdown's cause; a cancelled call that returned
-// an error or panicked is logged, since the run does not report it.
+// an error or panicked is logged, since the run does not report it. Root
+// Shutdown cancels the whole run instead, and its steps in any scope are
+// reported as ordinary steps (see scopeShutdownSkipsSteps).
 func (s *RootScope) runStartStep(ctx context.Context, step startStep, call func(context.Context) error) (end stepEnd) {
 	stopWarning := s.armSlowStartWarning(step)
 	defer stopWarning()
@@ -149,8 +151,9 @@ func (s *RootScope) registerStep(ctx context.Context, scope *Scope) (context.Con
 	}
 	s.runSteps[running] = struct{}{}
 	// a shutdown that began since the run's closing check, during the
-	// step's before hooks, has already cancelled the registered steps
-	if closing := closingScopeInLine(scope); closing != nil {
+	// step's before hooks, has already cancelled the registered steps; once
+	// root Shutdown began, the run's context is cancelled instead
+	if closing := closingScopeInLine(scope); closing != nil && s.scopeShutdownSkipsSteps() {
 		running.cancelled = scopeShutdownCause(closing)
 		cancel(running.cancelled)
 	}
@@ -174,14 +177,29 @@ func (s *RootScope) unregisterStep(running *runningStep) (cancelled error) {
 // lifecycleMu must be held. Cancelling under it runs no user code: the
 // steps' contexts are the library's own, and their children only propagate
 // the cancellation (a context.AfterFunc callback runs on its own
-// goroutine).
+// goroutine). Once root Shutdown began, it does nothing (see
+// scopeShutdownSkipsSteps).
 func (s *RootScope) cancelSubtreeSteps(scope *Scope) {
+	if !s.scopeShutdownSkipsSteps() {
+		return
+	}
 	for running := range s.runSteps {
 		if running.cancelled == nil && isScopeOrDescendant(running.scope, scope) {
 			running.cancelled = scopeShutdownCause(scope)
 			running.cancel(running.cancelled)
 		}
 	}
+}
+
+// scopeShutdownSkipsSteps reports whether a scope shutdown cancels the
+// start steps of its subtree as skipped steps: only while root Shutdown has
+// not begun. Root Shutdown has cancelled the whole run with ErrShutdown
+// (beginClose), and the child scopes it shuts down are marked closing only
+// after that, so a step of a child scope it reaches is cancelled with the
+// run and reported like a root step. The skip rule is for a child scope's
+// own Shutdown. lifecycleMu must be held.
+func (s *RootScope) scopeShutdownSkipsSteps() bool {
+	return s.closePhase == closeOpen
 }
 
 // scopeShutdownCause is the cause with which a shutdown of scope cancels

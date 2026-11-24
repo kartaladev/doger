@@ -593,57 +593,204 @@ func TestStartTimeout_ShutdownAwaitsHonouringStart(t *testing.T) {
 
 // TestStartTimeout_ShutdownBoundedBelowTimeout pins container-start "A
 // Shutdown bounded below the start timeout": the Shutdown stops waiting at
-// its deadline and skips the service, as without the option.
+// its deadline and skips the service, as without the option. A root
+// Shutdown reports a step of a child scope as it reports a root step: the
+// child rows match the root row apart from the scope name.
 func TestStartTimeout_ShutdownBoundedBelowTimeout(t *testing.T) {
 	t.Parallel()
 
-	synctest.Test(t, func(t *testing.T) {
-		root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
-		probe := provideCounted(root, "srv", newStepProbe(0), AsStarter())
-		wrapper, ok := root.self.serviceGet("srv")
-		require.True(t, ok)
+	tests := []struct {
+		name  string
+		scope string // "" for the root
+		run   func(root *RootScope, holder *Scope) error
+		want  string
+	}{
+		{
+			name: "root/root_start",
+			run:  func(root *RootScope, _ *Scope) error { return root.Start() },
+			want: "doger: failed to start service `srv` in scope `[root]`: start timeout after 5s: context deadline exceeded (start aborted: container is shut down)",
+		},
+		{
+			name:  "tenant/tenant_start",
+			scope: "tenant",
+			run:   func(_ *RootScope, holder *Scope) error { return holder.Start() },
+			want:  "doger: failed to start service `srv` in scope `tenant`: start timeout after 5s: context deadline exceeded (start aborted: container is shut down)",
+		},
+		{
+			name:  "tenant/root_refresh",
+			scope: "tenant",
+			run:   func(root *RootScope, _ *Scope) error { return root.Refresh() },
+			want:  "doger: failed to start service `srv` in scope `tenant`: start timeout after 5s: context deadline exceeded (start aborted: container is shut down)",
+		},
+	}
 
-		var report *ShutdownReport
-		var shutdownTook time.Duration
-		var shut sync.WaitGroup
-		shut.Go(func() {
-			time.Sleep(100 * time.Millisecond)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			begin := time.Now()
-			report = root.ShutdownWithContext(ctx)
-			shutdownTook = time.Since(begin)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+				holder := root.self
+				if tt.scope != "" {
+					require.NoError(t, root.Start())
+					holder = root.Scope(tt.scope)
+				}
+				probe := provideCounted(holder, "srv", newStepProbe(0), AsStarter())
+				// a failed assertion still releases the blocked call
+				defer probe.unblock()
+				wrapper, ok := holder.serviceGet("srv")
+				require.True(t, ok)
+
+				var report *ShutdownReport
+				var shutdownTook time.Duration
+				var shut sync.WaitGroup
+				shut.Go(func() {
+					time.Sleep(100 * time.Millisecond)
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
+					begin := time.Now()
+					report = root.ShutdownWithContext(ctx)
+					shutdownTook = time.Since(begin)
+				})
+
+				begin := time.Now()
+				err := tt.run(root, holder)
+				startTook := time.Since(begin)
+				shut.Wait()
+
+				assert.Equal(t, time.Second, shutdownTook, "Shutdown stops waiting at its deadline")
+				require.NotNil(t, report)
+				assert.False(t, report.Succeed)
+				var rootErr, srvErr error
+				for desc, e := range report.Errors {
+					switch {
+					case desc.Service == "" && desc.ScopeID == root.ID():
+						rootErr = e
+					case desc.Service == "srv":
+						srvErr = e
+					}
+				}
+				assert.ErrorIs(t, rootErr, context.DeadlineExceeded, "the report has an error for the root scope's wait")
+				assert.ErrorIs(t, srvErr, context.DeadlineExceeded, "the ended Shutdown skipped srv")
+				assert.Zero(t, probe.shutdowns.Load(), "srv's Shutdown method was not called")
+				assert.Equal(t, 5*time.Second, startTook, "the run returns at StartTimeout")
+				assert.EqualError(t, err, tt.want)
+				var startErr *StartError
+				if assert.ErrorAs(t, err, &startErr) {
+					assert.Equal(t, "srv", startErr.Service)
+					assert.Same(t, holder, startErr.Scope)
+				}
+				assert.ErrorIs(t, err, ErrStartTimeout)
+				assert.ErrorIs(t, err, ErrShutdown)
+
+				probe.unblock()
+				<-probe.ended
+				synctest.Wait()
+				assert.False(t, root.isStarted(wrapper), "a late return after Shutdown is not recorded")
+			})
 		})
+	}
+}
 
-		begin := time.Now()
-		err := root.Start()
-		startTook := time.Since(begin)
-		shut.Wait()
+// TestStartTimeout_ShutdownBoundedBelowTimeoutBeforeStep pins the rows of
+// container-start "A Shutdown bounded below the start timeout" where the
+// bounded root Shutdown reaches the step's scope while the step's
+// HookBeforeStart runs: the step then begins under a closing scope, and is
+// still cancelled and reported like a root step, not skipped.
+func TestStartTimeout_ShutdownBoundedBelowTimeoutBeforeStep(t *testing.T) {
+	t.Parallel()
 
-		assert.Equal(t, time.Second, shutdownTook, "Shutdown stops waiting at its deadline")
-		require.NotNil(t, report)
-		assert.False(t, report.Succeed)
-		var scopeErr, srvErr error
-		for desc, e := range report.Errors {
-			switch desc.Service {
-			case "":
-				scopeErr = e
-			case "srv":
-				srvErr = e
-			}
-		}
-		assert.ErrorIs(t, scopeErr, context.DeadlineExceeded, "the report has an error for the root scope's wait")
-		assert.ErrorIs(t, srvErr, context.DeadlineExceeded, "the ended Shutdown skipped srv")
-		assert.Zero(t, probe.shutdowns.Load(), "srv's Shutdown method was not called")
-		assert.Equal(t, 5*time.Second, startTook, "Start returns at StartTimeout")
-		assert.ErrorIs(t, err, ErrStartTimeout)
-		assert.ErrorIs(t, err, ErrShutdown)
+	tests := []struct {
+		name  string
+		scope string // "" for the root
+		run   func(root *RootScope, holder *Scope) error
+		want  string
+	}{
+		{
+			name: "root/root_start",
+			run:  func(root *RootScope, _ *Scope) error { return root.Start() },
+			want: "doger: failed to start service `srv` in scope `[root]`: start timeout after 5s: context deadline exceeded (start aborted: container is shut down)",
+		},
+		{
+			name:  "tenant/tenant_start",
+			scope: "tenant",
+			run:   func(_ *RootScope, holder *Scope) error { return holder.Start() },
+			want:  "doger: failed to start service `srv` in scope `tenant`: start timeout after 5s: context deadline exceeded (start aborted: container is shut down)",
+		},
+		{
+			name:  "tenant/root_refresh",
+			scope: "tenant",
+			run:   func(root *RootScope, _ *Scope) error { return root.Refresh() },
+			want:  "doger: failed to start service `srv` in scope `tenant`: start timeout after 5s: context deadline exceeded (start aborted: container is shut down)",
+		},
+	}
 
-		probe.unblock()
-		<-probe.ended
-		synctest.Wait()
-		assert.False(t, root.isStarted(wrapper), "a late return after Shutdown is not recorded")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				// reached: closed once the bounded root Shutdown reached
+				// the step's scope; for the root, once it returned
+				reached := make(chan struct{})
+				var begun atomic.Bool
+				root := NewWithOpts(&InjectorOpts{
+					StartTimeout: 5 * time.Second,
+					HookBeforeStart: []func(context.Context, *Scope, string){func(context.Context, *Scope, string) {
+						begun.Store(true)
+						<-reached
+					}},
+					HookScopeClosing: []func(context.Context, *Scope){func(_ context.Context, scope *Scope) {
+						if scope.Name() == tt.scope {
+							close(reached)
+							// the scope stays closing while the step begins
+							time.Sleep(time.Second)
+						}
+					}},
+				})
+				holder := root.self
+				if tt.scope != "" {
+					require.NoError(t, root.Start())
+					holder = root.Scope(tt.scope)
+				}
+				probe := provideCounted(holder, "srv", newStepProbe(0), AsStarter())
+				// a failed assertion still releases the blocked call
+				defer probe.unblock()
+
+				var shut sync.WaitGroup
+				shut.Go(func() {
+					time.Sleep(100 * time.Millisecond)
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
+					root.ShutdownWithContext(ctx)
+					if tt.scope == "" {
+						close(reached)
+					}
+				})
+
+				err := tt.run(root, holder)
+				shut.Wait()
+
+				assert.True(t, begun.Load(), "the step's HookBeforeStart ran")
+				if assert.Equal(t, int32(1), probe.calls.Load(), "srv's Start was called") {
+					stepCtx := *probe.ctx.Load()
+					assert.ErrorIs(t, context.Cause(stepCtx), ErrShutdown, "srv's Start got a context the root Shutdown had cancelled")
+				}
+				assert.EqualError(t, err, tt.want)
+				var startErr *StartError
+				if assert.ErrorAs(t, err, &startErr) {
+					assert.Equal(t, "srv", startErr.Service)
+					assert.Same(t, holder, startErr.Scope)
+				}
+				assert.ErrorIs(t, err, ErrStartTimeout)
+				assert.ErrorIs(t, err, ErrShutdown)
+
+				probe.unblock()
+				<-probe.ended
+				synctest.Wait()
+			})
+		})
+	}
 }
 
 // TestStartTimeout_Parallel pins container-start "Abandonment under

@@ -467,6 +467,9 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // recorded nor a failure of the run, the run skips the rest of this scope's
 // subtree and goes on with the other scopes. A step that ignores its
 // context is awaited, or abandoned at [InjectorOpts.StartTimeout] when set.
+// This skip rule is for the scope's own shutdown: once root Shutdown began,
+// it has cancelled the whole run, and a step of this subtree that it
+// reaches is reported like a root step, failing the run.
 // A service of this subtree whose step the run skipped does not count as
 // started: the run also skips every service that depends on it, directly
 // or through others. A dependent outside this subtree, such as a root
