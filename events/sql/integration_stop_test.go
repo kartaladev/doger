@@ -86,7 +86,7 @@ func TestStop(t *testing.T) {
 					waitFor(t, func() bool { return db.Count(t, leased) == 1 }, "stop releasing the claims not handed over")
 					select {
 					case err := <-stopped:
-						t.Fatalf("stop returned %v while the handler was running", err)
+						require.Failf(t, "stop returned while the handler was running", "error: %v", err)
 					default:
 					}
 					letFinish()

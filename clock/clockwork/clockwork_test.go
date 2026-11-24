@@ -196,7 +196,7 @@ func TestWrap_StartTimeout(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // wall time: the fake clock does not move
 	select {
 	case err := <-done:
-		t.Fatalf("Start returned before the clock advanced: %v", err)
+		require.Failf(t, "Start returned before the clock advanced", "error: %v", err)
 	default:
 	}
 
@@ -206,7 +206,7 @@ func TestWrap_StartTimeout(t *testing.T) {
 		require.ErrorIs(t, err, doger.ErrStartTimeout)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	case <-time.After(5 * time.Second):
-		t.Fatal("Start did not return once the clock advanced past StartTimeout")
+		require.FailNow(t, "Start did not return once the clock advanced past StartTimeout")
 	}
 }
 
@@ -270,7 +270,7 @@ func TestWrap_SlowStartWarning(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("Start did not return once srv was released")
+		require.FailNow(t, "Start did not return once srv was released")
 	}
 	assert.Equal(t, 1, recorder.count(slowStart), "exactly one warning")
 }

@@ -157,6 +157,10 @@ type RootScope struct {
 	abandoned  map[any]map[*kindID]startStep // steps whose abandoned call still runs, by wrapper; a nil kind is the Start method
 	// abandonedChanges counts the changes of abandoned; guarded by startedMu
 	abandonedChanges uint64
+	// passedOver holds, by wrapper, the kinds a run collected the component
+	// for while they had no handler, and that no run attempted since; see
+	// awaitsKindHandler; guarded by startedMu
+	passedOver map[any]map[*kindID]struct{}
 	// instances tracks the abandoned calls that still run by instance, so
 	// that no run calls an instance again through an override or a clone.
 	// A container and its clones share it; it has its own mutex.
@@ -165,6 +169,11 @@ type RootScope struct {
 	// container (registrations, overrides, defaults replaced), which can
 	// change what a name resolves to; see dependentsCheck.current
 	registrations atomic.Uint64
+	// runRoots are the roots of the running pipeline once it claimed its
+	// candidates, and runRootsShutDown reports that a shutdown of one of
+	// them, or of an ancestor, began since; both guarded by lifecycleMu
+	runRoots         []*Scope
+	runRootsShutDown bool
 
 	// startSeam holds test-only callbacks into the start pipeline; it is
 	// zero (no callback) in production.

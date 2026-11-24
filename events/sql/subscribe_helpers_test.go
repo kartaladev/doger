@@ -100,7 +100,7 @@ func (c *collector) expect(t *testing.T, n int) []string {
 			ids = append(ids, id)
 			idle.Reset(waitTimeout)
 		case <-idle.C:
-			t.Fatalf("received %d envelopes %v, want %d: none for %v", len(ids), ids, n, waitTimeout)
+			require.Failf(t, "envelopes missing", "received %d envelopes %v, want %d: none for %v", len(ids), ids, n, waitTimeout)
 		}
 	}
 	return ids

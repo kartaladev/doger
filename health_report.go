@@ -296,9 +296,15 @@ func (s *Scope) HealthReport(opts ...HealthReportOption) HealthReport {
 // service only once its start is complete; until then it is listed as
 // HealthUnknown and not checked. A start is not complete while the service
 // is a Starter that Start, Refresh or Scope.Start would start and that has
-// not started successfully, or a component that a kind with a registered
-// handler has not handled successfully, such as a Runnable whose Run has
-// not returned nil. A kind without a registered handler holds no component
+// not started successfully, or a component that a kind with a handler has
+// not handled successfully, such as a Runnable whose Run has not returned
+// nil, or one registered after Ready that no Refresh handled yet. A kind
+// without a handler holds no component back. Nor does a kind that the last
+// Start, Refresh or Scope.Start covering the component passed over, having
+// no handler then, and that no run attempted since: a handler given to it
+// later does not demote the started component, which stays checked until
+// the next Refresh or Scope.Start collects it, and is then unknown until
+// that handler handled it. A handler call that failed keeps the component
 // back. A Refresh or Scope.Start that abandons a step under
 // [InjectorOpts.StartTimeout] leaves that service unknown until the
 // abandoned call returns nil; one that returns an error leaves it to the
@@ -493,7 +499,7 @@ func (s *RootScope) needsWait(monitored bool, phase ContainerPhase) func(service
 // eligibleForReport reports whether a started container's reports and
 // rounds check service: not while it is a Starter that Start, Refresh or
 // Scope.Start would start and has not started yet, nor while a kind of it
-// with a registered handler has not handled it yet.
+// holds it back (see awaitsKindHandler).
 func eligibleForReport(root *RootScope, service any) bool {
 	wrapper, ok := service.(serviceWrapperAny)
 	if !ok {
@@ -504,25 +510,6 @@ func eligibleForReport(root *RootScope, service any) bool {
 	}
 
 	return !root.awaitsKindHandler(wrapper)
-}
-
-// awaitsKindHandler reports whether a kind of service with a registered
-// handler has not handled it yet. A kind without a handler never does.
-func (s *RootScope) awaitsKindHandler(service serviceWrapperAny) bool {
-	bindings := s.kindBindings(service)
-	if len(bindings) == 0 {
-		return false
-	}
-
-	entries := s.kindEntries()
-	for _, binding := range bindings {
-		hasHandler := slices.ContainsFunc(entries, func(entry kindEntry) bool { return entry.id == binding.id })
-		if hasHandler && !s.isHandled(service, binding.id) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // coveredMembers returns the targets of covered, by wrapper.

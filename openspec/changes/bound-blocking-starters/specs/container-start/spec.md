@@ -133,7 +133,7 @@ Examples:
 <!-- cases: N/A 10 compatibility: new API -->
 
 ### Requirement: Child scope shutdown waits for a start that is starting its services
-A child scope's `Shutdown`/`ShutdownWithContext` that begins while a `Start`, `Refresh` or `Scope.Start` is running with services of this scope or its descendants among its candidates SHALL cancel the contexts of their running start steps with a cause matching `ErrShutdown`, as root Shutdown does for a whole run, then wait for that run to return, bounded by its context, before shutting anything down. Those steps SHALL NOT fail the run or be recorded, and the run SHALL skip the rest of that subtree and continue. This skip rule SHALL apply only to the child scope's own Shutdown while root Shutdown has not begun: root Shutdown cancels the whole run, and a step of a child scope it reaches SHALL be cancelled and reported like a root step ("A Shutdown bounded below the start timeout"). A step of that subtree that the run skips, a cancelled one included, SHALL NOT count as started for its dependents: the run SHALL skip every candidate that depends on its service, directly or through others (an export included), without hook calls. A dependent inside the closing subtree is skipped silently. When the run skips a dependent outside it, the run SHALL start everything else and then fail: with the step's own `*StartError` matching `ErrStartTimeout` when the dependency's call was abandoned at `StartTimeout` and still runs, and otherwise with a `*StartError` naming the dependent that matches `ErrShutdown` (its dependency's scope is shutting down). When the dependent reaches several such skipped services, one whose abandoned call still runs SHALL decide the error over one skipped only because its scope is shutting down, and among the same reason the first by scope name, then service name, then scope ID (the last tie-break only separates same-named scopes, and is stable within a container only, since scope IDs are random); the error SHALL NOT depend on the order the dependency graph is walked in. The first step of the run that failed SHALL be the run's error instead. A step abandoned at `StartTimeout` whose dependents all lie inside the closing subtree SHALL NOT fail the run. With a `Logger` set, a cancelled step that returned an error or panicked is logged (container-logging, "A start step cancelled by its scope's shutdown that fails is logged"). A run that begins while the scope shuts down SHALL NOT start or handle services of that scope or of its descendant scopes. A descendant scope cannot be created under it then: `Scope()` panics with an error matching `ErrShutdown` (container-shutdown, "A closed scope stays closed"). Shutting such a scope down synchronously from code running in that run deadlocks, as for root Shutdown.
+A child scope's `Shutdown`/`ShutdownWithContext` that begins while a `Start`, `Refresh` or `Scope.Start` is running with services of this scope or its descendants among its candidates SHALL cancel the contexts of their running start steps with a cause matching `ErrShutdown`, as root Shutdown does for a whole run, then wait for that run to return, bounded by its context, before shutting anything down. Those steps SHALL NOT fail the run or be recorded, and the run SHALL skip the rest of that subtree and continue, also once a bounded shutdown of that scope that gave up waiting for the run completed: a later step of the closed, detached scope SHALL NOT be called on its removed service. A `Scope.Start` on that scope, or on a descendant of it, whose candidates were claimed before the shutdown began SHALL return nil without running the `HookScopeStarted` hooks, also when a bounded shutdown gave up waiting and completed before the run returned, as for a scope that was already shutting down when `Scope.Start` collected its services (scope-lifecycle-hooks); a shutdown of a descendant scope only skips that scope's steps, and the Started hooks of the scope `Scope.Start` runs on still run. This skip rule SHALL apply only to the child scope's own Shutdown while root Shutdown has not begun: root Shutdown cancels the whole run, and a step of a child scope it reaches SHALL be cancelled and reported like a root step ("A Shutdown bounded below the start timeout"). A step of that subtree that the run skips, a cancelled one included, SHALL NOT count as started for its dependents: the run SHALL skip every candidate that depends on its service, directly or through others (an export included), without hook calls. A dependent inside the closing subtree is skipped silently. A dependency through an export of the closing scope SHALL count whenever its edge was declared, an edge declared during the run included, and also once a bounded shutdown that gave up waiting for the run removed the skipped service, its edges and the export's source scope before the step ended: the run SHALL NOT start or silently drop the dependent then. A parallel start SHALL NOT return nil while a Starter outside a shutting-down scope was neither started nor reported. When the run skips a dependent outside it, the run SHALL start everything else and then fail: with the step's own `*StartError` matching `ErrStartTimeout` when the dependency's call was abandoned at `StartTimeout` and still runs, and otherwise with a `*StartError` naming the dependent that matches `ErrShutdown` (its dependency's scope is shutting down). When the dependent reaches several such skipped services, one whose abandoned call still runs SHALL decide the error over one skipped only because its scope is shutting down, and among the same reason the first by scope name, then service name, then scope ID (the last tie-break only separates same-named scopes, and is stable within a container only, since scope IDs are random); the error SHALL NOT depend on the order the dependency graph is walked in. The first step of the run that failed SHALL be the run's error instead. A step abandoned at `StartTimeout` whose dependents all lie inside the closing subtree SHALL NOT fail the run. With a `Logger` set, a cancelled step that returned an error or panicked is logged (container-logging, "A start step cancelled by its scope's shutdown that fails is logged"). A run that begins while the scope shuts down SHALL NOT start or handle services of that scope or of its descendant scopes. A descendant scope cannot be created under it then: `Scope()` panics with an error matching `ErrShutdown` (container-shutdown, "A closed scope stays closed"). Shutting such a scope down synchronously from code running in that run deadlocks, as for root Shutdown.
 
 #### Scenario: Child shutdown waits for a running start
 ```gherkin
@@ -178,6 +178,25 @@ Examples:
   | 0       | 4           | called Start(), then registered "w" and lazy Starter "x", whose Start returns nil at once, in "tenant" | root.Refresh() |
 ```
 
+#### Scenario: Scope.Start skips the Started hooks of a scope whose shutdown cancelled its steps
+```gherkin
+Given a started root container created with InjectorOpts{StartTimeout: <timeout>}, inside synctest.Test, and child scope "c" created after Start
+And a HookScopeStarted hook that counts its calls by scope
+And lazy Starter "x" in <x-scope>, registered after Start, whose Start(ctx) error <behaviour>
+And c.Start() is running in another goroutine and "x" has entered Start
+When the consumer calls <shutdown>
+And <then>
+Then c.Start() returns nil
+And the HookScopeStarted hook ran <started> times for "c" and 0 times for any other scope
+
+Examples:
+  | timeout | x-scope                  | behaviour                                          | shutdown                                       | then                                                                                     | started |
+  | 0       | "c"                      | waits for ctx.Done(), then returns ctx.Err()       | c.Shutdown()                                   | c.Shutdown() returns a successful report                                                 | 0       |
+  | 5s      | "c"                      | waits for ctx.Done(), then returns ctx.Err()       | c.Shutdown()                                   | c.Shutdown() returns a successful report                                                 | 0       |
+  | 0       | "c"                      | ignores ctx and blocks until released by the test  | c.ShutdownWithContext with a 10ms timeout      | c.ShutdownWithContext returns a failed report after 10ms, and only then "x" is released  | 0       |
+  | 0       | grandchild "deep" of "c" | waits for ctx.Done(), then returns ctx.Err()       | deep.Shutdown()                                | deep.Shutdown() returns a successful report                                              | 1       |
+```
+
 #### Scenario: Child shutdown waits for a stuck step up to the start timeout
 ```gherkin
 Given a started root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test, and child scope "tenant"
@@ -211,6 +230,97 @@ Examples:
   | 5s      | 0           | ignores ctx and blocks until its Shutdown() error method is called | "cache" is exported to the root with ExportNamed, and lazy Starter "dep" in the root, registered after Start, uses DependsOnNamed("cache") | root.Refresh() | an error naming "cache" that matches ErrStartTimeout        |
   | 0       | 0           | waits for ctx.Done(), then returns ctx.Err()                      | lazy Starter "dep" in "redis", registered after Start, uses DependsOnNamed("cache")                 | root.Refresh() | nil                                                         |
   | 5s      | 0           | ignores ctx and blocks until its Shutdown() error method is called | lazy Starter "dep" in "redis", registered after Start, uses DependsOnNamed("cache")                 | root.Refresh() | nil                                                         |
+```
+
+#### Scenario: A dependent of a skipped step whose bounded scope shutdown already removed it
+```gherkin
+Given a started root container created with InjectorOpts{StartParallelism: <parallelism>}, inside synctest.Test, and child scope "c" created after Start
+And lazy Starter "S" in "c", registered after Start, whose Start(ctx) error ignores ctx and blocks until released by the test
+And "S" is exported to the root with ExportNamed, and <dependent>
+And root.Refresh() is running in another goroutine and "S" has entered Start
+When the consumer calls c.ShutdownWithContext with a 10ms timeout
+Then it returns a failed report after 10ms, "S" is no longer registered in "c" and "c" is detached from the root
+When "S" is released
+Then root.Refresh() returns an error naming "P" that matches ErrShutdown
+And "P"'s Start was called 0 times and "P" is not recorded as started or handled
+
+Examples:
+  | parallelism | dependent                                                                                                  |
+  | 0           | lazy Starter "P" in the root, registered after Start, uses DependsOnNamed("S")                             |
+  | 0           | lazy Starter "P" in the root, registered after Start, invokes "S" in its provider                          |
+  | 2           | lazy Starter "P" in the root, registered after Start, uses DependsOnNamed("S")                             |
+  | 2           | lazy Starter "P" in the root, registered after Start, invokes "S" in its provider                          |
+  | 0           | lazy "P" in the root, registered after Start, a component of a StageAfterStart kind, uses DependsOnNamed("S") |
+```
+
+#### Scenario: An edge declared during the run to the export of a step a bounded shutdown removes
+```gherkin
+Given a started root container created with InjectorOpts{StartParallelism: <parallelism>}, inside synctest.Test, whose kind "wire" has a StageBeforeStart handler that calls DeclareDependency(root, "P", "S")
+And child scope "c" created after Start, with lazy Starter "S", registered after Start, whose Start(ctx) error ignores ctx and blocks until released by the test, exported to the root with ExportNamed
+And lazy Starter "P" in the root, registered after Start, depending on nothing at registration, and lazy "W" in the root, a component of "wire"
+And root.Refresh() is running in another goroutine, the "wire" handler has declared the edge, and "S" has entered Start
+When the consumer calls c.ShutdownWithContext with a 10ms timeout
+Then it returns a failed report after 10ms and "c" is detached from the root
+When "S" is released
+Then root.Refresh() returns an error naming "P" that matches ErrShutdown
+And "P"'s Start was called 0 times and "P" is not recorded as started
+
+Examples:
+  | parallelism |
+  | 0           |
+  | 2           |
+```
+
+#### Scenario: A dependent reaching a skipped step through the source of a removed export
+```gherkin
+Given a started root container created with InjectorOpts{StartParallelism: <parallelism>}, inside synctest.Test, and child scope "c" created after Start
+And lazy Starter "T" in "c", registered after Start, whose Start(ctx) error ignores ctx and blocks until released by the test
+And lazy <source> "S" in "c", registered after Start, whose provider invokes "T", exported to the root with ExportNamed
+And lazy Starter "P" in the root, registered after Start, using DependsOnNamed("S")
+And root.Refresh() is running in another goroutine and "T" has entered Start
+When the consumer calls c.ShutdownWithContext with a 10ms timeout
+Then it returns a failed report after 10ms and "c" is detached from the root
+When "T" is released
+Then root.Refresh() returns an error naming "P" that matches ErrShutdown
+And "P"'s Start was called 0 times
+
+Examples:
+  | parallelism | source        |
+  | 0           | plain service |
+  | 2           | plain service |
+  | 0           | Starter       |
+  | 2           | Starter       |
+```
+
+#### Scenario: The later steps of a scope whose bounded shutdown completed are skipped
+```gherkin
+Given a started root container created with InjectorOpts{StartParallelism: <parallelism>}, inside synctest.Test, whose kind "late" has a StageAfterStart handler calling the component's Start, and whose kind "bare" has no handler
+And child scope "c" created after Start, with lazy Starter "S", registered after Start, whose Start(ctx) error ignores ctx and blocks until released by the test
+And <later> in "c", registered after "S"
+And root.Refresh() is running in another goroutine and "S" has entered Start
+When the consumer calls c.ShutdownWithContext with a 10ms timeout
+Then it returns a failed report after 10ms and "c" is detached from the root
+When "S" is released
+Then root.Refresh() returns nil
+And "T"'s Start was called 0 times, "T" is not recorded as started or handled, and the container keeps no passed-over kind record for the removed "T"
+
+Examples:
+  | parallelism | later                                                   |
+  | 0           | lazy Starter "T"                                        |
+  | 0           | lazy "T", a component of kind "late"                    |
+  | 0           | lazy "T", a component of kind "bare", which the run passed over |
+  | 2           | lazy Starter "T" depending on "S"                       |
+```
+
+#### Scenario: A shutdown that has only closed the scope has not begun for the run
+```gherkin
+Given a started root container and child scope "c" created after Start, with a HookScopeStarted hook counting its calls for "c"
+And lazy Starter "A" in "c", registered after Start, whose Start closes "c" as the first step of its shutdown does, and stops there
+And lazy Starter "B" in "c", registered after Start, using DependsOnNamed("A")
+When the consumer calls c.Start()
+Then it returns nil
+And "A" and "B" were each started 1 time
+And the HookScopeStarted hook ran 1 time for "c"
 ```
 
 #### Scenario: A failure of the run wins over a skipped dependent
@@ -258,7 +368,7 @@ And tmp.Shutdown() returned a successful report while Start was running
 <!-- cases: 4 boundaries: a run with no candidate in the scope (a scope created during the run) does not wait; a step that honours its context returns before the wait ends; one that ignores it is abandoned at its StartTimeout -->
 <!-- cases: 5 errors: a cancelled step is not a run failure; a dependent outside the closing subtree fails the run with ErrShutdown, or with the dependency's ErrStartTimeout while its abandoned call runs; a real failure of the run wins ("A failure of the run wins over a skipped dependent"); the context error has its own requirement -->
 <!-- cases: N/A 6 duplicates: a second Shutdown of the same scope finds no running run with candidates in it -->
-<!-- cases: 7 lifecycle: Start, Refresh and Scope.Start rows; a run that begins during the shutdown; the run continues with scopes outside the closing subtree; dependents inside the subtree are skipped silently, outside it (through an export, by DependsOnNamed or by invocation) they are skipped and reported; a candidate the run dropped at discovery because its scope was already closing is not a skipped step: a dependent of it fails or succeeds by its own build, as before -->
+<!-- cases: 7 lifecycle: Start, Refresh and Scope.Start rows; a run that begins during the shutdown; the run continues with scopes outside the closing subtree; dependents inside the subtree are skipped silently, outside it (through an export, by DependsOnNamed or by invocation) they are skipped and reported; a candidate the run dropped at discovery because its scope was already closing is not a skipped step: a dependent of it fails or succeeds by its own build, as before; Scope.Start skips the Started hooks of a scope whose own or ancestor shutdown began after the claim, an unbounded and a bounded shutdown, and keeps them for a descendant's shutdown ("Scope.Start skips the Started hooks of a scope whose shutdown cancelled its steps") -->
 <!-- cases: 8 concurrency: the subject; runs under -race with goleak; StartParallelism 4 rows; the registry of running step contexts is empty after every run (normal, panic, abandoned and cancelled steps) -->
 <!-- cases: N/A 9 panics: hook panics during the wait follow scope-lifecycle-hooks -->
 <!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - a child scope Shutdown now cancels the running start steps of its subtree, as root Shutdown cancels a whole run, so it no longer waits forever on a Start that stops only when its context ends; a step so cancelled no longer fails the run. Earlier: a child scope Shutdown no longer races a running start; Start-time code that shuts down a scope the run is starting deadlocks; a grandchild created under a closing scope is refused with ErrShutdown -->

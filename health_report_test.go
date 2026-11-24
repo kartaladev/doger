@@ -2439,34 +2439,191 @@ func TestHealthReport_ComponentCheckedOnceHandled(t *testing.T) {
 	}
 }
 
+// healthReportTestStartFunc is a Starter whose Start calls the function.
+type healthReportTestStartFunc func() error
+
+func (f healthReportTestStartFunc) Start() error { return f() }
+
+// healthReportTestLateRunner is a component whose HealthCheck fails until
+// its Run was called.
+type healthReportTestLateRunner struct {
+	ran   atomic.Bool
+	calls atomic.Int32
+}
+
+func (r *healthReportTestLateRunner) Run(context.Context) error {
+	r.ran.Store(true)
+	return nil
+}
+
+func (r *healthReportTestLateRunner) HealthCheck() error {
+	r.calls.Add(1)
+	if !r.ran.Load() {
+		return errors.New("not running")
+	}
+	return nil
+}
+
+// TestHealthReport_ComponentRegisteredAfterReadyWaitsForRefresh pins
+// health-reports "A service registered after Ready waits for Refresh" for
+// a component of a kind that already has a handler: like a Starter, it is
+// unknown and not checked until a Refresh handled it, so no early result
+// is cached either.
+func TestHealthReport_ComponentRegisteredAfterReadyWaitsForRefresh(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		custom bool // bound to custom kind "k" instead of AsRunnable
+	}{
+		{name: "runnable"},
+		{name: "custom_kind_with_handler", custom: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 5*time.Second)
+
+			root := New()
+			k := NewKind[*healthReportTestLateRunner, struct{}]("k")
+			k.Handle(root, StageAfterStart, func(ctx context.Context, c Component[*healthReportTestLateRunner, struct{}]) error {
+				return c.Instance.Run(ctx)
+			})
+			require.NoError(t, root.Start())
+			defer root.Shutdown()
+			job := &healthReportTestLateRunner{}
+			opt := AsRunnable()
+			if tt.custom {
+				opt = k.With(struct{}{})
+			}
+			ProvideNamedValue(root, "job", job, opt)
+
+			entry := healthReportTestEntry(t, root.HealthReport(), "job")
+			assert.Equal(t, HealthUnknown, entry.State, "unknown before Refresh, like a Starter: %v", entry.Err)
+			assert.Zero(t, job.calls.Load(), "not checked before Refresh")
+
+			require.NoError(t, root.Refresh())
+			assert.Equal(t, HealthHealthy, healthReportTestEntry(t, root.HealthReport(), "job").State)
+		})
+	}
+}
+
+// healthReportTestHandleThenWait is a Starter whose Start calls handle,
+// then waits for its context to end.
+type healthReportTestHandleThenWait struct {
+	handle  func()
+	entered chan struct{}
+}
+
+func (s *healthReportTestHandleThenWait) Start(ctx context.Context) error {
+	s.handle()
+	close(s.entered)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestHealthReport_PassedOverRecords pins the passed-over kind records of
+// D13 at the edges no scenario reaches: a component removed between the
+// run's claim and the record of its kinds keeps no record, and a run
+// attempts a kind given its first handler during the run only once it
+// claims the component's step, so a step it skips because its scope is
+// shutting down leaves the component exempt (and checked) until its
+// removal.
+func TestHealthReport_PassedOverRecords(t *testing.T) {
+	t.Parallel()
+
+	t.Run("removed_between_claim_and_record", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+
+		root := New()
+		bare := NewKind[*healthReportTestSwitch, struct{}]("bare")
+		require.NoError(t, root.Start())
+		defer root.Shutdown()
+		ProvideNamedValue(root, "K", &healthReportTestSwitch{}, bare.With(struct{}{}))
+		wrapper := wrapperOf(t, root.self, "K")
+		root.startSeam.afterClaim = func() {
+			assert.NoError(t, ShutdownNamed(root, "K"), "K is removed after the claim")
+		}
+
+		assert.Error(t, root.Refresh(), "the removed K cannot be built")
+		assert.False(t, hasKindRecord(root, wrapper), "no passed-over record is kept for the removed K")
+	})
+
+	t.Run("skipped_step_is_not_attempted", func(t *testing.T) {
+		t.Parallel()
+		testWithTimeout(t, 5*time.Second)
+
+		root := New()
+		late := NewKind[*healthReportTestSwitch, struct{}]("late")
+		require.NoError(t, root.Start())
+		defer root.Shutdown()
+		c := root.Scope("c")
+		// S gives "late" its first handler once the run claimed K, then
+		// waits until c's shutdown cancels it
+		s := &healthReportTestHandleThenWait{
+			handle: func() {
+				late.Handle(root, StageAfterStart, func(context.Context, Component[*healthReportTestSwitch, struct{}]) error { return nil })
+			},
+			entered: make(chan struct{}),
+		}
+		ProvideNamedValue(c, "S", s, AsStarter())
+		ProvideNamedValue(c, "K", &healthReportTestSwitch{}, late.With(struct{}{}))
+		var duringShutdown HealthReport
+		root.AddScopeClosingHook(func(_ context.Context, scope *Scope) {
+			if scope == c {
+				// the run returned; K's step was skipped, K is not removed yet
+				duringShutdown = root.HealthReport()
+			}
+		})
+
+		runErr := make(chan error, 1)
+		go func() { runErr <- root.Refresh() }()
+		<-s.entered
+		require.True(t, c.Shutdown().Succeed)
+		require.NoError(t, <-runErr, "the steps of the closing scope are skipped")
+
+		entry := healthReportTestEntry(t, duringShutdown, "K")
+		assert.Equal(t, HealthHealthy, entry.State, "K's passed-over kind was not attempted: its skipped step did not run")
+	})
+}
+
 // TestHealthReport_OnlyHandledKindsHoldBack pins health-reports "Only the
-// kinds with a registered handler hold a component back": an implicit
-// Runnable binding counts like an explicit one, a kind without a handler
-// holds nothing back, a failed handler of one of several kinds keeps the
-// service unknown, and a handler given after Ready holds back its kind's
-// components until the next Refresh.
+// kinds with a handler that the start pipeline did not pass over hold a
+// component back": an implicit Runnable binding counts like an explicit
+// one, a kind without a handler holds nothing back, a failed handler of one
+// of several kinds keeps the service unknown, and a handler given after
+// Ready does not demote a started component: it stays checked until the
+// next Refresh handles it.
 func TestHealthReport_OnlyHandledKindsHoldBack(t *testing.T) {
 	t.Parallel()
 
 	ok := func(context.Context, Component[Runner, struct{}]) error { return nil }
-	lateAudit := NewKind[Runner, struct{}]("audit") // given its handler after Refresh
+	// each given its handler after Refresh
+	lateAudit := NewKind[Runner, struct{}]("audit")
+	lateChecked := NewKind[Runner, struct{}]("zz")
+	lateRefreshed := NewKind[Runner, struct{}]("audit")
+	lateFailedRun := NewKind[Runner, struct{}]("audit")
+	lateDuringRun := NewKind[Runner, struct{}]("audit")
 
 	tests := []struct {
 		name    string
 		opts    InjectorOpts
 		blocks  bool                               // Run blocks until the test releases it
 		binding func(i *RootScope) []ProvideOption // the options of "job", with any handler they need
-		after   func(i *RootScope)                 // run after Refresh, before the read
+		after   func(t *testing.T, i *RootScope)   // run after Refresh, before the read
 		refresh func(t *testing.T, err error)      // asserts Refresh's error
 		state   HealthState
 		calls   int32
+		checked bool // the read's entry has a CheckedAt
 	}{
 		{
 			name:    "runnable_autodetected",
 			opts:    InjectorOpts{EnableRunnerAutoDetection: true},
 			binding: func(*RootScope) []ProvideOption { return nil },
 			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
-			state:   HealthHealthy, calls: 1,
+			state:   HealthHealthy, calls: 1, checked: true,
 		},
 		{
 			name:    "runnable_autodetected_running",
@@ -2482,7 +2639,7 @@ func TestHealthReport_OnlyHandledKindsHoldBack(t *testing.T) {
 				return []ProvideOption{NewKind[Runner, struct{}]("audit").With(struct{}{})}
 			},
 			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
-			state:   HealthHealthy, calls: 1,
+			state:   HealthHealthy, calls: 1, checked: true,
 		},
 		{
 			name: "several_kinds_one_failed",
@@ -2498,7 +2655,62 @@ func TestHealthReport_OnlyHandledKindsHoldBack(t *testing.T) {
 		{
 			name:    "first_handler_after_ready",
 			binding: func(*RootScope) []ProvideOption { return []ProvideOption{lateAudit.With(struct{}{})} },
-			after:   func(i *RootScope) { lateAudit.Handle(i, StageAfterStart, ok) },
+			after:   func(_ *testing.T, i *RootScope) { lateAudit.Handle(i, StageAfterStart, ok) },
+			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
+			state:   HealthHealthy, calls: 1, checked: true,
+		},
+		{
+			name:    "first_handler_after_checked",
+			binding: func(*RootScope) []ProvideOption { return []ProvideOption{lateChecked.With(struct{}{})} },
+			after: func(t *testing.T, i *RootScope) {
+				entry := healthReportTestEntry(t, i.HealthReport(), "job")
+				require.Equal(t, HealthHealthy, entry.State, "job is healthy before its kind has a handler")
+				lateChecked.Handle(i, StageAfterStart, ok)
+			},
+			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
+			state:   HealthHealthy, calls: 0, checked: true,
+		},
+		{
+			name:    "first_handler_after_ready_then_refresh",
+			binding: func(*RootScope) []ProvideOption { return []ProvideOption{lateRefreshed.With(struct{}{})} },
+			after: func(t *testing.T, i *RootScope) {
+				lateRefreshed.Handle(i, StageAfterStart, ok)
+				require.NoError(t, i.Refresh(), "the next Refresh handles job")
+			},
+			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
+			state:   HealthHealthy, calls: 1, checked: true,
+		},
+		{
+			// the second Refresh collects job while "audit" has a handler,
+			// then fails at Starter "bad", before job's StageAfterStart step
+			name:    "first_handler_then_run_fails_before_stage",
+			binding: func(*RootScope) []ProvideOption { return []ProvideOption{lateFailedRun.With(struct{}{})} },
+			after: func(t *testing.T, i *RootScope) {
+				lateFailedRun.Handle(i, StageAfterStart, ok)
+				bad := newStepProbe(0)
+				bad.unblock()
+				bad.outcome = func(int32) error { return errors.New("bad failed") }
+				ProvideNamed(i, "bad", func(Injector) (*stepProbe, error) { return bad, nil }, AsStarter())
+				require.ErrorContains(t, i.Refresh(), "bad failed")
+			},
+			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
+			state:   HealthUnknown, calls: 0,
+		},
+		{
+			// the second Refresh collects job while "audit" has no handler;
+			// Starter "w" gives it one, which fails for job
+			name:    "first_handler_during_run_fails",
+			binding: func(*RootScope) []ProvideOption { return []ProvideOption{lateDuringRun.With(struct{}{})} },
+			after: func(t *testing.T, i *RootScope) {
+				w := healthReportTestStartFunc(func() error {
+					lateDuringRun.Handle(i, StageAfterStart, func(context.Context, Component[Runner, struct{}]) error {
+						return errors.New("audit failed")
+					})
+					return nil
+				})
+				ProvideNamed(i, "w", func(Injector) (healthReportTestStartFunc, error) { return w, nil }, AsStarter())
+				require.ErrorContains(t, i.Refresh(), "audit failed")
+			},
 			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
 			state:   HealthUnknown, calls: 0,
 		},
@@ -2529,14 +2741,16 @@ func TestHealthReport_OnlyHandledKindsHoldBack(t *testing.T) {
 				ProvideNamed(i, "job", func(Injector) (*healthReportTestJob, error) { return job, nil }, tt.binding(i)...)
 
 				tt.refresh(t, i.Refresh())
+				calls := job.calls.Load()
 				if tt.after != nil {
-					tt.after(i)
+					tt.after(t, i)
+					calls = job.calls.Load()
 				}
 
-				calls := job.calls.Load()
 				entry := healthReportTestEntry(t, i.HealthReport(), "job")
 				is.Equal(tt.state, entry.State)
 				is.Equal(tt.calls, job.calls.Load()-calls, "calls by the read")
+				is.Equal(tt.checked, !entry.CheckedAt.IsZero(), "the entry has a CheckedAt")
 			})
 		})
 	}

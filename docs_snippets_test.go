@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/kartaladev/doger"
 )
 
@@ -304,7 +307,7 @@ func TestDocs_StarterSnippetsCompiled(t *testing.T) {
 	names := checkDocSnippets(t, "docs/docs/service-lifecycle/starter.md")
 	for _, required := range []string{"starter-blocking-server", "starter-listening-server"} {
 		if !names[required] {
-			t.Errorf("the Starter page has no <!-- snippet: %s --> block", required)
+			assert.Failf(t, "the Starter page misses a snippet", "the Starter page has no <!-- snippet: %s --> block", required)
 		}
 	}
 }
@@ -325,7 +328,7 @@ func checkDocSnippets(t *testing.T, path string) (names map[string]bool) {
 
 	blocks := docsSnippet.FindAllStringSubmatch(doc, -1)
 	if len(blocks) == 0 {
-		t.Fatalf("%s has no Go block", path)
+		require.Failf(t, "no Go block", "%s has no Go block", path)
 	}
 	names = map[string]bool{}
 	compiled := 0
@@ -353,7 +356,7 @@ func checkDocSnippets(t *testing.T, path string) (names map[string]bool) {
 		compiled++
 	}
 	if compiled == 0 {
-		t.Errorf("no compiled snippet in %s", path)
+		assert.Failf(t, "no compiled snippet", "no compiled snippet in %s", path)
 	}
 
 	return names

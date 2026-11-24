@@ -49,12 +49,16 @@ break is listed under **BREAKING** with its migration.
   guide, "A child scope shutdown cancels its subtree's running start
   steps".
 - `HealthReport`/`HealthReportWithContext` reads and `HealthScheduler`
-  rounds now skip a component that a kind with a registered handler has
-  not handled yet, as they already skipped a Starter not started yet: it
-  is listed as `HealthUnknown` and not checked. A Runnable whose `Run` has
-  not returned, including one abandoned under `StartTimeout` that still
-  runs, no longer reports healthy; it is checked once its `Run` returned
-  nil. A kind without a registered handler holds no component back, and
+  rounds now skip a component that a kind with a handler has not handled
+  yet, as they already skipped a Starter not started yet: it is listed as
+  `HealthUnknown` and not checked, and one registered after `Ready` waits
+  for `Refresh` as a Starter does. A Runnable whose `Run` has not
+  returned, including one abandoned under `StartTimeout` that still runs,
+  no longer reports healthy; it is checked once its `Run` returned nil. A
+  kind without a handler holds no component back, nor does a handler
+  given with `Handle` after the run that started the component: it stays
+  checked until the next `Refresh` or `Scope.Start` collects it, then is
+  unknown until that handler handled it, and
   `HealthCheck()` and the single-service functions still check every
   service. See `docs/docs/service-lifecycle/healthchecker.md` ("Services
   whose start is not complete") and the upgrading guide, [Health reports

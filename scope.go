@@ -108,6 +108,8 @@ type Scope struct {
 type scopeClosing struct {
 	count int            // shutdowns of the scope in progress
 	run   *scopeCloseRun // the running shutdown that others join, or nil
+	// done reports that a shutdown of the scope completed (finishScopeClose)
+	done bool
 }
 
 // ID returns the unique identifier of the scope.
@@ -486,6 +488,9 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // If ctx ends first, the report fails with an error keyed by this scope with
 // an empty service name, wrapping ctx.Err(), and the shutdown proceeds with
 // the ended context, so it skips the services it then reaches (see below).
+// The run still skips the later steps of this subtree once that shutdown
+// completed, and still skips and reports a dependent outside it, whenever
+// its edge to an export of this scope was declared.
 // Never shut down, synchronously from code running in such a start, a scope
 // that the start is starting: it would wait for itself.
 //
@@ -660,6 +665,7 @@ func (s *Scope) joinClose() (run *scopeCloseRun, winner bool) {
 	}
 	s.closing.count++
 	root.cancelSubtreeSteps(s)
+	root.noteRunRootShutdown(s)
 	if s.closing.run != nil {
 		return s.closing.run, false
 	}
@@ -682,6 +688,7 @@ func (s *Scope) finishScopeClose(run *scopeCloseRun, report *ShutdownReport) {
 
 	run.report = report
 	s.closing.run = nil
+	s.closing.done = true
 	close(run.done)
 }
 

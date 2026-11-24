@@ -352,11 +352,17 @@ type InjectorOpts struct {
 	// HookScopeStarted is called by Scope.Start on a child scope once its
 	// services started successfully. It is not called when the scope, or one
 	// of its ancestors, was shutting down, so that Scope.Start started
-	// nothing. A shutdown of the scope that begins after Scope.Start collected
-	// its services waits for those services to start, then runs its Closing
-	// hooks, so they may run during or before the Started hooks. A panic is
-	// recovered and dispatched like a container observer hook panic, with the
-	// point "scope-started" (see HookContainerPanic).
+	// nothing, as for [InjectorOpts.HookScopeStarting]. Nor is it called when
+	// a shutdown of the scope, or of an ancestor, began after Scope.Start
+	// collected its services: that shutdown cancels their running start
+	// steps, Scope.Start skips them and returns nil, and the shutdown then
+	// waits for Scope.Start to return, bounded by its context, before its
+	// Closing hooks run. A shutdown that began before Scope.Start collected
+	// them, and completed by then, is one Scope.Start runs after: the hooks
+	// are called. A shutdown of a descendant scope only skips that scope's
+	// services: the hooks are called for the scope Scope.Start runs on. A
+	// panic is recovered and dispatched like a container observer hook
+	// panic, with the point "scope-started" (see HookContainerPanic).
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddScopeStartedHook] adds a hook later, safely

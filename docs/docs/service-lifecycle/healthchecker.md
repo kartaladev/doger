@@ -171,8 +171,8 @@ errors.Is(err, context.Canceled)            // true
 Once the container left `PhaseIdle`, `HealthReport()`, `HealthReportWithContext()` and the rounds of a `HealthScheduler` check a service only once its start is complete. Until then the service is listed as `HealthUnknown` and its `HealthCheck` is not called. Starters and kind components follow the same rule:
 
 - a Starter that `Start`, `Refresh` or `Scope.Start` would start is unknown until it started successfully, for example one registered after `Ready` until the next `Refresh`;
-- a component of a kind with a registered handler is unknown until that handler handled it successfully, for example a Runnable until its `Run` returned nil. A service opted into several such kinds waits for all of them;
-- a kind without a registered handler holds no component back: its components are checked as before.
+- a component of a kind with a handler is unknown until that handler handled it successfully, for example a Runnable until its `Run` returned nil, or one registered after `Ready` until the next `Refresh`, as for a Starter. A handler call that failed keeps it unknown. A service opted into several such kinds waits for all of them;
+- a kind without a handler holds no component back: its components are checked as before. Giving a kind its first handler with `Handle` after the run that started a component does not demote that component: it stays checked until the next `Refresh` or `Scope.Start` collects it, and is unknown from then on until that handler handled it.
 
 A `Refresh` or `Scope.Start` that abandons a step under `InjectorOpts.StartTimeout` leaves that service unknown until the abandoned call returns. When it returns nil, the step is recorded and the service is checked from the next read on; when it returns an error, the service stays unknown until a later `Refresh` or `Scope.Start` starts or handles it.
 

@@ -139,6 +139,8 @@ func (c *dependentsCheck) skips(step startStep) bool {
 		return false
 	}
 
+	// a dependent of a scope whose shutdown completed reaches nothing (its
+	// services and edges are gone), so only a closing scope counts here
 	closingItself := c.run.root.scopeClosing(step.candidate.scope)
 
 	c.run.mu.Lock()
@@ -151,6 +153,56 @@ func (c *dependentsCheck) skips(step startStep) bool {
 	}
 
 	return true
+}
+
+// neighbors returns the services v depends on for the walk: its
+// dependencyNeighbors, plus the source of an export whose source scope a
+// bounded shutdown detached during the run (detachedExportSource).
+func (c *dependentsCheck) neighbors(v ServiceDescription) []ServiceDescription {
+	return append(c.run.root.dependencyNeighbors(v), c.run.detachedExportSources(v)...)
+}
+
+// detachedExportSources returns, when desc is an export whose source scope
+// is no longer a child of the export's scope, every candidate the run
+// claimed in that source scope or its descendants, and nil otherwise. A
+// bounded child scope shutdown that gave up waiting for the run removes
+// the services of that subtree, with their dependency edges, and detaches
+// the scope, so dependencyNeighbors no longer leads from the export to its
+// source, nor from the source to what it depends on there, while the run
+// may still skip a step of that subtree afterwards: a dependent of the
+// export outside the subtree must then be skipped and reported all the
+// same. The edges inside the subtree are gone, so the export is taken to
+// depend on all of its claimed candidates: a dependent of a scope that
+// shut down is skipped once any step there was. Resolving this here,
+// rather than snapshotting the graph, keeps an edge declared at any time
+// during the run; it costs a scope lookup per service a walk visits, and
+// walks run only once the run skipped a step.
+func (r *startRun) detachedExportSources(desc ServiceDescription) []ServiceDescription {
+	scope := r.root.scopeByID(desc.ScopeID)
+	if scope == nil {
+		return nil
+	}
+	serviceAny, ok := scope.serviceGet(desc.Service)
+	if !ok {
+		return nil
+	}
+	export, ok := asExport(serviceAny)
+	if !ok {
+		return nil
+	}
+	if _, _, found := export.exportSource(); found {
+		// dependencyNeighbors follows a live source
+		return nil
+	}
+
+	var sources []ServiceDescription
+	for _, candidate := range r.candidates {
+		if export.withinSource(candidate.scope) {
+			sources = append(sources, candidate.desc())
+		}
+	}
+
+	return sources
 }
 
 // reached returns the best skipped service that desc reaches.
@@ -172,7 +224,7 @@ func (c *dependentsCheck) connect(v ServiceDescription) {
 	c.onStack[v] = true
 
 	var best reachedSkip
-	for _, n := range c.run.root.dependencyNeighbors(v) {
+	for _, n := range c.neighbors(v) {
 		best = c.better(best, c.asReached(n))
 		if _, seen := c.index[n]; !seen {
 			c.connect(n)

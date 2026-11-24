@@ -37,6 +37,16 @@ type startSeam struct {
 	// dependencyNeighbors runs at each dependencyNeighbors call, so that a
 	// test can count the graph reads of a run.
 	dependencyNeighbors func(desc ServiceDescription)
+	// afterClaim runs between the claim of the run's candidates and the
+	// record of their kinds (recordClaimedKinds).
+	afterClaim func()
+}
+
+// seamAfterClaim runs the afterClaim seam, if set.
+func (s *RootScope) seamAfterClaim() {
+	if s.startSeam.afterClaim != nil {
+		s.startSeam.afterClaim()
+	}
 }
 
 // seamDependencyNeighbors runs the dependencyNeighbors seam, if set.

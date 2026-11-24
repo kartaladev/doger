@@ -388,7 +388,23 @@ func (s *RootScope) finishStart(startCtx context.Context, err *error) {
 	}
 	s.startCancel(nil)
 	close(s.startDone)
+	s.endRunClaim()
+}
+
+// endRunClaim drops the record of the running pipeline's claim: its scopes
+// and roots. lifecycleMu must be held.
+func (s *RootScope) endRunClaim() {
 	s.runScopes = nil
+	s.runRoots, s.runRootsShutDown = nil, false
+}
+
+// noteRunRootShutdown records that the shutdown of scope began while the
+// running pipeline holds its claim, when scope is one of its roots or an
+// ancestor of one. lifecycleMu must be held.
+func (s *RootScope) noteRunRootShutdown(scope *Scope) {
+	if slices.ContainsFunc(s.runRoots, func(root *Scope) bool { return isScopeOrDescendant(root, scope) }) {
+		s.runRootsShutDown = true
+	}
 }
 
 // abortOutcome is the outcome of a run that Shutdown began during: a run
@@ -464,7 +480,9 @@ func (s *RootScope) runStartPipeline(startCtx context.Context) error {
 // claimed, so that nothing of them was started.
 func (s *RootScope) runPipeline(ctx context.Context, roots []*Scope) (closing bool, err error) {
 	candidates, closing := s.claimCandidates(roots, s.discoverCandidates(roots))
-	run := &startRun{root: s}
+	s.seamAfterClaim()
+	s.recordClaimedKinds(candidates)
+	run := &startRun{root: s, candidates: candidates}
 
 	if err := buildCandidates(ctx, candidates); err != nil {
 		return closing, err
@@ -499,6 +517,9 @@ func (s *RootScope) runPipeline(ctx context.Context, roots []*Scope) (closing bo
 // which the run returns when no step failed.
 type startRun struct {
 	root *RootScope
+	// candidates are the ones the run claimed; never written after the run
+	// was created
+	candidates []*startCandidate
 
 	mu      sync.Mutex
 	skipped map[ServiceDescription]stepSkip
@@ -573,6 +594,44 @@ func (r *startRun) skippedStep(candidate *startCandidate) bool {
 
 	_, skipped := r.skipped[candidate.desc()]
 	return skipped
+}
+
+// unscheduledError is the error of a parallel start whose scheduling ended,
+// with no failure, while Starters were still pending: each waits for a
+// Starter that never started, which can only be one the run skipped and
+// that the dependents check no longer reaches. A pending Starter of a
+// scope that is shutting down, or whose shutdown completed, is skipped
+// silently, as the dependents check skips it; for the first of the others,
+// the run reports what it would report for a skipped dependent of that
+// dependency (stepSkip.dependentError), so a parallel start never leaves a
+// Starter unstarted while returning nil. It returns nil when every pending
+// Starter is in such a scope.
+func (r *startRun) unscheduledError(pending []*startCandidate, requires map[ServiceDescription][]ServiceDescription) error {
+	for _, candidate := range pending {
+		if r.root.closingScope(candidate.scope) != nil {
+			continue
+		}
+
+		return r.skippedDependencyError(startStep{candidate: candidate, op: StartOpStart}, requires[candidate.desc()])
+	}
+
+	return nil
+}
+
+// skippedDependencyError returns the dependentError of the first of
+// required that the run skipped, for step.
+func (r *startRun) skippedDependencyError(step startStep, required []ServiceDescription) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, desc := range required {
+		if skip, skipped := r.skipped[desc]; skipped {
+			return skip.dependentError(step)
+		}
+	}
+
+	// defensive: a pending Starter waits for one the run skipped
+	return step.startError(libErrorf("a dependency of `%s` was not started", step.candidate.name))
 }
 
 // pendingError returns the run's first pending error: that of the first
@@ -719,6 +778,7 @@ func (s *RootScope) claimCandidates(roots []*Scope, candidates []*startCandidate
 	for _, candidate := range candidates {
 		s.runScopes[candidate.scope] = struct{}{}
 	}
+	s.runRoots, s.runRootsShutDown = roots, false
 
 	return candidates, !slices.ContainsFunc(roots, func(root *Scope) bool { return !closingInLine(root) })
 }
@@ -945,10 +1005,7 @@ func (s *RootScope) startStartersParallel(startCtx context.Context, run *startRu
 		}
 
 		if running == 0 {
-			if firstPanic != nil {
-				panic(firstPanic.recovered)
-			}
-			return firstErr
+			return endParallelStart(run, pending, requires, firstErr, firstPanic)
 		}
 
 		o := <-outcomes
@@ -966,6 +1023,20 @@ func (s *RootScope) startStartersParallel(startCtx context.Context, run *startRu
 			started[o.candidate.desc()] = true
 		}
 	}
+}
+
+// endParallelStart is how a parallel start ends once no Starter runs: it
+// re-raises the first per-service hook panic, else returns the first
+// failure, else reports the Starters still pending (unscheduledError).
+func endParallelStart(run *startRun, pending []*startCandidate, requires map[ServiceDescription][]ServiceDescription, firstErr error, firstPanic *starterOutcome) error {
+	if firstPanic != nil {
+		panic(firstPanic.recovered)
+	}
+	if firstErr == nil && len(pending) > 0 {
+		return run.unscheduledError(pending, requires)
+	}
+
+	return firstErr
 }
 
 // starterOutcome is how the start of one Starter of a parallel start ended.
@@ -1135,6 +1206,8 @@ func (s *RootScope) runStage(startCtx context.Context, run *startRun, stage Stag
 			if run.claim(startCtx, step) {
 				continue
 			}
+			// a kind given its first handler since discovery is attempted too
+			s.markAttempted(component.service, entry.id)
 			end := s.runStartStep(startCtx, step, func(ctx context.Context) error {
 				return callKindHandler(ctx, entry, component, metas[component])
 			})
