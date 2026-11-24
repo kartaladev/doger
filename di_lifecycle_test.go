@@ -2,10 +2,12 @@ package doger
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHealthCheck(t *testing.T) {
@@ -315,4 +317,60 @@ func TestDoubleInjection(t *testing.T) {
 			is.PanicsWithError(tt.message, tt.provide)
 		})
 	}
+}
+
+// TestExampleServer_ShutdownWithoutStart pins the example server's Shutdown
+// when no Serve loop runs, after no Start or a failed bind: it returns
+// whatever its context, including one that never ends, instead of hanging.
+func TestExampleServer_ShutdownWithoutStart(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		start      bool   // Start is called first
+		addr       string // the address Start binds
+		background bool   // Shutdown gets context.Background(), which never ends
+	}{
+		{name: "no_start", addr: "127.0.0.1:0"},
+		{name: "failed_bind", start: true, addr: "127.0.0.1:-1"},
+		{name: "no_start_background", addr: "127.0.0.1:0", background: true},
+		{name: "failed_bind_background", start: true, addr: "127.0.0.1:-1", background: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, time.Second)
+
+			server := newExampleServer(tt.addr, http.NewServeMux())
+			if tt.start {
+				require.Error(t, server.Start(context.Background()), "the bind fails")
+			}
+
+			ctx := context.Background()
+			if !tt.background {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+				defer cancel()
+			}
+			require.NoError(t, server.Shutdown(ctx)) // returns: the test does not time out
+		})
+	}
+}
+
+// TestExampleServer_ContainerShutdownAfterFailedBind pins the example
+// server inside a container: root.Shutdown(), whose context never ends,
+// returns after root.Start() failed on the bind.
+func TestExampleServer_ContainerShutdownAfterFailedBind(t *testing.T) {
+	t.Parallel()
+	testWithTimeout(t, time.Second)
+
+	root := New()
+	ProvideNamed(root, "http", func(Injector) (*exampleServer, error) {
+		return newExampleServer("127.0.0.1:-1", http.NewServeMux()), nil
+	}, AsStarter())
+	require.Error(t, root.Start(), "the bind fails")
+
+	report := root.Shutdown() // returns: the test does not time out
+	require.True(t, report.Succeed, "report: %v", report)
 }
