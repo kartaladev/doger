@@ -166,7 +166,7 @@ Examples:
 <!-- cases: 10 compatibility: BEHAVIOR CHANGE (flagged) - before, a clone got only the default Runnable handler; the design listed this as an open question. Runnable is now called as a function (Runnable()) -->
 
 ### Requirement: Handlers run for new components on incremental start
-`Refresh` and `Scope.Start` SHALL call each stage's handler for the components that have not been handled yet, in the same order rules as `Start`. A component SHALL be handled successfully at most once per kind per container: a handler call that failed is not recorded, so the next Refresh or Scope.Start that covers the component SHALL call that handler for it again.
+`Refresh` and `Scope.Start` SHALL call each stage's handler for the components that have not been handled yet, in the same order rules as `Start`. A component SHALL be handled successfully at most once per kind per container: a handler call that failed is not recorded, so the next Refresh or Scope.Start that covers the component SHALL call that handler for it again. A handler call abandoned under `InjectorOpts.StartTimeout` is the exception while it runs, see container-start "An abandoned step is not started again while it runs".
 
 #### Scenario: Refresh handles only new components
 ```gherkin
@@ -210,7 +210,7 @@ And the handler was called 2 times for "b"
 <!-- cases: N/A 3 zero values: no new component calls no handler -->
 <!-- cases: 4 boundaries: zero, one new component; repeated Refresh -->
 <!-- cases: 5 errors: a handler error fails Refresh as it fails Start (StartError Op "handle"); the handler is called again on the next run ("A failed handler is called again") -->
-<!-- cases: 6 duplicates: at most once per kind per container; only a successful call counts -->
+<!-- cases: 6 duplicates: at most once per kind per container; only a successful call counts, including a late successful return of an abandoned call; an abandoned call that still runs is never called again -->
 <!-- cases: 7 lifecycle: Scope.Start restricts components to its subtree, as for Starters ("Scope.Start handles only its subtree") -->
 <!-- cases: N/A 8 concurrency: covered by container-start "Concurrent Refresh calls are serialized" -->
 <!-- cases: N/A 9 panics: recovered as for Start -->
