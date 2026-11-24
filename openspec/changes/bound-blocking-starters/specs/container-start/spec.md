@@ -197,6 +197,23 @@ Examples:
   | 0       | grandchild "deep" of "c" | waits for ctx.Done(), then returns ctx.Err()       | deep.Shutdown()                                | deep.Shutdown() returns a successful report                                              | 1       |
 ```
 
+#### Scenario: A child shutdown that begins in the step's HookBeforeStart
+```gherkin
+Given a started root container created with InjectorOpts{StartTimeout: <timeout>}, inside synctest.Test, and child scope "tenant" created after Start, with a HookScopeStarted hook counting its calls
+And lazy Starter "w" in "tenant", registered after Start, whose Start(ctx) error records the cause of ctx <returns>
+And a HookBeforeStart hook that, for "w", <shutdown>
+When the consumer calls tenant.Start()
+Then it returns nil
+And "w"'s Start was called 1 time, with a context already cancelled with a cause matching ErrShutdown
+And "w" is not recorded as started and HookScopeStarted did not run
+
+Examples:
+  | timeout | returns                                 | shutdown                                                                                                          |
+  | 0       | then waits for ctx.Done()               | calls tenant.Shutdown() in another goroutine, which waits for the run                                             |
+  | 0       | and returns nil at once                 | calls tenant.ShutdownWithContext with a 1s timeout, which gives up waiting for the run, removes "w" and completes |
+  | 5s      | and returns nil at once                 | calls tenant.ShutdownWithContext with a 1s timeout, which gives up waiting for the run, removes "w" and completes |
+```
+
 #### Scenario: Child shutdown waits for a stuck step up to the start timeout
 ```gherkin
 Given a started root container created with InjectorOpts{StartTimeout: 5s}, inside synctest.Test, and child scope "tenant"
@@ -696,6 +713,33 @@ Examples:
   | 0           | lazy Starter                 | child scope "tenant", created after Start | root.Refresh() |
   | 0           | lazy service with AsRunnable() | the root                                | root.Refresh() |
   | 0           | lazy service with AsRunnable() | child scope "tenant", created after Start | tenant.Start() |
+```
+
+#### Scenario: A dependent skipped for a still-running step stays skipped once that step ends
+```gherkin
+Given a started root container created with InjectorOpts{StartTimeout: 1s, StartParallelism: <parallelism>}, inside synctest.Test
+And lazy Starter "S" in the root, registered after Start, whose first call blocks until released, and root.Refresh() returned an error naming "S" that matches ErrStartTimeout
+And child scope "c" with, registered in this order, <kind> "D" using DependsOnNamed("S"), <kind> "X" whose call releases "S" and waits until its late return is recorded, and <kind> "E" using DependsOnNamed("D")
+When the consumer calls c.Start()
+Then "X" was called 1 time, and "D" and "E" 0 times
+And c.Start() returns an error naming "S" that matches ErrStartTimeout
+
+Examples:
+  | parallelism | kind                                    |
+  | 0           | lazy Starter                            |
+  | 2           | lazy Starter                            |
+  | 0           | lazy component of a StageAfterStart kind |
+```
+
+#### Scenario: A dependent of a closing scope that reaches a still-running step is skipped silently
+```gherkin
+Given a started root container created with InjectorOpts{StartTimeout: 1s}, inside synctest.Test
+And lazy Starter "S" in the root, registered after Start, whose first call blocks until released, and root.Refresh() returned an error naming "S" that matches ErrStartTimeout
+And child scope "c" with lazy Starter "W", whose Start(ctx) waits for ctx.Done(), and lazy Starter "D" using DependsOnNamed("S")
+And c.Start() is running in another goroutine and "W" has entered Start
+When the consumer calls c.Shutdown() in another goroutine
+Then c.Start() returns nil and "D" was started 0 times
+And c.Shutdown() returns a successful report
 ```
 
 #### Scenario: A dependent of a still-running step in an ancestor scope is skipped

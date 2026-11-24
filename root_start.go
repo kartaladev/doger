@@ -570,6 +570,12 @@ func (r *startRun) skip(candidate *startCandidate, skip stepSkip) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.skipLocked(candidate, skip)
+}
+
+// skipLocked is skip with r.mu held. It returns the record it made, and
+// whether it made one.
+func (r *startRun) skipLocked(candidate *startCandidate, skip stepSkip) (stepSkip, bool) {
 	if r.skipped == nil {
 		r.skipped = map[ServiceDescription]stepSkip{}
 	}
@@ -578,11 +584,13 @@ func (r *startRun) skip(candidate *startCandidate, skip stepSkip) {
 	}
 	desc := candidate.desc()
 	if previous, ok := r.skipped[desc]; ok && previous.stillRunning != nil {
-		return
+		return stepSkip{}, false
 	}
 	skip.service = candidate.name
 	r.skipped[desc] = skip
 	r.skipCount++
+
+	return skip, true
 }
 
 // skipCancelled records a step that a scope shutdown cancelled, which

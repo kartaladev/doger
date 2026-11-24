@@ -40,6 +40,17 @@ type startSeam struct {
 	// afterClaim runs between the claim of the run's candidates and the
 	// record of their kinds (recordClaimedKinds).
 	afterClaim func()
+	// afterClosingDecision runs in dependentsCheck.skips between the
+	// decision whether the skipped dependent's scope is closing and the
+	// record of its skip.
+	afterClosingDecision func()
+}
+
+// seamAfterClosingDecision runs the afterClosingDecision seam, if set.
+func (s *RootScope) seamAfterClosingDecision() {
+	if s.startSeam.afterClosingDecision != nil {
+		s.startSeam.afterClosingDecision()
+	}
 }
 
 // seamAfterClaim runs the afterClaim seam, if set.
@@ -161,9 +172,12 @@ func (s *RootScope) registerStep(ctx context.Context, scope *Scope) (context.Con
 	}
 	s.runSteps[running] = struct{}{}
 	// a shutdown that began since the run's closing check, during the
-	// step's before hooks, has already cancelled the registered steps; once
-	// root Shutdown began, the run's context is cancelled instead
-	if closing := closingScopeInLine(scope); closing != nil && s.scopeShutdownSkipsSteps() {
+	// step's before hooks, has already cancelled the registered steps, and
+	// may even have completed there (a bounded one that gave up waiting for
+	// the run): the step's context is cancelled as it registers, either way
+	// (closingScopeLocked); once root Shutdown began, the run's context is
+	// cancelled instead
+	if closing := s.closingScopeLocked(scope); closing != nil && s.scopeShutdownSkipsSteps() {
 		running.cancelled = scopeShutdownCause(closing)
 		cancel(running.cancelled)
 	}

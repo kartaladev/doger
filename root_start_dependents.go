@@ -124,7 +124,11 @@ func (c *dependentsCheck) current() bool {
 // no call. When step is skipped for a dependency and is not in a closing
 // scope itself, the run reports it: the dependency's timeout error while
 // its abandoned call runs, otherwise a *StartError naming step's service
-// that matches ErrShutdown.
+// that matches ErrShutdown. A step skipped for a dependency is also
+// recorded as skipped in the run, so that its own dependents stay skipped
+// for the rest of the run even once that dependency's abandoned call
+// ended; one of a closing scope is recorded as skipped for its scope's
+// shutdown, which reports nothing.
 func (c *dependentsCheck) skips(step startStep) bool {
 	desc := step.candidate.desc()
 	if _, self := c.skipped[desc]; self {
@@ -141,7 +145,20 @@ func (c *dependentsCheck) skips(step startStep) bool {
 
 	// a dependent of a scope whose shutdown completed reaches nothing (its
 	// services and edges are gone), so only a closing scope counts here
-	closingItself := c.run.root.scopeClosing(step.candidate.scope)
+	// read once: the decision and the cause come from the same scope, which
+	// may stop shutting down right after
+	closing := c.run.root.shuttingDownScope(step.candidate.scope)
+	closingItself := closing != nil
+	c.run.root.seamAfterClosingDecision()
+	reason := c.reasons[reached.desc]
+	// the dependent's own record: it never starts in this run, so its
+	// dependents stay skipped even once the reason it reached cleared (an
+	// abandoned call that ended); a dependent of a closing scope is
+	// skipped silently, for its scope's shutdown
+	record := stepSkip{closing: reason.closing, stillRunning: reason.stillRunning}
+	if closingItself {
+		record = stepSkip{closing: scopeShutdownCause(closing)}
+	}
 
 	c.run.mu.Lock()
 	defer c.run.mu.Unlock()
@@ -149,10 +166,31 @@ func (c *dependentsCheck) skips(step startStep) bool {
 	// a dependency the run skipped only because its abandoned call still
 	// runs set the pending error when it was skipped
 	if !closingItself && c.run.pending == nil {
-		c.run.pending = c.reasons[reached.desc].dependentError(step)
+		c.run.pending = reason.dependentError(step)
 	}
+	c.recordLocked(step.candidate, record)
 
 	return true
+}
+
+// recordLocked records in the run that it skipped a step of candidate for
+// record, and folds that record into the batch when it is the only change
+// of the run's skips since the batch began, so the batch stays current:
+// the dependent reached a reason already, so what reaches it reached one
+// too. c.run.mu must be held.
+func (c *dependentsCheck) recordLocked(candidate *startCandidate, record stepSkip) {
+	recorded, ok := c.run.skipLocked(candidate, record)
+	if !ok || c.run.skipCount != c.skipCount+1 {
+		return
+	}
+
+	desc := candidate.desc()
+	if c.skipped == nil {
+		c.skipped = map[ServiceDescription]stepSkip{}
+	}
+	c.skipped[desc] = recorded
+	c.reasons[desc] = recorded
+	c.skipCount = c.run.skipCount
 }
 
 // checkDetachedExport adds desc to the reasons when it is an export whose

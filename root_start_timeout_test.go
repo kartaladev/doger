@@ -1487,6 +1487,194 @@ type startOnly struct{ p *stepProbe }
 func (s startOnly) Start(ctx context.Context) error { return s.p.call(ctx) }
 func (s startOnly) Run(ctx context.Context) error   { return s.p.call(ctx) }
 
+// releaser is a Starter whose Start releases probe, waits until its call
+// ended, then sleeps 10ms so that the late outcome is recorded.
+type releaser struct {
+	probe  *stepProbe
+	starts *countingStarters
+}
+
+func (r *releaser) Start() error {
+	r.starts.record("X")
+	r.probe.unblock()
+	<-r.probe.ended
+	time.Sleep(10 * time.Millisecond)
+
+	return nil
+}
+
+// TestStartTimeout_SkippedDependentStaysSkipped pins container-start
+// "Refresh starts what does not depend on a still-running step" when the
+// still-running step ends during the run: "D" in child "c" depends on
+// root "S", whose call Refresh abandoned and which still runs, so
+// c.Start() skips "D"; then "X" releases "S", whose late return is
+// recorded; "E", which depends on "D", stays skipped for the rest of the
+// run, since "D" never started, and the run reports "S"'s still-running
+// error, sequentially, in parallel, and for components of a kind.
+func TestStartTimeout_SkippedDependentStaysSkipped(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		parallelism uint
+		component   bool // "D", "X" and "E" are components of StageAfterStart kind "k", not Starters
+	}{
+		{name: "sequential"},
+		{name: "parallel", parallelism: 2},
+		{name: "kind_stage", component: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: time.Second, StartParallelism: tt.parallelism})
+				k := NewKind[StarterWithError, struct{}]("k")
+				k.Handle(root, StageAfterStart, func(_ context.Context, component Component[StarterWithError, struct{}]) error {
+					return component.Instance.Start()
+				})
+				require.NoError(t, root.Start())
+
+				probe := newStepProbe(0)
+				ProvideNamed(root, "S", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, AsStarter())
+				defer func() {
+					probe.unblock()
+					root.Shutdown()
+				}()
+				require.ErrorIs(t, root.Refresh(), ErrStartTimeout, "Refresh abandons S")
+
+				c := root.Scope("c")
+				starts := &countingStarters{}
+				opt := func() ProvideOption {
+					if tt.component {
+						return k.With(struct{}{})
+					}
+					return AsStarter()
+				}
+				provideCountedStarterAs := func(name string, opts ...ProvideOption) {
+					ProvideNamed(c, name, func(Injector) (*countedStarter, error) {
+						return &countedStarter{name: name, starts: starts}, nil
+					}, append([]ProvideOption{opt()}, opts...)...)
+				}
+				provideCountedStarterAs("D", DependsOnNamed("S"))
+				ProvideNamed(c, "X", func(Injector) (*releaser, error) {
+					return &releaser{probe: probe, starts: starts}, nil
+				}, opt())
+				provideCountedStarterAs("E", DependsOnNamed("D"))
+
+				err := c.Start()
+				assert.Equal(t, 1, starts.count("X"), "X ran")
+				assert.Equal(t, 0, starts.count("D"), "D was skipped: S still ran")
+				assert.Equal(t, 0, starts.count("E"), "E stays skipped: D never started")
+				require.ErrorIs(t, err, ErrStartTimeout, "the run reports S's still-running error")
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.Equal(t, "S", startErr.Service, "the error names S: %v", err)
+			})
+		})
+	}
+}
+
+// TestStartTimeout_ClosingDependentOfStillRunningIsSilent pins container-
+// start "Dependents of a step the child shutdown skipped are skipped" for a
+// dependent of a closing scope that reaches a still-running step outside
+// it: "D" in "c" depends on root "S", whose call Refresh abandoned and
+// which still runs; c.Shutdown() cancels "W" while c.Start() runs, so the
+// run skips "D" silently, for its scope's shutdown, records it as such,
+// and returns nil.
+func TestStartTimeout_ClosingDependentOfStillRunningIsSilent(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		root := NewWithOpts(&InjectorOpts{StartTimeout: time.Second})
+		require.NoError(t, root.Start())
+		probe := newStepProbe(0)
+		ProvideNamed(root, "S", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, AsStarter())
+		defer func() {
+			probe.unblock()
+			root.Shutdown()
+		}()
+		require.ErrorIs(t, root.Refresh(), ErrStartTimeout, "Refresh abandons S")
+
+		c := root.Scope("c")
+		w := provideCounted(c, "W", newHonouringStarter(0), AsStarter())
+		starts := &countingStarters{}
+		provideCountedStarter(c, starts, "D", DependsOnNamed("S"))
+
+		runErr := make(chan error, 1)
+		go func() { runErr <- c.Start() }()
+		<-w.entered
+		reports := make(chan *ShutdownReport, 1)
+		go func() { reports <- c.Shutdown() }()
+
+		assert.NoError(t, <-runErr, "D, skipped for its closing scope, does not fail the run")
+		assert.Equal(t, 0, starts.count("D"), "D was skipped")
+		assert.True(t, (<-reports).Succeed)
+	})
+}
+
+// TestChildShutdown_ClosingDecisionThenRootShutdown pins the decision of
+// dependentsCheck.skips that a skipped dependent's scope is closing
+// against the scope's state changing right after it: "D" in "c" depends
+// on "W", which c's bounded shutdown cancels; once the run decided that
+// "D" is in a closing scope (seam afterClosingDecision), c's shutdown
+// gives up waiting for the run and completes, and root Shutdown begins.
+// The run records "D" as skipped for c's shutdown and returns without
+// panicking, with root Shutdown's abort error.
+func TestChildShutdown_ClosingDecisionThenRootShutdown(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		root := New()
+		require.NoError(t, root.Start())
+		c := root.Scope("c")
+		w := provideCounted(c, "W", newHonouringStarter(0), AsStarter())
+		starts := &countingStarters{}
+		provideCountedStarter(c, starts, "D", DependsOnNamed("W"))
+
+		reports := make(chan *ShutdownReport, 1)
+		rootDone := make(chan struct{})
+		var once sync.Once
+		root.startSeam.afterClosingDecision = func() {
+			once.Do(func() {
+				<-reports // c's bounded shutdown gave up waiting and completed
+				go func() {
+					defer close(rootDone)
+					root.Shutdown()
+				}()
+				synctest.Wait() // root Shutdown began and waits for the run
+			})
+		}
+
+		type outcome struct {
+			err       error
+			recovered any
+		}
+		runOutcome := make(chan outcome, 1)
+		go func() {
+			var o outcome
+			defer func() {
+				o.recovered = recover()
+				runOutcome <- o
+			}()
+			o.err = c.Start()
+		}()
+		<-w.entered
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			reports <- c.ShutdownWithContext(ctx)
+		}()
+
+		o := <-runOutcome
+		<-rootDone
+		require.Nil(t, o.recovered, "c.Start() panicked")
+		assert.ErrorIs(t, o.err, ErrShutdown, "root Shutdown aborted the run")
+		assert.Equal(t, 0, starts.count("D"), "D was skipped")
+	})
+}
+
 // TestStartTimeout_RefreshSkipsStillRunning pins container-start "Refresh
 // starts what does not depend on a still-running step": a covering run
 // skips the still-running step and its dependents, starts the rest and
@@ -1910,6 +2098,78 @@ func TestStartTimeout_SkippedLeafWalkCost(t *testing.T) {
 			with := reads(t, tt.shape, tt.parallelism, true)
 			t.Logf("dependencyNeighbors calls: %d without a skipped leaf, %d with one", without, with)
 			assert.LessOrEqual(t, with, 3*without, "graph reads with a skipped leaf")
+		})
+	}
+}
+
+// TestStartTimeout_SkippedChainWalkCost pins the cost of recording the
+// dependents the dependents check skips: a Refresh that skips a chain of
+// n Starters behind a still-running "stuck" reads the dependency graph
+// about as often as one that starts the same chain (at most 4n reads
+// more), sequential and parallel, since each record is folded into the
+// batch that made it instead of rebuilding the walk once per dependent.
+func TestStartTimeout_SkippedChainWalkCost(t *testing.T) {
+	t.Parallel()
+
+	const n = 100
+	// reads counts the dependencyNeighbors calls of a Refresh of the chain
+	// s0 <- s1 <- ... <- s(n-1); with stuck, s0 depends on "stuck", whose
+	// call a first Refresh abandoned
+	reads := func(t *testing.T, parallelism uint, stuck bool) int64 {
+		t.Helper()
+		var count int64
+		synctest.Test(t, func(t *testing.T) {
+			root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second, StartParallelism: parallelism})
+			require.NoError(t, root.Start())
+			probe := newStepProbe(0)
+			defer func() {
+				probe.unblock()
+				if stuck {
+					<-probe.ended
+				}
+				root.Shutdown()
+			}()
+			if stuck {
+				ProvideNamed(root, "stuck", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, AsStarter())
+				require.ErrorIs(t, root.Refresh(), ErrStartTimeout)
+			}
+			starts := &countingStarters{}
+			for i := range n {
+				var opts []ProvideOption
+				switch {
+				case i > 0:
+					opts = append(opts, DependsOnNamed(fmt.Sprintf("s%d", i-1)))
+				case stuck:
+					opts = append(opts, DependsOnNamed("stuck"))
+				}
+				provideCountedStarter(root, starts, fmt.Sprintf("s%d", i), opts...)
+			}
+
+			var calls atomic.Int64
+			root.startSeam.dependencyNeighbors = func(ServiceDescription) { calls.Add(1) }
+			err := root.Refresh()
+			root.startSeam.dependencyNeighbors = nil
+
+			if stuck {
+				require.ErrorIs(t, err, ErrStartTimeout)
+				assert.Empty(t, starts.list(), "the chain behind stuck is skipped")
+			} else {
+				require.NoError(t, err)
+				assert.Len(t, starts.list(), n, "the chain starts")
+			}
+			count = calls.Load()
+		})
+		return count
+	}
+
+	for _, parallelism := range []uint{1, 8} {
+		t.Run(fmt.Sprintf("par_%d", parallelism), func(t *testing.T) {
+			t.Parallel()
+
+			without := reads(t, parallelism, false)
+			with := reads(t, parallelism, true)
+			t.Logf("dependencyNeighbors calls: %d starting the chain, %d skipping it", without, with)
+			assert.LessOrEqual(t, with-without, int64(4*n), "graph reads skipping the chain")
 		})
 	}
 }
@@ -2944,8 +3204,11 @@ func TestChildShutdown_BeginsDuringBeforeStartHook(t *testing.T) {
 		require.NoError(t, root.Start())
 		tenant := root.Scope("tenant")
 		w := provideCounted(tenant, "w", newHonouringStarter(0), AsStarter())
+		wrapper := wrapperOf(t, tenant, "w")
 		defer root.Shutdown()
 
+		var started atomic.Int32
+		root.AddScopeStartedHook(func(context.Context, *Scope) { started.Add(1) })
 		reports := make(chan *ShutdownReport, 1)
 		root.AddBeforeStartHook(func(_ context.Context, _ *Scope, name string) {
 			if name == "w" {
@@ -2955,12 +3218,97 @@ func TestChildShutdown_BeginsDuringBeforeStartHook(t *testing.T) {
 		})
 
 		require.NoError(t, tenant.Start(), "the cancelled step does not fail the run")
+		assert.False(t, root.isStarted(wrapper), "w is not recorded as started")
+		assert.Zero(t, started.Load(), "HookScopeStarted did not run for the shut-down scope")
 		report := <-reports
 		assert.True(t, report.Succeed, "tenant.Shutdown() succeeds: %v", report.Errors)
 		assert.ErrorIs(t, w.startCause(), ErrShutdown, "w's Start context ends with a cause matching ErrShutdown")
 		assert.Equal(t, int32(1), w.shutdowns.Load(), "w's Shutdown method was called exactly once")
 		assert.False(t, w.shutdownBeforeClean.Load(), "w's Shutdown method was called after its Start returned")
 	})
+}
+
+// causeRecorder is a Starter that records how many times its Start was
+// called and the cause of its context then, and returns at once.
+type causeRecorder struct {
+	calls atomic.Int32
+	cause atomic.Pointer[error]
+}
+
+func (r *causeRecorder) Start(ctx context.Context) error {
+	r.calls.Add(1)
+	cause := context.Cause(ctx)
+	r.cause.Store(&cause)
+
+	return nil
+}
+
+// startCause returns the cause of the context of the last Start call, or
+// nil.
+func (r *causeRecorder) startCause() error {
+	if cause := r.cause.Load(); cause != nil {
+		return *cause
+	}
+
+	return nil
+}
+
+// TestChildShutdown_CompletedDuringBeforeStartHook pins the same window as
+// TestChildShutdown_BeginsDuringBeforeStartHook for a shutdown that also
+// completes in it: a bounded tenant.ShutdownWithContext run from "w"'s
+// HookBeforeStart gives up waiting for the run, removes "w" and completes
+// before "w"'s context is registered. As for a shutdown still in progress
+// then, "w"'s Start is called with a context already cancelled with a
+// cause matching ErrShutdown (its HookBeforeStart ran, so its
+// HookAfterStart follows), the step is skipped, not recorded, and
+// tenant.Start() returns nil without the Started hooks.
+func TestChildShutdown_CompletedDuringBeforeStartHook(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+	}{
+		{name: "timeout_0", timeout: 0},
+		{name: "timeout_5s", timeout: 5 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := NewWithOpts(&InjectorOpts{StartTimeout: tt.timeout})
+				require.NoError(t, root.Start())
+				tenant := root.Scope("tenant")
+				w := provideCounted(tenant, "w", &causeRecorder{}, AsStarter())
+				wrapper := wrapperOf(t, tenant, "w")
+				defer root.Shutdown()
+
+				var started atomic.Int32
+				root.AddScopeStartedHook(func(context.Context, *Scope) { started.Add(1) })
+				var report *ShutdownReport
+				root.AddBeforeStartHook(func(_ context.Context, _ *Scope, name string) {
+					if name != "w" {
+						return
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
+					report = tenant.ShutdownWithContext(ctx)
+				})
+
+				require.NoError(t, tenant.Start(), "the cancelled step does not fail the run")
+				require.NotNil(t, report)
+				assert.False(t, report.Succeed, "the bounded shutdown gave up waiting for the run")
+				_, held := tenant.serviceGet("w")
+				assert.False(t, held, "the shutdown removed w before its Start")
+				assert.Equal(t, int32(1), w.calls.Load(), "w's Start was called once, after its HookBeforeStart")
+				assert.ErrorIs(t, w.startCause(), ErrShutdown, "w's Start context was already cancelled by the shutdown")
+				assert.False(t, root.isStarted(wrapper), "w is not recorded as started")
+				assert.Zero(t, started.Load(), "HookScopeStarted did not run for the shut-down scope")
+			})
+		})
+	}
 }
 
 // TestChildShutdown_CancelsDescendantSteps pins that a child scope Shutdown

@@ -80,10 +80,18 @@ func (s *RootScope) startIncremental(ctx context.Context, root *Scope) (closing 
 // scopeClosing reports whether scope or one of its ancestors is shutting
 // down.
 func (s *RootScope) scopeClosing(scope *Scope) bool {
+	return s.shuttingDownScope(scope) != nil
+}
+
+// shuttingDownScope returns scope or the nearest ancestor of it that is
+// shutting down, or nil when none is (closingScopeInLine, read under
+// lifecycleMu). A caller that needs both whether a scope is shutting down
+// and which one reads them from this one value.
+func (s *RootScope) shuttingDownScope(scope *Scope) *Scope {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 
-	return closingInLine(scope)
+	return closingScopeInLine(scope)
 }
 
 // closingScope returns, for a step of the running pipeline, scope or the
@@ -99,6 +107,11 @@ func (s *RootScope) closingScope(scope *Scope) *Scope {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 
+	return s.closingScopeLocked(scope)
+}
+
+// closingScopeLocked is closingScope with lifecycleMu held.
+func (s *RootScope) closingScopeLocked(scope *Scope) *Scope {
 	if closing := closingScopeInLine(scope); closing != nil {
 		return closing
 	}
