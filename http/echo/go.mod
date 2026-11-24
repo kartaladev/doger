@@ -3,9 +3,8 @@ module github.com/kartaladev/doger/http/echo
 go 1.27
 
 require (
-	github.com/kartaladev/doger v0.0.0-00010101000000-000000000000
+	github.com/kartaladev/doger v0.4.0
 	github.com/labstack/echo/v4 v4.16.5
-	github.com/stretchr/testify v1.12.1
 )
 
 require (
@@ -15,12 +14,8 @@ require (
 	github.com/samber/go-type-to-string v1.8.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
 )
-
-replace github.com/kartaladev/doger => ../../

@@ -1,1 +1,0 @@
-# Health Checkable Services Example
