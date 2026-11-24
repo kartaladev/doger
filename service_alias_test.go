@@ -993,10 +993,11 @@ func rootShutdownOK(t *testing.T, root *RootScope, _ *Scope) {
 
 func TestServiceAlias_ShutdownTargetOnce_Stable(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 5*time.Second)
+	progress := testWithProgress(t)
 	is := assert.New(t)
 
 	for range 200 {
+		progress()
 		root := New()
 		probe := &aliasShutdownProbe{}
 		ProvideValue(root, probe)

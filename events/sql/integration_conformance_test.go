@@ -22,7 +22,7 @@ func conformanceOptions() []eventsql.Option {
 func TestConformance(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, 5*time.Minute)
+		testWithBackstop(t)
 		require.NoError(t, db.Transport(t).EnsureSchema(context.Background()))
 		eventtransporttest.Run(t, func(t *testing.T) doger.EventTransport {
 			return db.Transport(t, conformanceOptions()...)
@@ -35,7 +35,7 @@ func TestConformance(t *testing.T) {
 func TestDDL_Conformance(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, 5*time.Minute)
+		testWithBackstop(t)
 		ddl := postgres.DDL
 		if db.kind == "mysql" {
 			ddl = mysql.DDL

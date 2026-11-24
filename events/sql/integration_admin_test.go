@@ -3,7 +3,6 @@ package eventsql_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -102,7 +101,7 @@ func TestAdmin(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				tr := schemaTransport(t, db, fast()...)
 				seedDeadLetters(t, db, tr, dest)
 				tt.run(t, db, tr)

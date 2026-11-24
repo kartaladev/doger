@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"reflect"
 	"slices"
+	"sync"
 )
 
 // startPhase is the start state of a root container. It is an int32 so it
@@ -65,6 +66,20 @@ func (s *RootScope) Start() error {
 // typically by calling Shutdown, so services must tolerate Shutdown without
 // a prior Start. A panic in a per-service hook is not recovered as an error:
 // Start runs the Failed hooks, then re-raises it.
+//
+// Slow and stuck steps: a Starter's Start method or a kind-handler call
+// still running after [InjectorOpts.SlowStartThreshold] (10s by default) is
+// logged once at Warn level when a Logger is set. With
+// [InjectorOpts.StartTimeout] set, a step still running after that timeout
+// is abandoned: Start stops waiting and returns a [*StartError] matching
+// [ErrStartTimeout], while the call keeps running in its own goroutine and
+// is never made a second time while it runs. When ctx ends first, the
+// step's context is cancelled at once and Start waits for it up to the
+// timeout, so a step that honours its context is not abandoned. Without
+// StartTimeout, Start waits for every step, so a Start method that blocks
+// until shutdown (such as an HTTP server's ListenAndServe) makes Start
+// block too: return from Start once the service is ready, and serve in a
+// goroutine.
 //
 // Shutdown during Start: a root Shutdown that begins while Start runs
 // cancels the Start-time context with cause [ErrShutdown] and waits
@@ -226,6 +241,12 @@ func (s *Scope) logRecoveredPanicAs(point, service, panicType string, value any)
 		attrs = append(attrs, slog.String("service", service))
 	}
 	attrs = append(attrs, slog.String("point", point))
+	s.logPanicRecords(attrs, panicType, value)
+}
+
+// logPanicRecords logs the records of a recovered panic with attrs: an
+// Error record with panicType, and value only in a Debug record.
+func (s *Scope) logPanicRecords(attrs []slog.Attr, panicType string, value any) {
 	if s.logEnabled(slog.LevelError) {
 		s.log(slog.LevelError, "panic recovered", append(attrs, slog.String("panic_type", panicType))...)
 	}
@@ -367,7 +388,23 @@ func (s *RootScope) finishStart(startCtx context.Context, err *error) {
 	}
 	s.startCancel(nil)
 	close(s.startDone)
+	s.endRunClaim()
+}
+
+// endRunClaim drops the record of the running pipeline's claim: its scopes
+// and roots. lifecycleMu must be held.
+func (s *RootScope) endRunClaim() {
 	s.runScopes = nil
+	s.runRoots, s.runRootsShutDown = nil, false
+}
+
+// noteRunRootShutdown records that the shutdown of scope began while the
+// running pipeline holds its claim, when scope is one of its roots or an
+// ancestor of one. lifecycleMu must be held.
+func (s *RootScope) noteRunRootShutdown(scope *Scope) {
+	if slices.ContainsFunc(s.runRoots, func(root *Scope) bool { return isScopeOrDescendant(root, scope) }) {
+		s.runRootsShutDown = true
+	}
 }
 
 // abortOutcome is the outcome of a run that Shutdown began during: a run
@@ -443,12 +480,15 @@ func (s *RootScope) runStartPipeline(startCtx context.Context) error {
 // claimed, so that nothing of them was started.
 func (s *RootScope) runPipeline(ctx context.Context, roots []*Scope) (closing bool, err error) {
 	candidates, closing := s.claimCandidates(roots, s.discoverCandidates(roots))
+	s.seamAfterClaim()
+	s.recordClaimedKinds(candidates)
+	run := &startRun{root: s, candidates: candidates}
 
 	if err := buildCandidates(ctx, candidates); err != nil {
 		return closing, err
 	}
 
-	if err := s.runStage(ctx, StageBeforeStart, candidates); err != nil {
+	if err := s.runStage(ctx, run, StageBeforeStart, candidates); err != nil {
 		return closing, err
 	}
 
@@ -456,16 +496,197 @@ func (s *RootScope) runPipeline(ctx context.Context, roots []*Scope) (closing bo
 		return closing, withAbortCause(ctx, err)
 	}
 
-	if err := s.startStarters(ctx, s.orderByDependencies(starterCandidates(candidates))); err != nil {
+	if err := s.startStarters(ctx, run, s.orderByDependencies(starterCandidates(candidates))); err != nil {
 		return closing, err
 	}
 
 	// pointStartersUp
-	if err := s.runStage(ctx, StageAfterStart, candidates); err != nil {
+	if err := s.runStage(ctx, run, StageAfterStart, candidates); err != nil {
 		return closing, err
 	}
 
-	return closing, checkAbort(ctx)
+	if err := checkAbort(ctx); err != nil {
+		return closing, err
+	}
+
+	return closing, run.pendingError()
+}
+
+// startRun is the state of one run of the start pipeline that its stages
+// share: the services with a step it skipped, and the first pending error,
+// which the run returns when no step failed.
+type startRun struct {
+	root *RootScope
+	// candidates are the ones the run claimed; never written after the run
+	// was created
+	candidates []*startCandidate
+
+	mu      sync.Mutex
+	skipped map[ServiceDescription]stepSkip
+	// skipCount is how many times skipped changed
+	skipCount uint64
+	pending   error
+}
+
+// stepSkip is why the run skipped a step of a service: an abandoned call
+// of it still runs, or a shutdown of its scope, or of an ancestor scope,
+// began, before its call or by cancelling it; or both.
+type stepSkip struct {
+	service string
+	// closing is the scope shutdown's cancellation cause, which matches
+	// ErrShutdown, or nil when the step was skipped only because its
+	// abandoned call still runs
+	closing error
+	// stillRunning is the step's timeout error while its call, abandoned
+	// at StartTimeout, still runs, or nil
+	stillRunning error
+	// removedFrom is, for an export whose source scope a bounded shutdown
+	// removed during the run (detachedExportSkip), the name of that scope;
+	// service is then the export
+	removedFrom string
+}
+
+// dependentError is the run's error for step, skipped outside a closing
+// scope because it depends on the skipped service: the service's timeout
+// error while its abandoned call still runs, otherwise a *StartError naming
+// step's service that matches ErrShutdown, and that names the removed
+// export when the dependency is one.
+func (skip stepSkip) dependentError(step startStep) error {
+	if skip.stillRunning != nil {
+		return skip.stillRunning
+	}
+	if skip.removedFrom != "" {
+		return step.startError(libErrorf("dependency `%s` (export of scope `%s`) was removed by the scope's shutdown: %w", skip.service, skip.removedFrom, skip.closing))
+	}
+
+	return step.startError(libErrorf("dependency `%s` was not started: %w", skip.service, skip.closing))
+}
+
+// skip records that the run skipped a step of candidate. A step skipped
+// only because its abandoned call still runs is the run's pending error
+// unless one is already set; a step of candidate still running stays
+// recorded as such.
+func (r *startRun) skip(candidate *startCandidate, skip stepSkip) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.skipLocked(candidate, skip)
+}
+
+// skipLocked is skip with r.mu held. It returns the record it made, and
+// whether it made one.
+func (r *startRun) skipLocked(candidate *startCandidate, skip stepSkip) (stepSkip, bool) {
+	if r.skipped == nil {
+		r.skipped = map[ServiceDescription]stepSkip{}
+	}
+	if skip.closing == nil && r.pending == nil {
+		r.pending = skip.stillRunning
+	}
+	desc := candidate.desc()
+	if previous, ok := r.skipped[desc]; ok && previous.stillRunning != nil {
+		return stepSkip{}, false
+	}
+	skip.service = candidate.name
+	r.skipped[desc] = skip
+	r.skipCount++
+
+	return skip, true
+}
+
+// skipCancelled records a step that a scope shutdown cancelled, which
+// ended as end, as skipped because its scope is shutting down.
+func (r *startRun) skipCancelled(startCtx context.Context, step startStep, end stepEnd) {
+	skip := stepSkip{closing: end.cancelled}
+	if end.abandoned {
+		skip.stillRunning = withAbortCause(startCtx, step.startError(end.err))
+	}
+	r.skip(step.candidate, skip)
+}
+
+// skippedStep reports whether the run skipped a step of candidate.
+func (r *startRun) skippedStep(candidate *startCandidate) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	_, skipped := r.skipped[candidate.desc()]
+	return skipped
+}
+
+// unscheduledError is the error of a parallel start whose scheduling ended,
+// with no failure, while Starters were still pending: each waits for a
+// Starter that never started, which can only be one the run skipped and
+// that the dependents check no longer reaches. A pending Starter of a
+// scope that is shutting down, or whose shutdown completed, is skipped
+// silently, as the dependents check skips it; for the first of the others,
+// the run reports what it would report for a skipped dependent of that
+// dependency (stepSkip.dependentError), so a parallel start never leaves a
+// Starter unstarted while returning nil. It returns nil when every pending
+// Starter is in such a scope.
+func (r *startRun) unscheduledError(pending []*startCandidate, requires map[ServiceDescription][]ServiceDescription) error {
+	for _, candidate := range pending {
+		if r.root.closingScope(candidate.scope) != nil {
+			continue
+		}
+
+		return r.skippedDependencyError(startStep{candidate: candidate, op: StartOpStart}, requires[candidate.desc()])
+	}
+
+	return nil
+}
+
+// skippedDependencyError returns the dependentError of the first of
+// required that the run skipped, for step.
+func (r *startRun) skippedDependencyError(step startStep, required []ServiceDescription) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, desc := range required {
+		if skip, skipped := r.skipped[desc]; skipped {
+			return skip.dependentError(step)
+		}
+	}
+
+	// defensive: a pending Starter waits for one the run skipped
+	return step.startError(libErrorf("a dependency of `%s` was not started", step.candidate.name))
+}
+
+// pendingError returns the run's first pending error: that of the first
+// step it skipped because an abandoned call of it still runs, or of the
+// first dependent of a closing scope's skipped step it skipped outside
+// that scope; nil when there is none.
+func (r *startRun) pendingError() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.pending
+}
+
+// claim is claimStep for the run: it reports whether step is skipped,
+// because its scope or an ancestor scope is shutting down, because it is
+// already recorded, or because an abandoned call of it still runs, which it
+// records in the run.
+func (r *startRun) claim(startCtx context.Context, step startStep) (skip bool) {
+	if closing := r.root.closingScope(step.candidate.scope); closing != nil {
+		recorded, err := r.root.claimStep(step)
+		if recorded {
+			// started or handled since discovery: its dependents may start
+			return true
+		}
+		skip := stepSkip{closing: scopeShutdownCause(closing)}
+		// a step whose abandoned call still runs keeps its own error
+		if err != nil {
+			skip.stillRunning = withAbortCause(startCtx, err)
+		}
+		r.skip(step.candidate, skip)
+		return true
+	}
+	skip, err := r.root.claimStep(step)
+	if err != nil {
+		r.skip(step.candidate, stepSkip{stillRunning: withAbortCause(startCtx, err)})
+		return true
+	}
+
+	return skip
 }
 
 // runStartingHooks runs the container Starting hooks in order. The first
@@ -573,6 +794,7 @@ func (s *RootScope) claimCandidates(roots []*Scope, candidates []*startCandidate
 	for _, candidate := range candidates {
 		s.runScopes[candidate.scope] = struct{}{}
 	}
+	s.runRoots, s.runRootsShutDown = roots, false
 
 	return candidates, !slices.ContainsFunc(roots, func(root *Scope) bool { return !closingInLine(root) })
 }
@@ -580,13 +802,19 @@ func (s *RootScope) claimCandidates(roots []*Scope, candidates []*startCandidate
 // closingInLine reports whether scope or one of its ancestors is shutting
 // down. lifecycleMu must be held.
 func closingInLine(scope *Scope) bool {
+	return closingScopeInLine(scope) != nil
+}
+
+// closingScopeInLine returns scope or the nearest ancestor of it that is
+// shutting down, or nil when none is. lifecycleMu must be held.
+func closingScopeInLine(scope *Scope) *Scope {
 	for ; scope != nil; scope = scope.parentScope {
 		if scope.closing != nil && scope.closing.count > 0 {
-			return true
+			return scope
 		}
 	}
 
-	return false
+	return nil
 }
 
 // newStartCandidate returns the candidate for a registered service, or nil
@@ -602,19 +830,9 @@ func (s *RootScope) newStartCandidate(scope *Scope, name string, depth int, serv
 		return nil
 	}
 
-	opts := service.getOptions()
 	starter := s.declaresStarter(service) && !s.isStarted(service)
-	var kinds []kindBinding
-	if opts != nil {
-		kinds = opts.kinds
-	}
-	if s.opts.EnableRunnerAutoDetection && typeCanCastToType(service.getReflectType(), runnableKind.target()) &&
-		!slices.ContainsFunc(kinds, func(b kindBinding) bool { return b.id == runnableKind.id }) {
-		// implicit binding, so a runner opted in explicitly still runs once
-		kinds = append(slices.Clone(kinds), kindBinding{id: runnableKind.id, meta: struct{}{}, target: runnableKind.target()})
-	}
 	// a component is handled at most once per kind per container
-	kinds = slices.DeleteFunc(slices.Clone(kinds), func(b kindBinding) bool { return s.isHandled(service, b.id) })
+	kinds := slices.DeleteFunc(slices.Clone(s.kindBindings(service)), func(b kindBinding) bool { return s.isHandled(service, b.id) })
 	if !starter && len(kinds) == 0 {
 		return nil
 	}
@@ -639,6 +857,37 @@ func (s *RootScope) newStartCandidate(scope *Scope, name string, depth int, serv
 // service; see isStartCandidate.
 func (s *RootScope) declaresStarter(service serviceWrapperAny) bool {
 	return isStartCandidate(s.opts, service)
+}
+
+// kindBindings returns the kinds service is opted into: those given at
+// registration, plus the Runnable kind when EnableRunnerAutoDetection
+// detects a Runner. Transient services and aliases have none.
+func (s *RootScope) kindBindings(service serviceWrapperAny) []kindBinding {
+	if serviceType := service.getServiceType(); serviceType == ServiceTypeTransient || serviceType == ServiceTypeAlias {
+		return nil
+	}
+
+	var kinds []kindBinding
+	if opts := service.getOptions(); opts != nil {
+		kinds = opts.kinds
+	}
+	if s.opts.EnableRunnerAutoDetection && typeCanCastToType(service.getReflectType(), runnableKind.target()) &&
+		!slices.ContainsFunc(kinds, func(b kindBinding) bool { return b.id == runnableKind.id }) {
+		// implicit binding, so a runner opted in explicitly still runs once
+		kinds = append(slices.Clone(kinds), kindBinding{id: runnableKind.id, meta: struct{}{}, target: runnableKind.target()})
+	}
+
+	return kinds
+}
+
+// kindEntries returns the kind handler entries, in order of first Handle.
+// The list is never written in place, so it is read after kindsMu is
+// released.
+func (s *RootScope) kindEntries() []kindEntry {
+	s.kindsMu.Lock()
+	defer s.kindsMu.Unlock()
+
+	return s.kinds
 }
 
 // isStartCandidate reports whether a container with opts starts service: it
@@ -697,19 +946,25 @@ func starterCandidates(candidates []*startCandidate) []*startCandidate {
 // startStarters starts the Starter candidates in order, stopping at the
 // first error. With StartParallelism n > 1, independent Starters start
 // concurrently.
-func (s *RootScope) startStarters(startCtx context.Context, candidates []*startCandidate) error {
+func (s *RootScope) startStarters(startCtx context.Context, run *startRun, candidates []*startCandidate) error {
 	// more workers than Starters is pointless; clamping keeps the int
 	// conversion in range for huge values such as ^uint(0)
 	if n := min(s.opts.StartParallelism, uint(len(candidates))); n > 1 {
-		return s.startStartersParallel(startCtx, candidates, int(n))
+		return s.startStartersParallel(startCtx, run, candidates, int(n))
 	}
 
+	var check *dependentsCheck
 	for _, candidate := range candidates {
 		if err := checkAbort(startCtx); err != nil {
 			return err
 		}
 
-		if err := s.startCandidate(startCtx, candidate); err != nil {
+		check = run.dependentsCheckSince(check)
+		if check.skips(startStep{candidate: candidate, op: StartOpStart}) {
+			continue
+		}
+
+		if err := s.startCandidate(startCtx, run, candidate); err != nil {
 			return err
 		}
 	}
@@ -720,11 +975,13 @@ func (s *RootScope) startStarters(startCtx context.Context, candidates []*startC
 // startStartersParallel starts up to n Starters at a time, each once every
 // Starter it depends on has started, picking the ready one with the smallest
 // scope depth, then registration index. The first failure stops scheduling;
-// running Starters are awaited before it is returned. A panic in a
+// running Starters are awaited before it is returned. A Starter skipped
+// because an abandoned call of it still runs is not a failure: scheduling
+// goes on, and the Starters that depend on it are never scheduled. A panic in a
 // per-service hook stops scheduling too, and is re-raised on the calling
 // goroutine once the running Starters have returned. Every goroutine has
 // returned when it returns.
-func (s *RootScope) startStartersParallel(startCtx context.Context, candidates []*startCandidate, n int) error {
+func (s *RootScope) startStartersParallel(startCtx context.Context, run *startRun, candidates []*startCandidate, n int) error {
 	requires := s.dependencyRequirements(candidates)
 	pending := slices.Clone(candidates)
 	slices.SortFunc(pending, func(a, b *startCandidate) int {
@@ -732,19 +989,20 @@ func (s *RootScope) startStartersParallel(startCtx context.Context, candidates [
 	})
 	started := map[ServiceDescription]bool{}
 
-	type outcome struct {
-		candidate *startCandidate
-		err       error
-		panicked  bool
-		recovered any
-	}
-	outcomes := make(chan outcome)
+	outcomes := make(chan starterOutcome)
+	var check *dependentsCheck
 	running := 0
 	var firstErr error
-	var firstPanic *outcome
+	var firstPanic *starterOutcome
 
 	for {
 		for firstErr == nil && firstPanic == nil && running < n {
+			// dependents of a still-running step are never scheduled; one
+			// check answers every pass until what it read changes
+			check = run.dependentsCheckSince(check)
+			pending = slices.DeleteFunc(pending, func(c *startCandidate) bool {
+				return check.skips(startStep{candidate: c, op: StartOpStart})
+			})
 			ready := slices.IndexFunc(pending, func(c *startCandidate) bool {
 				return !slices.ContainsFunc(requires[c.desc()], func(d ServiceDescription) bool { return !started[d] })
 			})
@@ -759,24 +1017,11 @@ func (s *RootScope) startStartersParallel(startCtx context.Context, candidates [
 			candidate := pending[ready]
 			pending = slices.Delete(pending, ready, ready+1)
 			running++
-			go func() {
-				o := outcome{candidate: candidate, panicked: true}
-				defer func() {
-					if o.panicked {
-						o.recovered = recover()
-					}
-					outcomes <- o
-				}()
-				o.err = s.startCandidate(startCtx, candidate)
-				o.panicked = false
-			}()
+			go s.startCandidateTo(startCtx, run, candidate, outcomes)
 		}
 
 		if running == 0 {
-			if firstPanic != nil {
-				panic(firstPanic.recovered)
-			}
-			return firstErr
+			return endParallelStart(run, pending, requires, firstErr, firstPanic)
 		}
 
 		o := <-outcomes
@@ -790,34 +1035,88 @@ func (s *RootScope) startStartersParallel(startCtx context.Context, candidates [
 		if o.err != nil && firstErr == nil {
 			firstErr = o.err
 		}
-		if o.err == nil {
+		if o.err == nil && !run.skippedStep(o.candidate) {
 			started[o.candidate.desc()] = true
 		}
 	}
 }
 
-// startCandidate starts one Starter candidate with its hooks.
-func (s *RootScope) startCandidate(startCtx context.Context, candidate *startCandidate) error {
+// endParallelStart is how a parallel start ends once no Starter runs: it
+// re-raises the first per-service hook panic, else returns the first
+// failure, else reports the Starters still pending (unscheduledError).
+func endParallelStart(run *startRun, pending []*startCandidate, requires map[ServiceDescription][]ServiceDescription, firstErr error, firstPanic *starterOutcome) error {
+	if firstPanic != nil {
+		panic(firstPanic.recovered)
+	}
+	if firstErr == nil && len(pending) > 0 {
+		return run.unscheduledError(pending, requires)
+	}
+
+	return firstErr
+}
+
+// starterOutcome is how the start of one Starter of a parallel start ended.
+type starterOutcome struct {
+	candidate *startCandidate
+	err       error
+	panicked  bool // a per-service hook panicked
+	recovered any  // its panic value, when panicked
+}
+
+// startCandidateTo starts candidate with startCandidate and sends how it
+// ended to outcomes, a panic included.
+func (s *RootScope) startCandidateTo(startCtx context.Context, run *startRun, candidate *startCandidate, outcomes chan<- starterOutcome) {
+	o := starterOutcome{candidate: candidate, panicked: true}
+	defer func() {
+		if o.panicked {
+			o.recovered = recover()
+		}
+		outcomes <- o
+	}()
+	o.err = s.startCandidate(startCtx, run, candidate)
+	o.panicked = false
+}
+
+// startCandidate starts one Starter candidate with its hooks. A candidate
+// with an abandoned Start call still running is skipped and recorded in
+// run, and nil is returned.
+func (s *RootScope) startCandidate(startCtx context.Context, run *startRun, candidate *startCandidate) error {
 	if !instanceIsStarter(candidate.instance) {
 		startErr := newStartError(StartOpStart, candidate.scope, candidate.name, "", libErrorf("service `%s` was opted in with AsStarter but does not implement any Starter interface", candidate.name))
 		startErr.unprefixed = true // the cause names the service already
 		return startErr
 	}
 
+	step := startStep{candidate: candidate, op: StartOpStart}
+	if run.claim(startCtx, step) {
+		return nil
+	}
+
 	op := serviceOp{ctx: startCtx, scope: candidate.scope, name: candidate.name}
 	s.hooks.onBeforeStart(op)
 	op = beginServiceOp(startCtx, candidate.scope, candidate.name)
-	err := startInstance(startCtx, candidate.instance)
-	s.hooks.onAfterStart(op, op.elapsed(), err)
-	if err != nil {
-		err = newStartError(StartOpStart, candidate.scope, candidate.name, "", err)
-		return withAbortCause(startCtx, err)
+	end := s.runStartStep(startCtx, step, func(ctx context.Context) error {
+		return startInstance(ctx, candidate.instance)
+	})
+	s.hooks.onAfterStart(op, op.elapsed(), end.err)
+
+	return s.endStep(startCtx, run, step, end)
+}
+
+// endStep settles step, whose wait ended as end: a step a scope shutdown
+// cancelled is skipped in run, since the scope shuts it down; a failed one
+// returns the run's error; a successful one is recorded.
+func (s *RootScope) endStep(startCtx context.Context, run *startRun, step startStep, end stepEnd) error {
+	if end.skipped() {
+		run.skipCancelled(startCtx, step, end)
+		return nil
+	}
+	if end.err != nil {
+		return withAbortCause(startCtx, step.startError(end.err))
 	}
 	// a service shut down meanwhile (a bounded scope shutdown gave up
 	// waiting) stays out of the bookkeeping
-	if stillRegistered(candidate) {
-		s.markStarted(candidate.service)
-	}
+	s.recordIfHeld(step)
 
 	return nil
 }
@@ -829,14 +1128,9 @@ func stillRegistered(candidate *startCandidate) bool {
 }
 
 // startInstance calls the Start method of the instance's Starter variant.
-// The type switch mirrors the one of the shutdown path.
-func startInstance(ctx context.Context, instance any) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = recoverAsError(r)
-		}
-	}()
-
+// The type switch mirrors the one of the shutdown path. A panic is
+// recovered by runStartStep, its caller.
+func startInstance(ctx context.Context, instance any) error {
 	switch instance := instance.(type) {
 	case StarterWithContextAndError:
 		return instance.Start(ctx)
@@ -894,11 +1188,10 @@ func withAbortCause(startCtx context.Context, err error) error {
 
 // runStage runs the handlers registered for stage, kind by kind in
 // order of first Handle, each over its components in dependency order.
-func (s *RootScope) runStage(startCtx context.Context, stage Stage, candidates []*startCandidate) error {
-	s.kindsMu.Lock()
-	entries := s.kinds // never written in place
-	s.kindsMu.Unlock()
+func (s *RootScope) runStage(startCtx context.Context, run *startRun, stage Stage, candidates []*startCandidate) error {
+	entries := s.kindEntries()
 
+	var check *dependentsCheck
 	for _, entry := range entries {
 		if entry.stage != stage {
 			continue
@@ -920,12 +1213,22 @@ func (s *RootScope) runStage(startCtx context.Context, stage Stage, candidates [
 				return err
 			}
 
-			if err := callKindHandler(startCtx, entry, component, metas[component]); err != nil {
-				err = newStartError(StartOpHandle, component.scope, component.name, entry.id.name, err)
-				return withAbortCause(startCtx, err)
+			step := startStep{candidate: component, op: StartOpHandle, kind: entry.id}
+			check = run.dependentsCheckSince(check)
+			if check.skips(step) {
+				continue
 			}
-			if stillRegistered(component) {
-				s.markHandled(component.service, entry.id)
+
+			if run.claim(startCtx, step) {
+				continue
+			}
+			// a kind given its first handler since discovery is attempted too
+			s.markAttempted(component.service, entry.id)
+			end := s.runStartStep(startCtx, step, func(ctx context.Context) error {
+				return callKindHandler(ctx, entry, component, metas[component])
+			})
+			if err := s.endStep(startCtx, run, step, end); err != nil {
+				return err
 			}
 		}
 	}
@@ -933,14 +1236,8 @@ func (s *RootScope) runStage(startCtx context.Context, stage Stage, candidates [
 	return nil
 }
 
-// callKindHandler calls entry's handler for one component, recovering a panic
-// as an error.
-func callKindHandler(startCtx context.Context, entry kindEntry, component *startCandidate, meta any) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = recoverAsError(r)
-		}
-	}()
-
+// callKindHandler calls entry's handler for one component. A panic is
+// recovered by runStartStep, its caller.
+func callKindHandler(startCtx context.Context, entry kindEntry, component *startCandidate, meta any) error {
 	return entry.run(startCtx, component.scope, component.name, component.instance, meta)
 }

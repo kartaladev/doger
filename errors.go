@@ -50,6 +50,15 @@ var (
 	// panicked. The panic value follows it in the message, and an error value
 	// is wrapped, so errors.Is and errors.As also match it.
 	ErrHealthCheckPanic = errors.New("doger: health check panic")
+	// ErrStartTimeout is matched by the [*StartError] of a Starter Start
+	// method or kind-handler call that Start, Refresh or Scope.Start
+	// abandoned under [InjectorOpts.StartTimeout]: the step outlived the
+	// timeout, so the error also matches context.DeadlineExceeded. When the
+	// run's context ended while the step ran, the error also matches that
+	// context's cause, such as [ErrShutdown]. It is also matched by the
+	// error of a later run that reached a step whose abandoned call is still
+	// running: that call is never made a second time while it runs.
+	ErrStartTimeout = errors.New("doger: start timeout")
 
 	// ErrAlreadyStarted is returned by a Start call after the first one, whether
 	// the first one succeeded or failed, as long as root Shutdown has not
@@ -132,7 +141,7 @@ func (e *libError) Unwrap() error {
 var libSentinels = []error{
 	ErrServiceNotFound, ErrServiceNotMatch, ErrServiceTypeMismatch,
 	ErrServiceAlreadyDeclared, ErrScopeAlreadyDeclared, ErrCircularDependency,
-	ErrHealthCheckTimeout, ErrHealthCheckPanic,
+	ErrHealthCheckTimeout, ErrHealthCheckPanic, ErrStartTimeout,
 	ErrAlreadyStarted, ErrShutdown, ErrNotStarted, ErrNilInjector,
 	ErrStructInjection, ErrProviderPanic, ErrShutdownPanic,
 	ErrInvalidExtension, ErrExtensionDisabled, ErrRequiredExtensionDisabled,
@@ -437,6 +446,10 @@ func (e *StartError) Unwrap() error {
 // "doger: shutdown errors:" description otherwise, ordered by scope name,
 // then service name. A report is never nil, so do not compare it with nil.
 // It marshals to JSON (see MarshalJSON).
+//
+// A successful report does not mean that no user code still runs: a Start
+// call abandoned at [InjectorOpts.StartTimeout] by a run that has returned
+// is not waited for, and can still be running when the report comes back.
 type ShutdownReport struct {
 	Succeed             bool
 	Services            []ServiceDescription

@@ -74,6 +74,11 @@ func (s *serviceEager[T]) getInstanceAny(i Injector) (any, error) {
 	return s.getInstance(i)
 }
 
+// builtInstanceAny returns the value, which an eager service always holds.
+func (s *serviceEager[T]) builtInstanceAny() (any, bool) {
+	return s.instance, true
+}
+
 func (s *serviceEager[T]) getInstance(i Injector) (T, error) {
 	// a closure here, not stacktrace.NewFrameFromCaller itself: the frame
 	// recorded is then in this file, as before (invocation-frame rule, D16)

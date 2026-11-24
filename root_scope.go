@@ -68,8 +68,9 @@ func NewWithOpts(opts *InjectorOpts, packages ...func(Injector)) *RootScope {
 	opts.initDefaults()
 
 	root := &RootScope{
-		opts:  opts,
-		kinds: defaultKinds,
+		opts:      opts,
+		kinds:     defaultKinds,
+		instances: &abandonedInstances{},
 	}
 	root.hooks.take(opts)
 	root.health.root = root
@@ -148,10 +149,35 @@ type RootScope struct {
 	// is held across their user code; Shutdown never takes it, and nothing
 	// takes it while holding lifecycleMu.
 	pipelineMu sync.Mutex
-	runScopes  map[*Scope]struct{}          // scopes with candidates in the running pipeline; guarded by lifecycleMu
-	startedMu  sync.Mutex                   // guards started and handled; never held across user code
-	started    map[any]struct{}             // Starters already started, keyed by wrapper
-	handled    map[any]map[*kindID]struct{} // kinds already handled, by wrapper
+	runScopes  map[*Scope]struct{}           // scopes with candidates in the running pipeline; guarded by lifecycleMu
+	runSteps   map[*runningStep]struct{}     // contexts of the start steps the pipeline runs or awaits now; guarded by lifecycleMu
+	startedMu  sync.Mutex                    // guards started, handled and abandoned; never held across user code; only instances.mu is taken under it
+	started    map[any]struct{}              // Starters already started, keyed by wrapper
+	handled    map[any]map[*kindID]struct{}  // kinds already handled, by wrapper
+	abandoned  map[any]map[*kindID]startStep // steps whose abandoned call still runs, by wrapper; a nil kind is the Start method
+	// abandonedChanges counts the changes of abandoned; guarded by startedMu
+	abandonedChanges uint64
+	// passedOver holds, by wrapper, the kinds a run collected the component
+	// for while they had no handler, and that no run attempted since; see
+	// awaitsKindHandler; guarded by startedMu
+	passedOver map[any]map[*kindID]struct{}
+	// instances tracks the abandoned calls that still run by instance, so
+	// that no run calls an instance again through an override or a clone.
+	// A container and its clones share it; it has its own mutex.
+	instances *abandonedInstances
+	// registrations counts the services stored in any scope of the
+	// container (registrations, overrides, defaults replaced), which can
+	// change what a name resolves to; see dependentsCheck.current
+	registrations atomic.Uint64
+	// runRoots are the roots of the running pipeline once it claimed its
+	// candidates, and runRootsShutDown reports that a shutdown of one of
+	// them, or of an ancestor, began since; both guarded by lifecycleMu
+	runRoots         []*Scope
+	runRootsShutDown bool
+
+	// startSeam holds test-only callbacks into the start pipeline; it is
+	// zero (no callback) in production.
+	startSeam startSeam
 
 	// selfStorage and dagStorage hold self and dag in the container's own
 	// allocation; use self and dag. A clone points self at its cloned scope.
@@ -888,6 +914,13 @@ func (s *RootScope) Clone() *RootScope {
 // is taken is not copied, nor is its partly built private scope, so the
 // clone can install that extension itself.
 //
+// Start state is not copied, except one record the clone shares with the
+// source: the abandoned start calls that still run, by instance, so that
+// neither container calls an instance again while such a call runs (see
+// [InjectorOpts.StartTimeout]). A call enters that record only once it is
+// abandoned: the source and the clone can still call a shared instance at
+// the same time while neither call has been abandoned.
+//
 // Events: service listeners come with their registrations, and function
 // listeners are copied as the same functions; stopping or adding a listener
 // on one container leaves the other unchanged. The clone gets its own
@@ -902,6 +935,9 @@ func (s *RootScope) Clone() *RootScope {
 // InjectorOpts.InstanceID is set.
 func (s *RootScope) CloneWithOpts(opts *InjectorOpts) *RootScope {
 	clone := NewWithOpts(opts)
+	// the clone shares the eager instances, so it shares their abandoned
+	// calls too: no container calls an instance whose call still runs
+	clone.instances = s.instances
 	s.cloneWithExtensions(clone)
 	s.copyKindsTo(clone)
 	s.copyEventsTo(clone)
@@ -917,9 +953,7 @@ func (s *RootScope) CloneWithOpts(opts *InjectorOpts) *RootScope {
 // do not depend on the container, and kind lists are copied before they are
 // written, so the list itself is shared.
 func (s *RootScope) copyKindsTo(clone *RootScope) {
-	s.kindsMu.Lock()
-	kinds := s.kinds
-	s.kindsMu.Unlock()
+	kinds := s.kindEntries()
 
 	clone.kindsMu.Lock()
 	clone.kinds = kinds

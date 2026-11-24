@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kartaladev/doger"
 )
@@ -159,6 +160,17 @@ func (r *redeliverPermanent) Subscribe(ctx context.Context, sub doger.Subscripti
 	})
 }
 
+// neverRedeliver drops an envelope whose handler failed: the redelivery
+// the Redelivery subtest waits for never comes, a stalled transport.
+type neverRedeliver struct{ *doger.MemoryEventTransport }
+
+func (n *neverRedeliver) Subscribe(ctx context.Context, sub doger.Subscription, h doger.EnvelopeHandler) (func(context.Context) error, error) {
+	return n.MemoryEventTransport.Subscribe(ctx, sub, func(ctx context.Context, env doger.Envelope) error {
+		_ = h(ctx, env)
+		return nil
+	})
+}
+
 // stopEarly returns from stop at once, while handlers still run; the real
 // stop finishes in the background.
 type stopEarly struct {
@@ -212,6 +224,9 @@ func quietMemory() *doger.MemoryEventTransport {
 	return doger.NewMemoryEventTransport(doger.MemoryLogger(func(string, ...any) {}))
 }
 
+// defectWait is the no-progress window of TestRun_CatchesDefects.
+const defectWait = 2 * time.Second
+
 func TestRun_CatchesDefects(t *testing.T) {
 	t.Parallel()
 
@@ -226,6 +241,7 @@ func TestRun_CatchesDefects(t *testing.T) {
 		{name: "broadcast_once", transport: func() doger.EventTransport { return &broadcastOnce{quietMemory()} }, subtest: "DeliverOnceGroup"},
 		{name: "replay_history", transport: func() doger.EventTransport { return &replayHistory{MemoryEventTransport: quietMemory()} }, subtest: "NewGroupAtLatest"},
 		{name: "redeliver_permanent", transport: func() doger.EventTransport { return &redeliverPermanent{quietMemory()} }, subtest: "PermanentError"},
+		{name: "never_redeliver", transport: func() doger.EventTransport { return &neverRedeliver{quietMemory()} }, subtest: "Redelivery"},
 		{name: "stop_early", transport: func() doger.EventTransport { return &stopEarly{MemoryEventTransport: quietMemory()} }, subtest: "StopWaitsHandlers"},
 		{name: "stop_hangs", transport: func() doger.EventTransport {
 			return &stopHangs{MemoryEventTransport: quietMemory(), released: released}
@@ -238,11 +254,12 @@ func TestRun_CatchesDefects(t *testing.T) {
 
 			var transports []doger.EventTransport
 			rec := newRecordingTB()
+			// a short window: the stalled subtests fail once it passed
 			run(rec, func(tester) doger.EventTransport {
 				transport := tt.transport()
 				transports = append(transports, transport)
 				return transport
-			})
+			}, withWait(defectWait))
 
 			if got := rec.outcome(tt.subtest); got != failed {
 				t.Errorf("subtest %s: got %q, want %q", tt.subtest, got, failed)

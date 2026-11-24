@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/kartaladev/doger/stacktrace"
@@ -757,37 +758,42 @@ func TestServiceLazy_HealthCheckDuringBuild(t *testing.T) {
 			}
 			testWithTimeout(t, 5*time.Second)
 
-			i := New()
-			started, release := make(chan struct{}), make(chan struct{})
-			ProvideNamed(i, "slow", func(Injector) (*lazyTestHeathcheckerOK, error) {
-				close(started)
-				<-release
-				return &lazyTestHeathcheckerOK{}, nil
+			// a synctest bubble: the check's 20ms deadline and the 1s bound are
+			// fake time, which passes only while every goroutine is blocked, so a
+			// loaded machine cannot expire the deadline before "db" is checked
+			synctest.Test(t, func(t *testing.T) {
+				i := New()
+				started, release := make(chan struct{}), make(chan struct{})
+				ProvideNamed(i, "slow", func(Injector) (*lazyTestHeathcheckerOK, error) {
+					close(started)
+					<-release
+					return &lazyTestHeathcheckerOK{}, nil
+				})
+				ProvideNamedValue(i, "db", &lazyTestHeathcheckerOK{})
+
+				invoked := make(chan struct{})
+				go func() {
+					defer close(invoked)
+					_, _ = InvokeNamed[*lazyTestHeathcheckerOK](i, "slow")
+				}()
+				<-started
+
+				returned := make(chan struct{})
+				go func() {
+					defer close(returned)
+					tt.check(t, i)
+				}()
+
+				select {
+				case <-returned:
+				case <-time.After(time.Second):
+					assert.Fail(t, "the health check did not return within 1s while a provider was in progress")
+				}
+
+				close(release)
+				<-invoked
+				<-returned
 			})
-			ProvideNamedValue(i, "db", &lazyTestHeathcheckerOK{})
-
-			invoked := make(chan struct{})
-			go func() {
-				defer close(invoked)
-				_, _ = InvokeNamed[*lazyTestHeathcheckerOK](i, "slow")
-			}()
-			<-started
-
-			returned := make(chan struct{})
-			go func() {
-				defer close(returned)
-				tt.check(t, i)
-			}()
-
-			select {
-			case <-returned:
-			case <-time.After(time.Second):
-				assert.Fail(t, "the health check did not return within 1s while a provider was in progress")
-			}
-
-			close(release)
-			<-invoked
-			<-returned
 		})
 	}
 }

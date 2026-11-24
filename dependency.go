@@ -15,8 +15,12 @@ import (
 // would. A name that cannot be resolved gives an error matching
 // [ErrServiceNotFound]. If dependency already reaches dependent through
 // recorded edges or static [DependsOn] declarations, the edge would close a
-// cycle and an error matching [ErrCircularDependency] is returned. Declaring
-// an edge twice changes nothing. A nil i, including a typed-nil *RootScope
+// cycle and an error matching [ErrCircularDependency] is returned. An
+// export reaches its source, even before anything resolved the export: with
+// an edge to an export, dependent starts after that source and shuts down
+// before it, and the edge closes a cycle when the source depends back on
+// dependent (such a back edge added later, by an override, makes Start fail
+// with a cycle). Declaring an edge twice changes nothing. A nil i, including a typed-nil *RootScope
 // or *Scope, gives [ErrNilInjector] and records nothing: there is no
 // default container.
 //
@@ -89,9 +93,13 @@ func (s *RootScope) dependencyPath(from, to ServiceDescription) []ServiceDescrip
 
 // dependencyNeighbors returns the services desc depends on: its recorded DAG
 // edges plus the static DependsOn declarations of its registered wrapper,
-// resolved from its scope. The DAG lock is never held while a scope lock is
+// resolved from its scope, and, for an export, its source, which an edge
+// declared to the export reaches before anything resolved it. A neighbour
+// may be listed twice. The DAG lock is never held while a scope lock is
 // taken.
 func (s *RootScope) dependencyNeighbors(desc ServiceDescription) []ServiceDescription {
+	s.seamDependencyNeighbors(desc)
+
 	s.dag.mu.RLock()
 	neighbors := keys(s.dag.dependencies[desc])
 	s.dag.mu.RUnlock()
@@ -104,6 +112,10 @@ func (s *RootScope) dependencyNeighbors(desc ServiceDescription) []ServiceDescri
 	serviceAny, ok := scope.serviceGet(desc.Service)
 	if !ok {
 		return neighbors
+	}
+
+	if source, ok := exportSourceOf(serviceAny); ok {
+		neighbors = append(neighbors, source)
 	}
 
 	service, ok := serviceAny.(serviceWrapperAny)

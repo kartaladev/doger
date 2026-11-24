@@ -482,9 +482,10 @@ func TestContainerShutdown_InvokeAfterShutdownNamed(t *testing.T) {
 
 func TestContainerShutdown_ConcurrentInvokeDuringShutdown(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 30*time.Second)
+	progress := testWithProgress(t)
 
 	for repeat := range 50 {
+		progress()
 		counts := &closedTestCounts{}
 		root := New()
 		scopes := make([]*Scope, 10)
@@ -884,11 +885,12 @@ func TestContainerShutdown_ChildDetachNoGrowth(t *testing.T) {
 	for _, cycles := range []int{1, 1000} {
 		t.Run(fmt.Sprintf("cycles_%d", cycles), func(t *testing.T) {
 			t.Parallel()
-			testWithTimeout(t, 10*time.Second)
+			progress := testWithProgress(t)
 			is := assert.New(t)
 
 			root := New()
 			for range cycles {
+				progress()
 				req := root.Scope("req")
 				ProvideNamedValue(req, "value", &shutdownTestCounter{})
 				_, err := InvokeNamed[*shutdownTestCounter](req, "value")
@@ -906,13 +908,14 @@ func TestContainerShutdown_ChildDetachNoGrowth(t *testing.T) {
 
 func TestContainerShutdown_ChildDetachConcurrent(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 20*time.Second)
+	progress := testWithProgress(t)
 
 	root := New()
 	var wg sync.WaitGroup
 	for g := range 16 {
 		wg.Go(func() {
 			for n := range 200 {
+				progress()
 				root.Scope(fmt.Sprintf("req-%d-%d", g, n)).Shutdown()
 			}
 		})

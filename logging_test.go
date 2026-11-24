@@ -424,6 +424,66 @@ func TestLogging_Events(t *testing.T) {
 			attrs: map[string]string{"scope": "[root]", "service": "svc", "error": "x"},
 		},
 		{
+			name: "slow_start",
+			opts: &InjectorOpts{SlowStartThreshold: 10 * time.Millisecond},
+			trigger: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				provideCounted(root, "svc", newStepProbe(100*time.Millisecond), AsStarter())
+				require.NoError(t, root.Start())
+			},
+			message: "start step is slow", level: slog.LevelWarn,
+			attrs: map[string]string{"scope": "[root]", "service": "svc", "step": "start", "threshold": "10ms"},
+		},
+		{
+			name: "abandoned_returned",
+			opts: &InjectorOpts{StartTimeout: 10 * time.Millisecond},
+			trigger: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				// the step blocks until Start gave it up: a step sleeping
+				// 100ms returned first whenever the 10ms timer's goroutine
+				// was starved, and Start succeeded
+				probe := provideCounted(root, "svc", newStepProbe(0), AsStarter())
+				require.ErrorIs(t, root.Start(), ErrStartTimeout)
+				probe.unblock()
+				<-probe.ended
+			},
+			message: "abandoned start step returned", level: slog.LevelWarn,
+			attrs: map[string]string{"scope": "[root]", "service": "svc", "step": "start"},
+		},
+		{
+			name: "abandoned_error",
+			opts: &InjectorOpts{StartTimeout: 10 * time.Millisecond},
+			trigger: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				// blocks until Start gave it up, as in abandoned_returned
+				probe := newStepProbe(0)
+				probe.outcome = func(int32) error { return errors.New("x") }
+				provideCounted(root, "svc", probe, AsStarter())
+				require.ErrorIs(t, root.Start(), ErrStartTimeout)
+				probe.unblock()
+				<-probe.ended
+			},
+			message: "abandoned start step error", level: slog.LevelDebug,
+			attrs: map[string]string{"scope": "[root]", "service": "svc", "step": "start", "error": "x"},
+		},
+		{
+			name: "cancelled_error",
+			trigger: func(t *testing.T, root *RootScope) {
+				t.Helper()
+				require.NoError(t, root.Start())
+				ext := root.Scope("ext")
+				step := newCancelledCall(func(context.Context) error { return errors.New("x") })
+				provideCounted(ext, "svc", step, AsStarter())
+				runErr := make(chan error, 1)
+				go func() { runErr <- ext.Start() }()
+				<-step.entered
+				ext.Shutdown()
+				require.NoError(t, <-runErr)
+			},
+			message: "cancelled start step error", level: slog.LevelDebug,
+			attrs: map[string]string{"scope": "ext", "service": "svc", "step": "start", "error": "x"},
+		},
+		{
 			name: "health_degraded",
 			trigger: func(t *testing.T, root *RootScope) {
 				t.Helper()
@@ -474,6 +534,102 @@ func TestLogging_Events(t *testing.T) {
 			for key, value := range tt.attrs {
 				assert.Equal(t, value, matching[0].attrs[key], "attribute %s", key)
 			}
+		})
+	}
+}
+
+// cancelledCall is a Starter and a Runner whose call closes entered, waits
+// for its context to end, then returns end(ctx).
+type cancelledCall struct {
+	entered chan struct{}
+	end     func(ctx context.Context) error
+}
+
+func newCancelledCall(end func(ctx context.Context) error) *cancelledCall {
+	return &cancelledCall{entered: make(chan struct{}), end: end}
+}
+
+func (c *cancelledCall) call(ctx context.Context) error {
+	close(c.entered)
+	<-ctx.Done()
+	return c.end(ctx)
+}
+
+func (c *cancelledCall) Start(ctx context.Context) error { return c.call(ctx) }
+func (c *cancelledCall) Run(ctx context.Context) error   { return c.call(ctx) }
+
+// shutdownMessages are the messages of the records a service's shutdown
+// emits about it.
+var shutdownMessages = map[string]bool{
+	"service shutdown failed": true,
+}
+
+// TestLogging_CancelledStep pins container-logging "Outcome of a cancelled
+// step": tenant.Shutdown cancels "w"'s running call, whose outcome the run
+// does not report, so it is logged.
+func TestLogging_CancelledStep(t *testing.T) {
+	t.Parallel()
+
+	ctxErr := func(ctx context.Context) error { return ctx.Err() }
+	tests := []struct {
+		name     string
+		level    slog.Level
+		runnable bool
+		end      func(ctx context.Context) error
+		records  []string
+	}{
+		{
+			name: "error_debug", level: slog.LevelDebug, end: ctxErr,
+			records: []string{"DEBUG cancelled start step error scope=tenant service=w step=start error=context canceled"},
+		},
+		{name: "error_info", level: slog.LevelInfo, end: ctxErr},
+		{name: "nil", level: slog.LevelDebug, end: func(context.Context) error { return nil }},
+		{
+			name: "panic", level: slog.LevelDebug, end: func(context.Context) error { panic("boom") },
+			records: []string{
+				"ERROR panic recovered scope=tenant service=w point=start step=start panic_type=string",
+				"DEBUG panic value scope=tenant service=w point=start step=start value=boom",
+			},
+		},
+		{
+			name: "runnable_error", level: slog.LevelDebug, runnable: true, end: ctxErr,
+			records: []string{"DEBUG cancelled start step error scope=tenant service=w step=handle kind=runnable error=context canceled"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				logger, recorder := newRecordingLogger(t, tt.level)
+				root := NewWithOpts(&InjectorOpts{Logger: logger})
+				require.NoError(t, root.Start())
+				tenant := root.Scope("tenant")
+				w := newCancelledCall(tt.end)
+				opt := AsStarter
+				if tt.runnable {
+					opt = AsRunnable
+				}
+				provideCounted(tenant, "w", w, opt())
+				defer root.Shutdown()
+
+				runErr := make(chan error, 1)
+				go func() { runErr <- tenant.Start() }()
+				<-w.entered
+				before := len(recorder.all()) // w's registration and build
+				report := tenant.Shutdown()
+				require.NoError(t, <-runErr)
+				require.True(t, report.Succeed, "tenant.Shutdown() succeeds: %v", report.Errors)
+
+				var got []string
+				for _, rec := range recorder.all()[before:] {
+					if rec.attrs["service"] == "w" && !shutdownMessages[rec.message] {
+						got = append(got, rec.String())
+					}
+				}
+				assert.Equal(t, tt.records, got)
+			})
 		})
 	}
 }

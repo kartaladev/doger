@@ -17,9 +17,16 @@ import (
 	eventsql "github.com/kartaladev/doger/events/sql"
 )
 
-// TestStop is not parallel with the other tests: it asserts that the
-// release takes well under a second, which a loaded machine can stretch.
+// TestStop checks what a stop leaves to another member: the claims it
+// never handed over, released, and the running handler's delivery, acked
+// when stop waited for it or requeued when stop cancelled it. Nothing in
+// it depends on how fast the machine is: the running handler returns only
+// when the test lets it or its context ends, and no lease expires while
+// the test runs, so i2 receives the deliveries through the release or
+// not at all.
 func TestStop(t *testing.T) {
+	const lease = hangBackstop
+	const leased = "SELECT COUNT(*) FROM doger_event_deliveries WHERE lease_token IS NOT NULL"
 	tests := []struct {
 		name        string
 		stopTimeout time.Duration // 0: context.Background()
@@ -33,9 +40,9 @@ func TestStop(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, time.Minute)
+				testWithBackstop(t)
 				const dest = "orders.placed"
-				opts := fast(eventsql.Lease(30*time.Second), eventsql.BatchSize(8), eventsql.Workers(1))
+				opts := fast(eventsql.Lease(lease), eventsql.BatchSize(8), eventsql.Workers(1))
 				i1 := schemaTransport(t, db, opts...)
 				i2 := db.Transport(t, opts...)
 				seedGroup(t, db, dest, "mail", false)
@@ -44,11 +51,13 @@ func TestStop(t *testing.T) {
 				}
 
 				running := make(chan struct{}, 8)
+				finish := make(chan struct{}) // closed to let the running handler return
+				letFinish := sync.OnceFunc(func() { close(finish) })
 				var finished, cancelled atomic.Bool
 				stop := subscribe(t, i1, group(dest, "mail"), func(ctx context.Context, _ doger.Envelope) error {
 					running <- struct{}{}
 					select {
-					case <-time.After(100 * time.Millisecond):
+					case <-finish:
 						finished.Store(true)
 						return nil
 					case <-ctx.Done():
@@ -56,10 +65,11 @@ func TestStop(t *testing.T) {
 						return ctx.Err()
 					}
 				})
+				t.Cleanup(letFinish) // before the stop of the cleanup, on a failure
 				<-running
 				// the 8 were claimed in one transaction, committed before the
 				// first handler started
-				require.Equal(t, 8, db.Count(t, "SELECT COUNT(*) FROM doger_event_deliveries WHERE lease_token IS NOT NULL"))
+				require.Equal(t, 8, db.Count(t, leased))
 
 				ctx := context.Background()
 				if tt.stopTimeout > 0 {
@@ -67,32 +77,43 @@ func TestStop(t *testing.T) {
 					ctx, cancel = context.WithTimeout(ctx, tt.stopTimeout)
 					defer cancel()
 				}
-				stopped := time.Now()
-				_ = stop(ctx)
-				stopTook := time.Since(stopped)
+				stopped := make(chan error, 1)
+				go func() { stopped <- stop(ctx) }()
 
 				if tt.stopTimeout == 0 {
+					// stop releases the 7 claims it never handed over, then
+					// waits for the running handler
+					waitFor(t, func() bool { return db.Count(t, leased) == 1 }, "stop releasing the claims not handed over")
+					select {
+					case err := <-stopped:
+						require.Failf(t, "stop returned while the handler was running", "error: %v", err)
+					default:
+					}
+					letFinish()
+					require.NoError(t, <-stopped)
 					assert.True(t, finished.Load(), "stop returned before the running handler finished")
 				} else {
-					assert.Less(t, stopTook, time.Second)
-					assert.True(t, cancelled.Load(), "the running handler's context was not cancelled")
+					// the handler returns only once its context ends: stop
+					// returns once its own context ended, cancelling it
+					assert.ErrorIs(t, <-stopped, context.DeadlineExceeded)
+					assert.Eventually(t, cancelled.Load, waitTimeout, time.Millisecond, "the running handler's context was not cancelled")
 				}
-				released := time.Now()
 				c := newCollector()
 				subscribe(t, i2, group(dest, "mail"), c.handle)
 				assert.Len(t, distinct(c.expect(t, tt.wantI2)), tt.wantI2)
-				assert.Less(t, time.Since(released), time.Second, "i2 waited for the lease instead of the release")
 				c.quiet(t)
 			})
 		})
 	}
 }
 
-// TestStop_NoGoroutine is not parallel: it checks every goroutine of the
-// process.
+// TestStop_NoGoroutine is not parallel, nor are its engines: it checks
+// every goroutine of the process, so another test's or engine's
+// goroutines must not be running. It waits for the goroutines to exit
+// as long as for any other outcome.
 func TestStop_NoGoroutine(t *testing.T) {
-	forEachEngine(t, func(t *testing.T, tdb *testDB) {
-		testWithTimeout(t, time.Minute)
+	forEachEngineInTurn(t, func(t *testing.T, tdb *testDB) {
+		testWithBackstop(t)
 		ignore := goleak.IgnoreCurrent()
 		db, err := sql.Open(tdb.driver, scopedDSN(t, tdb.engine, tdb.schema))
 		require.NoError(t, err)
@@ -115,6 +136,10 @@ func TestStop_NoGoroutine(t *testing.T) {
 		}
 		require.NoError(t, db.Close()) // the pool's own goroutines
 
+		// each Find retries for about a second and a half; a loaded
+		// machine can take longer to end the goroutines
+		for deadline := time.Now().Add(waitTimeout); goleak.Find(ignore) != nil && time.Now().Before(deadline); {
+		}
 		goleak.VerifyNone(t, ignore)
 	})
 }
@@ -125,7 +150,7 @@ func TestStop_NoGoroutine(t *testing.T) {
 func TestStop_HandlerIgnoresContext(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, time.Minute)
+		testWithBackstop(t)
 		const dest = "orders.placed"
 		tr := schemaTransport(t, db, fast()...)
 		seedGroup(t, db, dest, "mail", false)
@@ -149,7 +174,7 @@ func TestStop_HandlerIgnoresContext(t *testing.T) {
 		select {
 		case err := <-stopped:
 			assert.ErrorIs(t, err, context.DeadlineExceeded)
-		case <-time.After(2 * time.Second):
+		case <-time.After(waitTimeout):
 			t.Error("stop did not return once its context ended")
 			once.Do(func() { close(unblock) })
 			<-stopped

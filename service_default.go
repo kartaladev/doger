@@ -188,6 +188,19 @@ func (s *serviceDefault[T]) getInstanceAny(i Injector) (any, error) {
 	return s.getInstance(i)
 }
 
+// builtInstanceAny forwards to the inner wrapper until the default yielded
+// or was superseded: its own instance is then never used, so it holds none.
+// It never decides, as isHealthchecker. The superseded branch is
+// defensive: superseding removes the wrapper from its scope, so no lookup
+// reaches it there (pinned by TestServiceDefault_BuiltInstanceAny).
+func (s *serviceDefault[T]) builtInstanceAny() (any, bool) {
+	if state := s.currentState(); state == defaultYielded || state == defaultSuperseded {
+		return nil, false
+	}
+
+	return builtInstanceOf(s.inner)
+}
+
 func (s *serviceDefault[T]) getInstance(i Injector) (T, error) {
 	// once its scope closed, a default neither yields nor resolves its
 	// replacement: a caller that looked it up before gets ErrShutdown

@@ -123,6 +123,10 @@ type ServiceHealth struct {
 }
 
 // HealthReport is the health of the services a scope or a container covers.
+// Once the container left PhaseIdle, a covered service whose start is not
+// complete, a Starter not started yet or a component its kind handlers have
+// not handled yet, is listed as HealthUnknown and not checked; see
+// [Scope.HealthReportWithContext].
 type HealthReport struct {
 	// State is the overall state of the covered services, then gated by the
 	// container phase.
@@ -287,6 +291,25 @@ func (s *Scope) HealthReport(opts ...HealthReportOption) HealthReport {
 // result is discarded; a ctx ending records nothing. Every completed check is
 // recorded, whichever path ran it, so HealthCheck() and the single-service
 // functions refresh the report too. A nil ctx means context.Background().
+//
+// Once the container left PhaseIdle, a read or a scheduled round checks a
+// service only once its start is complete; until then it is listed as
+// HealthUnknown and not checked. A start is not complete while the service
+// is a Starter that Start, Refresh or Scope.Start would start and that has
+// not started successfully, or a component that a kind with a handler has
+// not handled successfully, such as a Runnable whose Run has not returned
+// nil, or one registered after Ready that no Refresh handled yet. A kind
+// without a handler holds no component back. Nor does a kind that the last
+// Start, Refresh or Scope.Start covering the component passed over, having
+// no handler then, and that no run attempted since: a handler given to it
+// later does not demote the started component, which stays checked until
+// the next Refresh or Scope.Start collects it, and is then unknown until
+// that handler handled it. A handler call that failed keeps the component
+// back. A Refresh or Scope.Start that abandons a step under
+// [InjectorOpts.StartTimeout] leaves that service unknown until the
+// abandoned call returns nil; one that returns an error leaves it to the
+// next Refresh or Scope.Start. HealthCheck() and the single-service
+// functions still check every service.
 func (s *Scope) HealthReportWithContext(ctx context.Context, opts ...HealthReportOption) HealthReport {
 	return s.rootScope.healthReport(ctx, newReportQuery(visibleCheckers(s), false, opts))
 }
@@ -475,10 +498,18 @@ func (s *RootScope) needsWait(monitored bool, phase ContainerPhase) func(service
 
 // eligibleForReport reports whether a started container's reports and
 // rounds check service: not while it is a Starter that Start, Refresh or
-// Scope.Start would start and has not started yet.
+// Scope.Start would start and has not started yet, nor while a kind of it
+// holds it back (see awaitsKindHandler).
 func eligibleForReport(root *RootScope, service any) bool {
 	wrapper, ok := service.(serviceWrapperAny)
-	return !ok || !root.declaresStarter(wrapper) || root.isStarted(wrapper)
+	if !ok {
+		return true
+	}
+	if root.declaresStarter(wrapper) && !root.isStarted(wrapper) {
+		return false
+	}
+
+	return !root.awaitsKindHandler(wrapper)
 }
 
 // coveredMembers returns the targets of covered, by wrapper.

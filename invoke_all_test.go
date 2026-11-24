@@ -1089,13 +1089,13 @@ func TestInvokeAllMap_DefaultKeepsOneEntry(t *testing.T) {
 // TestInvokeAll_ConcurrentShadowingRegistration pins that a name registered
 // in a nearer scope while InvokeAll runs yields exactly one member of that
 // name: the farther one or the nearer one, never none.
-func TestInvokeAll_ConcurrentShadowingRegistration(t *testing.T) {
-	t.Parallel()
-	testWithTimeout(t, 60*time.Second)
+func TestInvokeAll_ConcurrentShadowingRegistration(t *testing.T) { //nolint:paralleltest // a CPU-bound stress: in parallel, it starves the other tests of -cpu=1
+	progress := testWithProgress(t)
 
 	const rounds = 20000
 	missing := 0
 	for range rounds {
+		progress()
 		root := New()
 		provideHandler(root, "x", newConsole)
 		child := root.Scope("child")

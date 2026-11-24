@@ -1393,14 +1393,27 @@ func TestHealthCheck_GlobalTimeoutBoundsSlotWait(t *testing.T) {
 	}
 }
 
-func TestHealthCheck_NoQueueLimit(t *testing.T) {
-	t.Parallel()
-	testWithTimeout(t, 10*time.Second)
+// healthRunTestProgress is a Healthchecker reporting each check to
+// progress.
+type healthRunTestProgress struct{ progress func() }
+
+func (p *healthRunTestProgress) HealthCheck() error {
+	p.progress()
+	return nil
+}
+
+// TestHealthCheck_NoQueueLimit is guarded by its progress, each check
+// returning: the 2000 checks queued behind one slot are CPU-bound, so a
+// fixed budget measured the machine's load, not a hang. Its 2000
+// goroutines would starve the other tests of -cpu=1: it is not parallel.
+func TestHealthCheck_NoQueueLimit(t *testing.T) { //nolint:paralleltest // see above
+	progress := testWithProgress(t)
 	is := assert.New(t)
 
 	i := NewWithOpts(&InjectorOpts{HealthCheckParallelism: 1})
 	for n := range 2000 {
-		ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), &healthRunTestCounter{})
+		progress()
+		ProvideNamedValue(i, fmt.Sprintf("svc-%d", n), &healthRunTestProgress{progress: progress})
 	}
 
 	results := i.HealthCheck()
@@ -1829,7 +1842,7 @@ func TestHealthCheck_GoexitAllWaiters(t *testing.T) {
 // percent of the runs return nil, so the mutant is not equivalent.
 func TestHealthCheck_QueuedDeadlineBoundary(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 10*time.Second)
+	progress := testWithProgress(t)
 
 	const runs = 200
 
@@ -1837,6 +1850,7 @@ func TestHealthCheck_QueuedDeadlineBoundary(t *testing.T) {
 	var firstErr error
 	synctest.Test(t, func(t *testing.T) {
 		for range runs {
+			progress()
 			fc := newFakeClock()
 			i := NewWithOpts(&InjectorOpts{
 				Clock:                  fc,

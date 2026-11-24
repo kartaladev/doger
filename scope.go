@@ -108,6 +108,8 @@ type Scope struct {
 type scopeClosing struct {
 	count int            // shutdowns of the scope in progress
 	run   *scopeCloseRun // the running shutdown that others join, or nil
+	// done reports that a shutdown of the scope completed (finishScopeClose)
+	done bool
 }
 
 // ID returns the unique identifier of the scope.
@@ -447,7 +449,9 @@ func (s *Scope) HealthCheckWithContext(ctx context.Context) map[string]error {
 }
 
 // Shutdown gracefully shuts down the scope and all its children.
-// This method calls ShutdownWithContext with a background context.
+// This method calls ShutdownWithContext with a background context: on a
+// child scope, it cancels the running start steps of its subtree, then
+// waits, with no deadline of its own, for the start that runs them.
 //
 // Returns a ShutdownReport containing any errors and timings that occurred during shutdown.
 func (s *Scope) Shutdown() *ShutdownReport {
@@ -457,12 +461,45 @@ func (s *Scope) Shutdown() *ShutdownReport {
 // ShutdownWithContext gracefully shuts down the scope and all its children with context support.
 // This method performs shutdown operations in parallel for better performance.
 //
-// On a child scope, it first waits, without cancelling it, for a running
-// Start, Refresh or Scope.Start that is starting services of this scope, and
-// a run that begins while the scope shuts down skips it and its descendants.
+// On a child scope, it first cancels the contexts of the running start
+// steps (Starter Start methods and kind handler calls) of this scope and its
+// descendants, with a cause matching [ErrShutdown], then waits for a running
+// Start, Refresh or Scope.Start that is starting services of this scope,
+// bounded by ctx. The run is not cancelled: a step so cancelled is neither
+// recorded nor a failure of the run, the run skips the rest of this scope's
+// subtree and goes on with the other scopes. A step that ignores its
+// context is awaited, or abandoned at [InjectorOpts.StartTimeout] when set.
+// This skip rule is for the scope's own shutdown: once root Shutdown began,
+// it has cancelled the whole run, and a step of this subtree that it
+// reaches is reported like a root step, failing the run.
+// A service of this subtree whose step the run skipped does not count as
+// started: the run also skips every service that depends on it, directly
+// or through others. A dependent outside this subtree, such as a root
+// service depending on an export of this scope, then fails the run once
+// everything else started, unless another step failed first: with the
+// skipped step's [*StartError] matching [ErrStartTimeout] while its
+// abandoned call still runs, otherwise with a [*StartError] naming the
+// dependent that matches [ErrShutdown]. When the dependent depends on
+// several skipped services, a still-running one decides the error, then
+// the first by scope name, service name and scope ID (scope IDs are
+// random, so between same-named scopes the choice is stable within a
+// container only).
+// A run that begins while the scope shuts down skips it and its descendants.
 // If ctx ends first, the report fails with an error keyed by this scope with
 // an empty service name, wrapping ctx.Err(), and the shutdown proceeds with
 // the ended context, so it skips the services it then reaches (see below).
+// The run still skips the later steps of this subtree once that shutdown
+// completed, and still skips and reports a dependent outside it, whenever
+// its edge to an export of this scope was declared. As that shutdown
+// removed the export's source with the dependency edges inside this
+// subtree, a dependent of an export of it is then skipped once the run
+// skipped any step of this subtree, even one it did not depend on, and the
+// run reports it with a [*StartError] that matches [ErrShutdown] and names
+// the removed export ("dependency `S` (export of scope `c`) was removed by
+// the scope's shutdown"), or with the [ErrStartTimeout] error of a step of
+// this subtree whose abandoned call still runs. A shutdown that waits for
+// the run removes nothing before it returns: such a dependent then starts
+// when its own dependencies did.
 // Never shut down, synchronously from code running in such a start, a scope
 // that the start is starting: it would wait for itself.
 //
@@ -623,9 +660,10 @@ type scopeCloseRun struct {
 }
 
 // joinClose marks the child scope as shutting down, so a Start, Refresh or
-// Scope.Start beginning now skips it, and returns its running shutdown,
-// which this call runs when winner is true. Each call must be paired with
-// endClosing.
+// Scope.Start beginning now skips it and a running one skips its later
+// steps, cancels the running start steps of the scope and its descendants,
+// and returns its running shutdown, which this call runs when winner is
+// true. Each call must be paired with endClosing.
 func (s *Scope) joinClose() (run *scopeCloseRun, winner bool) {
 	root := s.rootScope
 	root.lifecycleMu.Lock()
@@ -635,6 +673,8 @@ func (s *Scope) joinClose() (run *scopeCloseRun, winner bool) {
 		s.closing = &scopeClosing{}
 	}
 	s.closing.count++
+	root.cancelSubtreeSteps(s)
+	root.noteRunRootShutdown(s)
 	if s.closing.run != nil {
 		return s.closing.run, false
 	}
@@ -657,6 +697,7 @@ func (s *Scope) finishScopeClose(run *scopeCloseRun, report *ShutdownReport) {
 
 	run.report = report
 	s.closing.run = nil
+	s.closing.done = true
 	close(run.done)
 }
 
@@ -1246,6 +1287,7 @@ func (s *Scope) storeLocked(name string, replaced, service any) {
 	s.services[name] = service
 	s.typeMatches = nil
 	s.version++
+	s.RootScope().registrations.Add(1)
 }
 
 // countDefault adds delta to the count of default registrations when service

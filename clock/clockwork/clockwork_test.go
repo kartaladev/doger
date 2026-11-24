@@ -1,6 +1,9 @@
 package dogerclockwork
 
 import (
+	"context"
+	"log/slog"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -144,4 +147,130 @@ func TestWrap_NilIsDefault(t *testing.T) {
 			})
 		})
 	}
+}
+
+// clockworkTestBlockingStarter is a Starter whose Start blocks until release
+// is closed, then returns nil.
+type clockworkTestBlockingStarter struct{ release chan struct{} }
+
+func (s *clockworkTestBlockingStarter) Start(context.Context) error {
+	<-s.release
+	return nil
+}
+
+// clockworkTestStartBlocked registers a clockworkTestBlockingStarter as
+// "srv" in injector and starts the container in another goroutine. It
+// returns the func that releases "srv", safe to call more than once, and
+// the channel of Start's outcome.
+func clockworkTestStartBlocked(injector *doger.RootScope) (release func(), done <-chan error) {
+	srv := &clockworkTestBlockingStarter{release: make(chan struct{})}
+	doger.ProvideNamedValue(injector, "srv", srv, doger.AsStarter())
+
+	out := make(chan error, 1)
+	go func() { out <- injector.Start() }()
+
+	return sync.OnceFunc(func() { close(srv.release) }), out
+}
+
+// clockworkTestWaitArmed waits until fake has one armed timer.
+func clockworkTestWaitArmed(t *testing.T, fake *clockwork.FakeClock) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, fake.BlockUntilContext(ctx, 1))
+}
+
+// TestWrap_StartTimeout pins the clockwork row of container-start "Start
+// timeout waits for the container clock" through Wrap.
+func TestWrap_StartTimeout(t *testing.T) {
+	t.Parallel()
+
+	fake := clockwork.NewFakeClockAt(clockworkTestEpoch)
+	injector := doger.NewWithOpts(&doger.InjectorOpts{StartTimeout: 10 * time.Millisecond, Clock: Wrap(fake)})
+	release, done := clockworkTestStartBlocked(injector)
+	defer injector.Shutdown()
+	defer release()
+
+	clockworkTestWaitArmed(t, fake)
+	time.Sleep(50 * time.Millisecond) // wall time: the fake clock does not move
+	select {
+	case err := <-done:
+		require.Failf(t, "Start returned before the clock advanced", "error: %v", err)
+	default:
+	}
+
+	fake.Advance(10 * time.Millisecond)
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, doger.ErrStartTimeout)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "Start did not return once the clock advanced past StartTimeout")
+	}
+}
+
+// clockworkTestRecorder is a slog.Handler that keeps the messages of the
+// records it handles.
+type clockworkTestRecorder struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (r *clockworkTestRecorder) Enabled(context.Context, slog.Level) bool { return true }
+
+func (r *clockworkTestRecorder) Handle(_ context.Context, record slog.Record) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.messages = append(r.messages, record.Message)
+	return nil
+}
+
+func (r *clockworkTestRecorder) WithAttrs([]slog.Attr) slog.Handler { return r }
+func (r *clockworkTestRecorder) WithGroup(string) slog.Handler      { return r }
+
+// count returns how many records had message.
+func (r *clockworkTestRecorder) count(message string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	n := 0
+	for _, m := range r.messages {
+		if m == message {
+			n++
+		}
+	}
+
+	return n
+}
+
+// TestWrap_SlowStartWarning pins container-logging "Slow-start warning
+// waits for the container clock" through Wrap.
+func TestWrap_SlowStartWarning(t *testing.T) {
+	t.Parallel()
+
+	const slowStart = "start step is slow"
+	fake := clockwork.NewFakeClockAt(clockworkTestEpoch)
+	recorder := &clockworkTestRecorder{}
+	injector := doger.NewWithOpts(&doger.InjectorOpts{Logger: slog.New(recorder), Clock: Wrap(fake)})
+	release, done := clockworkTestStartBlocked(injector)
+	defer injector.Shutdown()
+	defer release()
+
+	clockworkTestWaitArmed(t, fake)
+	time.Sleep(50 * time.Millisecond) // wall time: the fake clock does not move
+	assert.Zero(t, recorder.count(slowStart), "no warning before the clock reaches the threshold")
+
+	fake.Advance(doger.DefaultSlowStartThreshold)
+	assert.Eventually(t, func() bool { return recorder.count(slowStart) == 1 }, 5*time.Second, time.Millisecond,
+		"one warning once the clock reached the threshold, before srv is released")
+
+	release()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "Start did not return once srv was released")
+	}
+	assert.Equal(t, 1, recorder.count(slowStart), "exactly one warning")
 }

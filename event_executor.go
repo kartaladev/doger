@@ -17,6 +17,15 @@ import (
 // running ones, bounded by ctx; its signature matches
 // [net/http.Server.Shutdown], so an executor can also be a doger
 // ShutdownerWithContextAndError service.
+//
+// A scope shutdown called from a delivery does not wait for the delivery
+// that published it while that publisher is still inside Submit: an
+// executor running the delivery inline keeps it there. The default
+// executor's Submit returns as soon as it starts the delivery, so that
+// publisher is waited for. With a custom executor, including one wrapping
+// [NewBoundedEventExecutor], that starts the delivery on another goroutine
+// before its Submit returns, the shutdown may return while the publisher
+// still runs.
 type EventExecutor interface {
 	Submit(ctx context.Context, task func(context.Context)) error
 	Shutdown(ctx context.Context) error
@@ -35,6 +44,8 @@ type BoundedEventExecutor struct {
 
 	abortCtx context.Context //nolint:containedctx // the parent of every task context, cancelled when a Shutdown deadline passes
 	abort    context.CancelCauseFunc
+
+	afterStart func() // test seam: run by Submit once it started a task's goroutine
 }
 
 var _ EventExecutor = (*BoundedEventExecutor)(nil)
@@ -124,6 +135,9 @@ func (e *BoundedEventExecutor) Submit(ctx context.Context, task func(context.Con
 		defer release()
 		task(taskCtx)
 	}()
+	if e.afterStart != nil {
+		e.afterStart()
+	}
 
 	return nil
 }

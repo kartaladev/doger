@@ -1,12 +1,14 @@
 package doger
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -523,6 +525,163 @@ func TestDeclaredEdges_ShutdownOrder(t *testing.T) {
 
 			require.True(t, root.Shutdown().Succeed)
 			assert.Equal(t, []string{"scheduler", "job"}, rec.list())
+		})
+	}
+}
+
+// stoppingStarter is a countedStarter that also records its Shutdown in
+// stops.
+type stoppingStarter struct {
+	*countedStarter
+	stops *callRecorder
+}
+
+func (s *stoppingStarter) Shutdown() error {
+	s.stops.record(s.name)
+	return nil
+}
+
+// TestDeclareDependency_UnresolvedExport pins that an edge to an export
+// that nothing resolved yet reaches its source: root Starter "server" starts
+// after "cache", which child scope "redis" exports, and is skipped with it
+// when "redis" shuts down during the run (container-start "Dependents of a
+// step the child shutdown skipped are skipped"); root Shutdown shuts
+// "server" down before "cache" (Export: "in dependency order"). The run
+// builds "cache" in "redis" directly, never through the export. The
+// depends_on rows declare the edge with DependsOnNamed instead, whose
+// behaviour stays as it was.
+func TestDeclareDependency_UnresolvedExport(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		declare  bool // DeclareDependency(root, "server", "cache"), not DependsOnNamed("cache")
+		closing  bool // "redis" shuts down while root.Refresh() runs, before the Starters
+		shutdown bool // after the run, root.Shutdown(): the shutdown order is checked
+	}{
+		{name: "declared/start_order", declare: true},
+		{name: "declared/closing_scope", declare: true, closing: true},
+		{name: "declared/shutdown_order", declare: true, shutdown: true},
+		{name: "depends_on/start_order"},
+		{name: "depends_on/closing_scope", closing: true},
+		{name: "depends_on/shutdown_order", shutdown: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := New()
+				require.NoError(t, root.Start())
+				redis := root.Scope("redis")
+				starts := &countingStarters{}
+
+				// a StageBeforeStart component of "redis" holds the run until
+				// "redis" shuts down
+				entered := make(chan struct{})
+				block := NewKind[Job, Spec]("block")
+				ProvideNamed(redis, "blk", func(Injector) (*CleanupJob, error) { return &CleanupJob{name: "blk"}, nil }, block.With(Spec{}))
+				block.Handle(root, StageBeforeStart, func(ctx context.Context, _ Component[Job, Spec]) error {
+					close(entered)
+					if !tt.closing {
+						return nil
+					}
+					<-ctx.Done()
+					return ctx.Err()
+				})
+
+				stops := &callRecorder{}
+				provide := func(scope *Scope, name string, opts ...ProvideOption) {
+					ProvideNamed(scope, name, func(Injector) (*stoppingStarter, error) {
+						return &stoppingStarter{countedStarter: &countedStarter{name: name, starts: starts}, stops: stops}, nil
+					}, append([]ProvideOption{AsStarter()}, opts...)...)
+				}
+				provide(redis, "cache")
+				require.NoError(t, ExportNamed[*stoppingStarter](redis, "cache"))
+				var serverOpts []ProvideOption
+				if !tt.declare {
+					serverOpts = append(serverOpts, DependsOnNamed("cache"))
+				}
+				provide(root.self, "server", serverOpts...)
+				if tt.declare {
+					require.NoError(t, DeclareDependency(root, "server", "cache"))
+				}
+				defer root.Shutdown()
+
+				runErr := make(chan error, 1)
+				go func() { runErr <- root.Refresh() }()
+				<-entered
+				if tt.closing {
+					require.True(t, redis.Shutdown().Succeed)
+				}
+				err := <-runErr
+
+				if !tt.closing {
+					require.NoError(t, err)
+					assert.Equal(t, []string{"cache", "server"}, starts.list(), "start order")
+					if tt.shutdown {
+						require.True(t, root.Shutdown().Succeed)
+						assert.Equal(t, []string{"server", "cache"}, stops.list(), "shutdown order")
+					}
+					return
+				}
+				require.ErrorIs(t, err, ErrShutdown)
+				var startErr *StartError
+				require.ErrorAs(t, err, &startErr)
+				assert.Equal(t, "server", startErr.Service)
+				assert.Zero(t, starts.count("cache"), "starts of cache, in the closing scope")
+				assert.Zero(t, starts.count("server"), "starts of server, which depends on the skipped cache")
+			})
+		})
+	}
+}
+
+// TestDeclareDependency_ExportCycle pins that cycle detection follows an
+// export to its source, which depends back on "svcA" with DependsOnNamed:
+// declaring svcA -> cache is a cycle, and an override that adds the back
+// edge after the declaration makes Start fail with one.
+func TestDeclareDependency_ExportCycle(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		backEdge string // "registered": the source depends on svcA from the start; "override": an override adds it after the declaration
+	}{
+		{name: "declare_rejected", backEdge: "registered"},
+		{name: "override_back_edge", backEdge: "override"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := New()
+			defer root.Shutdown()
+			redis := root.Scope("redis")
+			starts := &countingStarters{}
+			provideCountedStarter(root, starts, "svcA")
+			var cacheOpts []ProvideOption
+			if tt.backEdge == "registered" {
+				cacheOpts = append(cacheOpts, DependsOnNamed("svcA"))
+			}
+			provideCountedStarter(redis, starts, "cache", cacheOpts...)
+			require.NoError(t, ExportNamed[*countedStarter](redis, "cache"))
+
+			err := DeclareDependency(root, "svcA", "cache")
+			if tt.backEdge == "registered" {
+				require.ErrorIs(t, err, ErrCircularDependency)
+				return
+			}
+			require.NoError(t, err)
+			OverrideNamed(redis, "cache", func(Injector) (*countedStarter, error) {
+				return &countedStarter{name: "cache", starts: starts}, nil
+			}, AsStarter(), DependsOnNamed("svcA"))
+
+			err = root.Start()
+
+			require.ErrorIs(t, err, ErrCircularDependency)
+			assert.Empty(t, starts.list(), "nothing starts")
 		})
 	}
 }

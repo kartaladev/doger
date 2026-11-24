@@ -153,21 +153,63 @@ type ShutdownerWithContextAndError interface {
 // There is no Stop counterpart: a started service is stopped by its
 // Shutdowner method during Shutdown. A Starter without a Shutdowner method is
 // allowed; its lifecycle ends with the process.
+//
+// Start must return once the service is ready: [RootScope.Start] waits for
+// every Start method, so one that runs until shutdown makes the whole
+// container Start block. A server is the usual case: do not call
+// ListenAndServe in Start. Bind the listener in Start, so that a bind error
+// fails Start, serve in a goroutine, return, and stop serving from a
+// Shutdowner method (see the starterHTTPServer example). A Start method
+// still running after [InjectorOpts.SlowStartThreshold] is logged at Warn
+// level when a Logger is set, and [InjectorOpts.StartTimeout] makes Start
+// abandon it with [ErrStartTimeout] instead of waiting. The same applies to
+// every Starter variant.
+//
+// A Start method that returns while a shutdown of the service's child scope,
+// or of an ancestor child scope, has begun is not recorded as started,
+// whatever it returns: the run skips the service, and the services that
+// depend on it, instead of failing with it (see [Scope.ShutdownWithContext]).
+// Without a context, this Start cannot see the shutdown; the scope shutdown
+// waits for it.
 type Starter interface {
 	Start()
 }
 
-// StarterWithError is a service started by [RootScope.Start] with Start() error.
+// StarterWithError is a service started by [RootScope.Start] with Start()
+// error. Start must return once the service is ready; see [Starter]. A Start
+// that returns while its scope has begun shutting down is not recorded as
+// started, and its error does not fail the run (see [Starter]).
 type StarterWithError interface {
 	Start() error
 }
 
-// StarterWithContext is a service started by [RootScope.Start] with Start(ctx).
+// StarterWithContext is a service started by [RootScope.Start] with
+// Start(ctx). Start must return once the service is ready; see [Starter].
+// The context ends as described on [StarterWithContextAndError], including
+// when the service's scope shuts down while Start runs.
 type StarterWithContext interface {
 	Start(context.Context)
 }
 
-// StarterWithContextAndError is a service started by [RootScope.Start] with Start(ctx) error.
+// StarterWithContextAndError is a service started by [RootScope.Start] with
+// Start(ctx) error. Start must return once the service is ready, and the
+// context ends when the container's Start returns, so long-running work
+// needs its own; see [Starter]. With [InjectorOpts.StartTimeout] set, the
+// context also ends when the container abandons this Start call; a call
+// that returns in time keeps it until the container's Start returns, as
+// without the option, and it reports no deadline.
+//
+// The context also ends, with a cause matching [ErrShutdown], when the
+// service's child scope, or one of its ancestor child scopes, begins
+// shutting down while Start runs (see [Scope.ShutdownWithContext]). That
+// Start is then not a failure of the container's Start, Refresh or
+// Scope.Start, whatever it returns, and the service is not recorded as
+// started, so the run skips the services that depend on it (a dependent
+// outside the shutting-down scope fails the run). The scope shutdown waits
+// for the call, bounded by its own context and by StartTimeout when set,
+// then shuts the service down.
+// [RootScope.Refresh] and [Scope.Start] pass the same kind of context,
+// ending when they return.
 type StarterWithContextAndError interface {
 	Start(context.Context) error
 }

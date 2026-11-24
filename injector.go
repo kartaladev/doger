@@ -211,8 +211,15 @@ type InjectorOpts struct {
 
 	// HookBeforeStart is called by Start, Refresh and Scope.Start just before
 	// a service's Start method, with the context the operation runs with.
-	// With StartParallelism > 1, calls for different services may run
-	// concurrently.
+	// The Start method receives its own context derived from it, which
+	// reports no deadline and is not cancelled when the method returns; it
+	// also ends when a shutdown of the service's child scope, or of an
+	// ancestor child scope, begins while the method runs, and, with
+	// StartTimeout set, when the method is abandoned. No hook is called for
+	// a Starter the run skips: already started, an abandoned Start call of
+	// it still running, its scope shutting down, or a dependency of it
+	// skipped for either of the last two reasons. With StartParallelism > 1, calls
+	// for different services may run concurrently.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddBeforeStartHook] adds a hook later, safely
@@ -224,6 +231,17 @@ type InjectorOpts struct {
 	// time the method took on the container Clock, and the error the method
 	// returned, unwrapped (nil on success; a recovered panic as an error). With StartParallelism
 	// > 1, calls for different services may run concurrently.
+	//
+	// For a Start method abandoned under StartTimeout, it is called once, on
+	// the operation's goroutine when the method is abandoned, with elapsed
+	// the time waited and err matching ErrStartTimeout; it is not called
+	// again when the abandoned method returns.
+	//
+	// It is also called for a Start method whose context a shutdown of the
+	// service's child scope, or of an ancestor child scope, cancelled while
+	// it ran, with the error the method returned (or, once abandoned, the
+	// timeout error), although the run skips that service instead of
+	// failing with it.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddAfterStartHook] adds a hook later, safely
@@ -321,7 +339,10 @@ type InjectorOpts struct {
 	// or a panic vetoes Scope.Start, which returns an error wrapping it. It is
 	// not called when the scope, or one of its ancestors, is shutting down:
 	// Scope.Start then starts nothing and returns nil. The root's own scope
-	// never fires scope hooks.
+	// never fires scope hooks. It is called on every Scope.Start attempt
+	// that passes the phase check, including one that then starts nothing
+	// new or fails, such as an attempt that reaches a step whose call,
+	// abandoned at [InjectorOpts.StartTimeout], still runs.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddScopeStartingHook] adds a hook later, safely
@@ -331,11 +352,17 @@ type InjectorOpts struct {
 	// HookScopeStarted is called by Scope.Start on a child scope once its
 	// services started successfully. It is not called when the scope, or one
 	// of its ancestors, was shutting down, so that Scope.Start started
-	// nothing. A shutdown of the scope that begins after Scope.Start collected
-	// its services waits for those services to start, then runs its Closing
-	// hooks, so they may run during or before the Started hooks. A panic is
-	// recovered and dispatched like a container observer hook panic, with the
-	// point "scope-started" (see HookContainerPanic).
+	// nothing, as for [InjectorOpts.HookScopeStarting]. Nor is it called when
+	// a shutdown of the scope, or of an ancestor, began after Scope.Start
+	// collected its services: that shutdown cancels their running start
+	// steps, Scope.Start skips them and returns nil, and the shutdown then
+	// waits for Scope.Start to return, bounded by its context, before its
+	// Closing hooks run. A shutdown that began before Scope.Start collected
+	// them, and completed by then, is one Scope.Start runs after: the hooks
+	// are called. A shutdown of a descendant scope only skips that scope's
+	// services: the hooks are called for the scope Scope.Start runs on. A
+	// panic is recovered and dispatched like a container observer hook
+	// panic, with the point "scope-started" (see HookContainerPanic).
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddScopeStartedHook] adds a hook later, safely
@@ -392,26 +419,50 @@ type InjectorOpts struct {
 	// message and level and the attributes "scope" and "service" where they
 	// apply:
 	//   - Debug: registrations, overrides, invocations, exports, a health
-	//     check requested or failed, the property source selected, and the
-	//     value of a recovered panic ("panic value");
+	//     check requested or failed, the property source selected, the
+	//     value of a recovered panic ("panic value"), and the error of a
+	//     start step that a child scope shutdown cancelled ("cancelled start
+	//     step error", with "step", "kind" for a handler call, and "error";
+	//     such a step that panics logs "panic recovered" and "panic value"
+	//     with "step" and "kind" instead), and the error that a start step
+	//     abandoned at StartTimeout returned later ("abandoned start step
+	//     error", with "step", "kind" for a handler call, "elapsed" and
+	//     "error");
 	//   - Info: container started, ready, closing and closed, an extension
 	//     disabled, and the container health back to healthy;
 	//   - Warn: an unavailable property source, properties read after
-	//     Extend, and the container health changing to another state;
+	//     Extend, the container health changing to another state, a start
+	//     step still running after SlowStartThreshold ("start step is slow",
+	//     with "step", "kind" for a handler call, and "threshold"), and a
+	//     start step abandoned at StartTimeout that later returned ("abandoned
+	//     start step returned", with "step", "kind" for a handler call, and
+	//     "elapsed" since its call began; such a step that panics logs "panic
+	//     recovered" (Error) and "panic value" (Debug) with "step" and
+	//     "kind" instead);
 	//   - Error: a failed service shutdown, a health scheduler failure or a
 	//     failure of its stop function, and a recovered panic that is not
 	//     passed to HookContainerPanic ("panic recovered", with its point and
-	//     type only): the first panic of an operation goes to
+	//     type, and for a start step its "step" and "kind"): the first panic
+	//     of an operation goes to
 	//     HookContainerPanic when it is set, and is logged only when it is
 	//     not; later panics of the operation are logged.
-	// A recovered panic's value, and a health check's error text, appear
-	// only in Debug records, since they could hold secrets.
+	// A recovered panic's value, and the error text of a health check or of
+	// a start step, appear only in Debug records, since they could hold
+	// secrets.
+	//
+	// The slow start warning and the records of an abandoned call's end are
+	// logged on the container's background goroutines (the warning timer,
+	// the abandoned call's own goroutine), so they can come after Start
+	// returned, after Shutdown, and even after the container closed: the
+	// call is still running user code then. They are logged to this Logger
+	// all the same.
 	//
 	// The Logger's handler must not panic. A panic it raises on the
-	// caller's goroutine propagates to the caller; one raised on a
-	// goroutine the container runs in the background, such as a service
-	// shutdown or a health check, cannot be recovered by the caller and
-	// crashes the process.
+	// caller's goroutine propagates to the caller. A panic it raises on the
+	// warning timer or on an abandoned call's late outcome is dropped, since
+	// no caller waits there. One raised on another goroutine the container
+	// runs in the background, such as a service shutdown or a health check,
+	// cannot be recovered by the caller and crashes the process.
 	// Default (nil): nothing is logged, and no record is built.
 	Logger *slog.Logger
 
@@ -513,16 +564,21 @@ type InjectorOpts struct {
 	StructTagKey string
 
 	// Clock is the time source of the container. It measures
-	// HealthCheckTimeout, HealthCheckSingleTimeout and HealthCheckGlobalTimeout,
-	// HealthReportCacheTTL and the report bound, the CheckedAt, Duration and
-	// PendingSince of HealthReport entries, lazy service build times, and
-	// shutdown durations, and it is passed to HealthScheduler. Child scopes
-	// and Clone use the root scope's clock.
+	// HealthCheckTimeout, HealthCheckSingleTimeout and
+	// HealthCheckGlobalTimeout, HealthReportCacheTTL and the report bound, the CheckedAt, Duration and
+	// PendingSince of HealthReport entries, lazy service build times,
+	// shutdown durations, SlowStartThreshold, StartTimeout and the elapsed
+	// time of start hooks and start-step log records, and it is passed to
+	// HealthScheduler. Child scopes and Clone use the root scope's clock.
 	// Default: nil, which means RealClock().
 	// Set a controllable Clock to drive time in tests, such as
 	// dogerclockwork.Wrap(clockwork.NewFakeClock()) from the
 	// github.com/kartaladev/doger/clock/clockwork module, or any type with
-	// the Clock methods.
+	// the Clock methods. While a start step runs, a positive StartTimeout
+	// arms one timer on the Clock for it, and with a Logger that keeps Warn
+	// records the SlowStartThreshold warning may arm one more; a fake
+	// clock's BlockUntil counts them. A negative SlowStartThreshold removes
+	// the warning timer.
 	Clock Clock
 
 	// EnableStarterAutoDetection makes Start also start every non-transient,
@@ -540,6 +596,102 @@ type InjectorOpts struct {
 	// HookAfterStart may run concurrently and must synchronize their state.
 	// Kind handlers always run sequentially.
 	StartParallelism uint
+
+	// SlowStartThreshold is how long Start, Refresh and Scope.Start wait for
+	// a Starter's Start method, or a kind-handler call such as a Runner's
+	// Run, before logging one WARN record "start step is slow" naming the
+	// service, its scope and the step. The step itself is not interrupted.
+	// It needs a Logger at Warn level or below: without one, no timer is
+	// armed and nothing is logged. With StartTimeout set, the warning is
+	// armed only when the threshold is below it: a step that reaches the
+	// timeout is reported by its abandonment instead, and a step abandoned
+	// before the threshold never warns.
+	// Default: 0, which means DefaultSlowStartThreshold (10s). A negative
+	// value disables the warning. Measured on Clock: when armed, the warning
+	// is one timer on the Clock per running step, which a fake clock's
+	// BlockUntil counts.
+	SlowStartThreshold time.Duration
+
+	// StartTimeout bounds each Starter Start method and each kind-handler
+	// call of Start, Refresh and Scope.Start. A step still running after it
+	// is abandoned: the run stops waiting, starts nothing further and returns
+	// a [*StartError] naming the step that matches [ErrStartTimeout] and
+	// context.DeadlineExceeded. When the run's context ends first (the
+	// caller's deadline or cancellation, or root Shutdown), the step's
+	// context is cancelled at once and the run keeps waiting up to the
+	// timeout, so a step that honours its context returns and is never
+	// abandoned; the error then also carries that context's cause. Root
+	// Shutdown waits for the run within its own context: a Shutdown bounded
+	// below StartTimeout stops waiting at its deadline and skips the
+	// services it then reaches, so a stuck step keeps running until its call
+	// returns, as without this option. The run's error is then the same
+	// for a step in any scope: a step of a child scope that root Shutdown
+	// reaches is reported like a root step.
+	//
+	// Go cannot stop the call: it keeps running in its own goroutine with a
+	// cancelled context. So a runtime.Goexit in a Start method or kind
+	// handler ends only that goroutine and, before the timeout, is reported
+	// as a [*StartError] for the step (after it, it is logged as the late
+	// outcome); without this option the call runs on the caller's
+	// goroutine, which Goexit ends. Meanwhile Invoke of the service returns
+	// its instance, which may be only half started. The step's context
+	// keeps the lifetime it has without this option: it ends when the run
+	// ends or when a shutdown of the step's child scope, or of an ancestor
+	// child scope, begins, and also when the step is abandoned. It reports
+	// no deadline, since a step that returns in time keeps it past the
+	// timeout. A step that the child scope's own shutdown cancelled, while
+	// root Shutdown has not begun, is skipped, not a failure, even once
+	// abandoned, unless a service outside that scope depends on it (see
+	// [Scope.ShutdownWithContext]); under root Shutdown it fails the run as
+	// a root step does.
+	//
+	// While it runs, the container never calls it again: a covering Refresh
+	// or Scope.Start skips it, with no hooks, and skips every candidate of
+	// the run that depends on its service, directly or through others; it
+	// starts everything else, then returns its first failure, or else a
+	// [*StartError] naming the still-running step that matches
+	// ErrStartTimeout. This also holds when the run does not cover the step:
+	// Scope.Start, or any run, skips a dependent of a still-running step in
+	// an ancestor scope, or whose own step runs in an earlier stage, and
+	// fails with that step's ErrStartTimeout error. Once it returns nil it is
+	// recorded as started (or handled) unless its scope is shutting down or
+	// no longer holds it, and once it fails a later Refresh or Scope.Start
+	// tries it again.
+	//
+	// After root Start abandoned a step, no such run follows: Start has
+	// failed, so Refresh and Scope.Start return [ErrNotStarted] and Start
+	// returns [ErrAlreadyStarted]; the late return is still recorded or
+	// logged, and Shutdown is the way on. Shutdown still calls the
+	// service's Shutdowner, its stop path. Nothing is in flight then, so
+	// Shutdown does not wait for the abandoned call: it can return a
+	// successful [ShutdownReport] while that call still runs.
+	//
+	// The guarantee holds per instance for non-nil pointers to non-zero-size
+	// values, non-nil channels and non-nil unsafe pointers: a run skips the
+	// same way, with its dependents in any scope, a step whose instance has
+	// an abandoned call of that step still running, also after an override
+	// registers the instance again, and in a clone, which shares eager
+	// instances and so shares with its source the record of the abandoned
+	// calls that still run. That record is made at abandonment only: two
+	// containers that share an instance can still call it at the same time
+	// while neither call has been abandoned. Any other instance (a struct or
+	// other value, a map, a nil pointer, a pointer to a zero-size type) is
+	// tracked per registration only: a clone or an override calls it again,
+	// and two registrations never block each other through it. A default
+	// registration that yielded holds no instance of its own: its dependents
+	// wait for the target's.
+	//
+	// A Start method that calls Refresh or Scope.Start synchronously, from
+	// the run that covers it, waits for that run, which waits for it.
+	// Without this option that is a deadlock. With it, the run abandons the
+	// step and fails with ErrStartTimeout, and the nested call then fails
+	// with ErrStartTimeout too, since the step it reaches is its own
+	// still-running caller. Never do it either way.
+	//
+	// Default: 0, no bound: Start waits for every step, however long, and an
+	// ended context is noticed only between steps. A negative value is the
+	// same as 0. Measured on Clock.
+	StartTimeout time.Duration
 
 	// EnableRunnerAutoDetection makes Start run, as a Runnable, every
 	// non-transient service whose registered type implements Runner. By

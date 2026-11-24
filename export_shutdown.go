@@ -147,6 +147,7 @@ func (p *exportPass) shutdownOtherChildren(first *hookPanic) {
 func (p *exportPass) shutdownServices(first *hookPanic) {
 	alive := p.aliveServices()
 	dependents := p.root.scope.rootScope.dag.snapshotDependents(serviceSet(alive))
+	addExportSources(alive, dependents)
 
 	for ; len(alive) > 0; alive = p.aliveServices() {
 		ready := readyServices(alive, dependents)
@@ -156,6 +157,44 @@ func (p *exportPass) shutdownServices(first *hookPanic) {
 	}
 
 	p.settle(first)
+}
+
+// addExportSources makes the dependents of each export of alive dependents
+// of its source too, when the source is in alive, so an edge declared with
+// DeclareDependency to an export nothing resolved yet orders the shutdown.
+// The export itself is not made a dependent of its source: the DAG records
+// that edge once the export is resolved, and an export that nothing
+// resolved and nothing depends on must not hold its source back a round.
+// It repeats until nothing changes, so a chain of exports (an export of an
+// export) passes its dependents down to the last source.
+func addExportSources(alive map[*passScope][]ServiceDescription, dependents map[ServiceDescription][]ServiceDescription) {
+	running := serviceSet(alive)
+	sources := map[ServiceDescription]ServiceDescription{} // export -> its source in the pass
+	for member, descs := range alive {
+		for _, desc := range descs {
+			service, ok := member.scope.serviceGet(desc.Service)
+			if !ok {
+				continue
+			}
+			if source, ok := exportSourceOf(service); ok {
+				if _, inPass := running[source]; inPass {
+					sources[desc] = source
+				}
+			}
+		}
+	}
+
+	for changed := len(sources) > 0; changed; {
+		changed = false
+		for export, source := range sources {
+			for _, dependent := range dependents[export] {
+				if dependent != source && !slices.Contains(dependents[source], dependent) {
+					dependents[source] = append(dependents[source], dependent)
+					changed = true
+				}
+			}
+		}
+	}
 }
 
 // readyServices returns the services of alive that no service of alive

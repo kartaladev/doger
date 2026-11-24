@@ -102,6 +102,8 @@ func main() {
 }
 ```
 
+A `Start` method must return once its service is ready: `root.Start` waits for it. For a server, bind the listener in `Start`, serve in a goroutine and stop it in `Shutdown`; calling `ListenAndServe` in `Start` makes `root.Start` block forever. Set `InjectorOpts.Logger` to see a `start step is slow` warning after 10s, or `InjectorOpts.StartTimeout` to make `Start` give up with `doger.ErrStartTimeout` naming the service. See [A Start that never returns](https://kartaladev.github.io/doger/docs/service-lifecycle/starter#start-never-returns).
+
 This library is v0 and follows SemVer: until v1.0.0, a minor release may contain breaking changes.
 
 Go 1.27 is the minimum: every module declares `go 1.27`, because the code sets the promoted fields of embedded structs directly in struct literals (`collectionCandidate{name: ...}` with `name` from an embedded `placement`), which the compiler accepts only from Go 1.27. It also relies on `sync.WaitGroup.Go` and, in its tests, `testing/synctest` (both Go 1.25). With `GOTOOLCHAIN=auto` (the default), an older Go downloads 1.27 for you; with `GOTOOLCHAIN=local`, it stops at the go.mod check with an error such as "go.mod requires go >= 1.27".

@@ -17,7 +17,10 @@ import (
 func TestCompete_TwoInstances(t *testing.T) {
 	t.Parallel()
 	forEachEngine(t, func(t *testing.T, db *testDB) {
-		testWithTimeout(t, 2*time.Minute)
+		// 200 events take over a minute on a loaded machine: the test
+		// fails on a stall of its sends and handlers, not on its length
+		testWithBackstop(t)
+		progress := watchProgress(t)
 		const dest, n = "orders.placed", 200
 		i1 := schemaTransport(t, db, fast()...)
 		i2 := db.Transport(t, fast()...)
@@ -29,6 +32,7 @@ func TestCompete_TwoInstances(t *testing.T) {
 		)
 		mail := newCollector()
 		mailHandler := func(ctx context.Context, env doger.Envelope) error {
+			progress()
 			mu.Lock()
 			if inFlight[env.ID] {
 				overlaps = append(overlaps, env.ID)
@@ -42,13 +46,20 @@ func TestCompete_TwoInstances(t *testing.T) {
 			return mail.handle(ctx, env)
 		}
 		cache1, cache2 := newCollector(), newCollector()
+		withProgress := func(h doger.EnvelopeHandler) doger.EnvelopeHandler {
+			return func(ctx context.Context, env doger.Envelope) error {
+				progress()
+				return h(ctx, env)
+			}
+		}
 		subscribe(t, i1, group(dest, "mail"), mailHandler)
 		subscribe(t, i2, group(dest, "mail"), mailHandler)
-		subscribe(t, i1, doger.Subscription{Destination: dest, Group: "cache/i1", Mode: doger.DeliverAll}, cache1.handle)
-		subscribe(t, i2, doger.Subscription{Destination: dest, Group: "cache/i2", Mode: doger.DeliverAll}, cache2.handle)
+		subscribe(t, i1, doger.Subscription{Destination: dest, Group: "cache/i1", Mode: doger.DeliverAll}, withProgress(cache1.handle))
+		subscribe(t, i2, doger.Subscription{Destination: dest, Group: "cache/i2", Mode: doger.DeliverAll}, withProgress(cache2.handle))
 
 		for i := range n {
 			send(t, i1, fmt.Sprintf("e%03d", i), dest)
+			progress()
 		}
 
 		got := mail.expect(t, n)
@@ -79,12 +90,14 @@ func TestCompete_Workers(t *testing.T) {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
 			t.Parallel()
 			forEachEngine(t, func(t *testing.T, db *testDB) {
-				testWithTimeout(t, 2*time.Minute)
+				testWithBackstop(t)
+				progress := watchProgress(t) // a stall fails it, not its length
 				const dest, n = "orders.placed", 64
 				tr := schemaTransport(t, db, fast(eventsql.Workers(workers), eventsql.BatchSize(16))...)
 				var running, peak atomic.Int32
 				c := newCollector()
 				subscribe(t, tr, group(dest, "mail"), func(ctx context.Context, env doger.Envelope) error {
+					progress()
 					now := running.Add(1)
 					for {
 						old := peak.Load()
@@ -99,6 +112,7 @@ func TestCompete_Workers(t *testing.T) {
 
 				for i := range n {
 					send(t, tr, fmt.Sprintf("e%02d", i), dest)
+					progress()
 				}
 
 				assert.Len(t, distinct(c.expect(t, n)), n)

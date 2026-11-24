@@ -80,7 +80,7 @@ func probe(e engine) (engine, error) {
 		return e, fmt.Errorf("open %s: %w", e.kind, err)
 	}
 	defer db.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 
 	var version string
@@ -115,6 +115,20 @@ type testDB struct {
 // means all.
 func forEachEngine(t *testing.T, fn func(t *testing.T, db *testDB), kinds ...string) {
 	t.Helper()
+	runEngines(t, true, fn, kinds)
+}
+
+// forEachEngineInTurn is forEachEngine with the subtests one after the
+// other, for a test that checks every goroutine of the process.
+func forEachEngineInTurn(t *testing.T, fn func(t *testing.T, db *testDB), kinds ...string) {
+	t.Helper()
+	runEngines(t, false, fn, kinds)
+}
+
+// runEngines runs fn as a subtest per configured engine of kinds, in
+// parallel when parallel is true.
+func runEngines(t *testing.T, parallel bool, fn func(t *testing.T, db *testDB), kinds []string) {
+	t.Helper()
 	engines, err := configuredEngines()
 	if err != nil {
 		t.Fatalf("integration databases: %v", err)
@@ -132,7 +146,9 @@ func forEachEngine(t *testing.T, fn func(t *testing.T, db *testDB), kinds ...str
 		}
 		ran = true
 		t.Run(e.name, func(t *testing.T) {
-			t.Parallel()
+			if parallel {
+				t.Parallel()
+			}
 			fn(t, newTestDB(t, e))
 		})
 	}
@@ -145,7 +161,7 @@ func forEachEngine(t *testing.T, fn func(t *testing.T, db *testDB), kinds ...str
 // returns a *sql.DB using it.
 func newTestDB(t *testing.T, e engine) *testDB {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 	admin, err := sql.Open(e.driver, e.dsn)
 	if err != nil {
@@ -174,7 +190,7 @@ func newTestDB(t *testing.T, e engine) *testDB {
 	// scoped pool, then drop the schema with the admin one
 	t.Cleanup(func() {
 		_ = db.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 		defer cancel()
 		if _, err := admin.ExecContext(ctx, drop); err != nil {
 			t.Errorf("%s: %s: %v", e.name, drop, err)

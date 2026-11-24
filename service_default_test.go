@@ -213,6 +213,45 @@ func TestAsDefault_ForwardsWrapperInterfaces(t *testing.T) {
 	}
 }
 
+// TestServiceDefault_BuiltInstanceAny pins the instance a default wrapper
+// offers the start instance tracker. A superseded default holds none even
+// when its inner wrapper holds a value. No API path reaches a superseded
+// wrapper, since superseding removes it from its scope, so the wrapper is
+// called directly.
+func TestServiceDefault_BuiltInstanceAny(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		supersede bool
+		wantHeld  bool
+	}{
+		{name: "unresolved", wantHeld: true},
+		{name: "superseded", supersede: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			value := &dfDialer{label: "own"}
+			wrapper := newServiceDefault[*dfDialer](newServiceEager("dialer", value), New().self)
+			if tt.supersede {
+				require.True(t, wrapper.supersede(func() {}), "the unresolved default is superseded")
+			}
+
+			instance, held := wrapper.builtInstanceAny()
+
+			assert.Equal(t, tt.wantHeld, held)
+			if tt.wantHeld {
+				assert.Same(t, value, instance)
+			} else {
+				assert.Nil(t, instance)
+			}
+		})
+	}
+}
+
 // dfDialing is an interface of dfDialer, for aliases.
 type dfDialing interface{ Label() string }
 
@@ -774,10 +813,11 @@ func TestAsDefault_ReplaceRacesResolve(t *testing.T) {
 
 func TestAsDefault_ReplaceRacesResolveStress(t *testing.T) {
 	t.Parallel()
-	testWithTimeout(t, 30*time.Second)
+	progress := testWithProgress(t)
 
 	replaced := 0
 	for range 1000 {
+		progress()
 		outcome := raceReplaceAndResolve(t, func(register, invoke func(), _ <-chan struct{}, release chan<- struct{}) {
 			close(release) // the provider does not block: the order is up to the scheduler
 			var wg sync.WaitGroup

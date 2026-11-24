@@ -8,6 +8,117 @@ break is listed under **BREAKING** with its migration.
 
 ## Unreleased
 
+### Added
+
+- `InjectorOpts.StartTimeout` (default `0`, off): a Starter `Start` method
+  or kind-handler call still running after it is abandoned, and the run
+  returns a `*StartError` matching the new `ErrStartTimeout`. The call keeps
+  running in its own goroutine and is never made again while it runs; a
+  later `Refresh` or `Scope.Start` skips it and every service that depends
+  on it, and fails with its error. See `docs/docs/container/options.md`
+  ("Slow and stuck start steps") and `docs/docs/service-lifecycle/starter.md`
+  ("A Start that never returns").
+- `InjectorOpts.SlowStartThreshold` (default `0`, meaning the new
+  `DefaultSlowStartThreshold`, 10s; negative disables it): a start step
+  still running after it is logged once at Warn level when a `Logger` is
+  set.
+- Log records, with a `Logger` set: `start step is slow` (Warn), and for an
+  abandoned step that ends, `abandoned start step returned` (Warn) and
+  `abandoned start step error` (Debug), or the `panic recovered` records.
+  See the logging table of `docs/docs/container/options.md`.
+
+### Changed
+
+- A child scope `Shutdown`/`ShutdownWithContext` cancels the context of the
+  running start steps (Starter `Start` methods and kind-handler calls) of
+  its subtree, with a cause matching `ErrShutdown`, instead of only waiting
+  for the run. Such a step is skipped, not a failure of the run: it is not
+  recorded as started, and the run skips the rest of that subtree and
+  goes on. A service that depends on a step skipped this way is skipped
+  too; a dependent outside the shutting-down scope (such as a root service
+  depending on its export) then fails the run with a `*StartError` naming
+  it that matches `ErrShutdown`, or, while the skipped step's abandoned
+  call still runs, with that step's error matching `ErrStartTimeout`. A
+  start step now always receives its own child of the run's context. With
+  a `Logger`, a cancelled step's error is logged at Debug as `cancelled
+  start step error`, and its panic as `panic recovered` (Error) and `panic
+  value` (Debug) with `step` and `kind`. This applies to the child scope's
+  own shutdown: a child step that a root `Shutdown` reaches is reported
+  like a root step, with a `*StartError` naming it that matches
+  `ErrShutdown` (and `ErrStartTimeout` once abandoned). A child scope
+  shutdown bounded by its context that gives up waiting for the run
+  removes the scope's services before the run ends: a dependent of an
+  export of that scope is then skipped once any step of the scope was,
+  even one it did not depend on, and reported as depending on the removed
+  export ("dependency `S` (export of scope `c`) was removed by the scope's
+  shutdown"), while under an unbounded shutdown it starts when its own
+  dependencies did. See the upgrading guide, "A child scope shutdown
+  cancels its subtree's running start steps".
+- `Scope.Start` no longer runs the `HookScopeStarted` hooks when a
+  shutdown of the scope, or of an ancestor, that began after it collected
+  its services cancels their start steps: it skips them and returns nil,
+  and the shutdown waits for it, bounded by its context, before running
+  its `HookScopeClosing` hooks. The Started hooks used to run then, and
+  Closing could run during or before them. A shutdown of a descendant
+  scope keeps them, and so does a shutdown that completed before
+  `Scope.Start` collected the services. See the upgrading guide, [Scope.Start
+  skips the Started hooks when a shutdown cancels its
+  steps](docs/docs/upgrading/start-lifecycle.md#scope-started-skipped-on-cancel).
+- `HealthReport`/`HealthReportWithContext` reads and `HealthScheduler`
+  rounds now skip a component that a kind with a handler has not handled
+  yet, as they already skipped a Starter not started yet: it is listed as
+  `HealthUnknown` and not checked, and one registered after `Ready` waits
+  for `Refresh` as a Starter does. A Runnable whose `Run` has not
+  returned, including one abandoned under `StartTimeout` that still runs,
+  no longer reports healthy; it is checked once its `Run` returned nil. A
+  kind without a handler holds no component back, nor does a handler
+  given with `Handle` after the run that started the component: it stays
+  checked until the next `Refresh` or `Scope.Start` collects it, then is
+  unknown until that handler handled it, and
+  `HealthCheck()` and the single-service functions still check every
+  service. See `docs/docs/service-lifecycle/healthchecker.md` ("Services
+  whose start is not complete") and the upgrading guide, [Health reports
+  wait for a component's kind
+  handlers](docs/docs/upgrading/start-lifecycle.md#health-waits-for-kind-handlers).
+- With `StartTimeout` set, a clone or a same-instance override never calls
+  an instance whose abandoned call still runs: `Clone`/`CloneWithOpts`,
+  which shared no start state with their source, now share with it the
+  record of abandoned calls by instance, so a clone's `Start`, or a
+  `Refresh` after `OverrideNamedValue` with the same instance, skips that
+  step, and every service that depends on it in any scope, and fails with
+  its `ErrStartTimeout` error instead of calling it a second time. This
+  holds per instance for non-nil pointers to non-zero-size values, non-nil
+  channels and non-nil unsafe pointers; any other instance (a value, a
+  map, a nil pointer, a pointer to a zero-size type) is tracked per
+  registration only. An instance is recorded only once a call on it is
+  abandoned, so two containers can still call a shared instance at the
+  same time while neither call has been abandoned. See the upgrading guide,
+  [With StartTimeout, a shared instance is never called
+  twice](docs/docs/upgrading/start-lifecycle.md#start-timeout-shared-instance).
+- `eventtransporttest`: the conformance kit's waits are no-progress windows
+  of one minute instead of 10s totals, so a slow but live transport (a
+  loaded CI machine) passes, while a stalled one fails about a minute
+  after its last progress instead of after 10s.
+
+### Fixed
+
+- A scope shutdown called from an async listener now waits for another
+  async delivery to that scope whose publisher's `Submit` already returned
+  (the default `BoundedEventExecutor` starts the delivery inside `Submit`);
+  it could return while that delivery still ran. A custom executor,
+  including one wrapping `NewBoundedEventExecutor`, keeps the previous
+  rule; see the events docs, "Shutdown".
+- Start and shutdown order now follow a dependency declared with
+  `DeclareDependency` on an export to the export's source, even when
+  nothing has resolved the export yet. Before, the dependent could start
+  before the export's source and shut down after it, and a source skipped
+  by its scope's shutdown did not skip it. Cycle detection follows the
+  export too: when the source depends back on the dependent (for example
+  with `DependsOnNamed`), `DeclareDependency` now returns an error matching
+  `ErrCircularDependency` instead of accepting the edge and starting in the
+  wrong order, and an override that adds such a back edge later makes
+  `Start` fail with a cycle.
+
 ## v0.3.0 - 2026-11-22
 
 Events: in-process publishing, transport-neutral delivery between

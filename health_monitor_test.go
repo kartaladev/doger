@@ -1574,36 +1574,45 @@ func TestHealthMonitor_Guards(t *testing.T) {
 
 	t.Run("keep_only_pruning", func(t *testing.T) {
 		t.Parallel()
-		is := assert.New(t)
+		testWithTimeout(t, 5*time.Second)
 
-		i := New()
-		var mu sync.Mutex
-		var states []HealthState // current state of each container transition
-		i.AddContainerHealthChangedHook(func(_ *RootScope, _, current HealthState) {
+		synctest.Test(t, func(t *testing.T) {
+			is := assert.New(t)
+
+			i := New()
+			defer i.Shutdown()
+			var mu sync.Mutex
+			var states []HealthState // current state of each container transition
+			i.AddContainerHealthChangedHook(func(_ *RootScope, _, current HealthState) {
+				mu.Lock()
+				defer mu.Unlock()
+				states = append(states, current)
+			})
+			db := &healthReportTestSwitch{}
+			db.set(errors.New("down"))
+			ProvideNamedValue(i, "db", db)
+			is.Equal(HealthUnhealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
+			// the report returns without waiting for the hooks: the check's
+			// goroutine may still be delivering, and would then deliver the
+			// transition queued below in place of this goroutine
+			synctest.Wait()
+
+			// a listing without "db" drops its record and membership, and the
+			// container's state no longer counts it
+			i.health.keepOnly(map[any]healthTarget{})
+			i.deliverTransitions()
+
 			mu.Lock()
-			defer mu.Unlock()
-			states = append(states, current)
+			is.Equal([]HealthState{HealthUnhealthy, HealthHealthy}, states, "container states")
+			mu.Unlock()
+
+			i.health.mu.Lock()
+			_, recorded := i.health.records[i.self.services["db"]]
+			_, member := i.health.members[i.self.services["db"]]
+			i.health.mu.Unlock()
+			is.False(recorded, "record of db")
+			is.False(member, "membership of db")
 		})
-		db := &healthReportTestSwitch{}
-		db.set(errors.New("down"))
-		ProvideNamedValue(i, "db", db)
-		is.Equal(HealthUnhealthy, healthReportTestEntry(t, i.HealthReport(), "db").State)
-
-		// a listing without "db" drops its record and membership, and the
-		// container's state no longer counts it
-		i.health.keepOnly(map[any]healthTarget{})
-		i.deliverTransitions()
-
-		mu.Lock()
-		is.Equal([]HealthState{HealthUnhealthy, HealthHealthy}, states, "container states")
-		mu.Unlock()
-
-		i.health.mu.Lock()
-		_, recorded := i.health.records[i.self.services["db"]]
-		_, member := i.health.members[i.self.services["db"]]
-		i.health.mu.Unlock()
-		is.False(recorded, "record of db")
-		is.False(member, "membership of db")
 	})
 
 	t.Run("deliver_transitions_repanic", func(t *testing.T) {
