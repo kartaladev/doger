@@ -6,7 +6,14 @@ All notable changes to the doger modules are recorded here. The root module
 version. doger is pre-1.0: a minor release may break the API, and every
 break is listed under **BREAKING** with its migration.
 
-## Unreleased
+## v0.4.0 - 2026-11-24
+
+Bounded and diagnosable starts (OpenSpec `bound-blocking-starters`): a
+slow-start warning, an optional per-step `StartTimeout`, and root and
+child scopes that behave the same while a start runs. No exported API of
+v0.3.0 changed or was removed: the API additions below are additive. The
+behaviour changes are listed under Changed, with their migration in
+`docs/docs/upgrading/start-lifecycle.md`.
 
 ### Added
 

@@ -86,3 +86,12 @@ These came out of the same comparison. Each needs an exploration before it is pl
 - **Configuration validation at start.**
   - Validate configuration values when the container starts.
   - In Go this is usually done outside DI (viper, envconfig), so it is low priority. It may fit as a component kind.
+- **A start-failure hook for child scopes (follow-up of #38).**
+  - Root Start reports a failure through `HookContainerFailed`; a failed `Scope.Start` is visible only through its return value. A scope-level hook (for example `HookScopeFailed`) would match the existing scope hooks.
+  - To decide: the hook's signature and whether it also fires for a step skipped by the scope's own shutdown, which is not a failure.
+- **One "waiting for start" error per Shutdown (follow-up of #38).**
+  - A root Shutdown bounded by its context that covers a child scope a run is starting reports one "waiting for start" error per scope instead of one. Nothing is lost; the report is noisier than it needs to be.
+- **`runtime.Goexit` in a Start method without `StartTimeout` (follow-up of #38).**
+  - Without `StartTimeout` the call runs on the caller's goroutine, so a `runtime.Goexit` in a Start method or kind handler ends that goroutine and Start never returns. Reproduced on the base commit of #38; with `StartTimeout` it is reported as a step error.
+- **Bounding the other shutdown-side waits (follow-up of #38).**
+  - A sweep during #38 found waits that a ctx-ignoring callee can hold: a remote subscription `stop` (the transport contract requires it to honour ctx, so this is hardening), Closing/Closed hooks and sync `ContainerClosing` listeners. Abandoned service Shutdowns are reported but not logged, and the async drain error does not name the listener.

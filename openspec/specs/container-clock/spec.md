@@ -39,7 +39,7 @@ Examples:
 <!-- cases: 10 backward compatibility: BREAKING type - InjectorOpts.Clock is doger.Clock instead of clockwork.Clock (migration: Clock: dogerclockwork.Wrap(c)); a consumer that never sets Clock gets the previous wall-clock behavior; New() now has the 10s default health-check bound (health-check-timeouts) -->
 
 ### Requirement: The container measures time only on its clock
-With `InjectorOpts.Clock` set, the container SHALL read every time it measures from that clock: the `HealthCheckTimeout` and `HealthCheckGlobalTimeout` deadlines, a lazy service's build time (`ServiceBuildTime` in `ExplainService` and `ExplainNamedService` output), and `ShutdownReport.ShutdownTime` and `ShutdownReport.ServiceShutdownTime`.
+With `InjectorOpts.Clock` set, the container SHALL read every time it measures from that clock: the `HealthCheckTimeout` and `HealthCheckGlobalTimeout` deadlines, a lazy service's build time (`ServiceBuildTime` in `ExplainService` and `ExplainNamedService` output), `ShutdownReport.ShutdownTime` and `ShutdownReport.ServiceShutdownTime`, and the `SlowStartThreshold` warning delay, the `StartTimeout` bound and the `elapsed` of start hooks and start-step log records.
 
 #### Scenario: Reported durations come from the clock
 ```gherkin
@@ -92,7 +92,7 @@ Examples:
 <!-- cases: 4 boundaries: the exact-limit and one-before boundaries are in health-check-timeouts -->
 <!-- cases: N/A 5 errors: measurement only; timeout errors are specified in health-check-timeouts -->
 <!-- cases: N/A 6 not found/duplicate: no lookup involved -->
-<!-- cases: 7 lifecycle: build (first invocation) and shutdown are the measured phases -->
+<!-- cases: 7 lifecycle: build (first invocation) and shutdown are the measured phases here; the start-step delays are pinned on a fake clock by container-start "Start timeout waits for the container clock" and container-logging "Slow-start warning waits for the container clock" -->
 <!-- cases: 8 concurrency: the wall-time scenario shows the deadline is independent of goroutine timing; the blocked check is released before the test ends, so no goroutine leaks -->
 <!-- cases: N/A 9 panics: unchanged -->
 <!-- cases: 10 backward compatibility: field names, JSON keys and the omission of a zero build time are unchanged; message prefix "DI: " becomes "doger: " (module-identity) -->
