@@ -942,9 +942,7 @@ func (s *RootScope) CloneWithOpts(opts *InjectorOpts) *RootScope {
 // do not depend on the container, and kind lists are copied before they are
 // written, so the list itself is shared.
 func (s *RootScope) copyKindsTo(clone *RootScope) {
-	s.kindsMu.Lock()
-	kinds := s.kinds
-	s.kindsMu.Unlock()
+	kinds := s.kindEntries()
 
 	clone.kindsMu.Lock()
 	clone.kinds = kinds

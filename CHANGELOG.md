@@ -54,6 +54,16 @@ break is listed under **BREAKING** with its migration.
   values and non-nil channels; any other instance (a value, a map, a nil
   pointer, a pointer to a zero-size type) is tracked per registration
   only.
+- `HealthReport`/`HealthReportWithContext` reads and `HealthScheduler`
+  rounds now skip a component that a kind with a registered handler has
+  not handled yet, as they already skipped a Starter not started yet: it
+  is listed as `HealthUnknown` and not checked. A Runnable whose `Run` has
+  not returned, including one abandoned under `StartTimeout` that still
+  runs, no longer reports healthy; it is checked once its `Run` returned
+  nil. A kind without a registered handler holds no component back, and
+  `HealthCheck()` and the single-service functions still check every
+  service. See `docs/docs/service-lifecycle/healthchecker.md` ("Services
+  whose start is not complete").
 - `eventtransporttest`: the conformance kit's waits are no-progress windows
   of one minute instead of 10s totals, so a slow but live transport (a
   loaded CI machine) passes, while a stalled one fails about a minute

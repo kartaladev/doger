@@ -166,6 +166,18 @@ errors.Is(err, doger.ErrHealthCheckTimeout) // true
 errors.Is(err, context.Canceled)            // true
 ```
 
+## Services whose start is not complete {#services-whose-start-is-not-complete}
+
+Once the container left `PhaseIdle`, `HealthReport()`, `HealthReportWithContext()` and the rounds of a `HealthScheduler` check a service only once its start is complete. Until then the service is listed as `HealthUnknown` and its `HealthCheck` is not called. Starters and kind components follow the same rule:
+
+- a Starter that `Start`, `Refresh` or `Scope.Start` would start is unknown until it started successfully, for example one registered after `Ready` until the next `Refresh`;
+- a component of a kind with a registered handler is unknown until that handler handled it successfully, for example a Runnable until its `Run` returned nil. A service opted into several such kinds waits for all of them;
+- a kind without a registered handler holds no component back: its components are checked as before.
+
+A `Refresh` or `Scope.Start` that abandons a step under `InjectorOpts.StartTimeout` leaves that service unknown until the abandoned call returns. When it returns nil, the step is recorded and the service is checked from the next read on; when it returns an error, the service stays unknown until a later `Refresh` or `Scope.Start` starts it.
+
+`injector.HealthCheck()`, `HealthCheckWithContext()` and the single-service functions (`doger.HealthCheck[T]`, `doger.HealthCheckNamed`...) still check every service, started or not. An injector that was never started (`PhaseIdle`) checks every service too.
+
 ## Health report JSON {#health-report-json}
 
 `HealthReport` and `ServiceHealth` marshal to JSON for monitoring endpoints, with lower-camel keys:

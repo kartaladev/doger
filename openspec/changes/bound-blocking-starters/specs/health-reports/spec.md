@@ -55,11 +55,29 @@ Examples:
   | 5s      | blocked until the test released it, and has since returned nil | an error matching ErrStartTimeout | HealthHealthy | 1     |
 ```
 
+#### Scenario: Only the kinds with a registered handler hold a component back
+```gherkin
+Given a started injector in PhaseReady created with <opts>, inside synctest.Test
+And lazy "job" registered afterwards <binding>, implementing Run(ctx) error, which <run>, and HealthCheck() error counting its calls and returning nil
+And the consumer called Refresh(), which returned <refresh>
+And then <after>
+When the consumer calls HealthReport() on the root scope
+Then the entry for "job" is <state> and its check was called <calls> times by that read
+
+Examples:
+  | name                         | opts                                                       | binding                                                                                         | run                               | refresh                           | after                                                       | state         | calls |
+  | runnable_autodetected        | InjectorOpts{EnableRunnerAutoDetection: true}              | with no option                                                                                  | returns nil at once               | nil                               | nothing else                                                | HealthHealthy | 1     |
+  | runnable_autodetected_running | InjectorOpts{EnableRunnerAutoDetection: true, StartTimeout: 5s} | with no option                                                                              | blocks until the test releases it | an error matching ErrStartTimeout | nothing else                                                | HealthUnknown | 0     |
+  | kind_without_handler         | InjectorOpts{}                                             | with kind "audit"'s With option, "audit" having no handler                                      | returns nil at once               | nil                               | nothing else                                                | HealthHealthy | 1     |
+  | several_kinds_one_failed     | InjectorOpts{}                                             | with kinds "a" and "b", whose StageAfterStart handlers return nil and errors.New("b failed")    | returns nil at once               | an error wrapping "b failed"      | nothing else                                                | HealthUnknown | 0     |
+  | first_handler_after_ready    | InjectorOpts{}                                             | with kind "audit"'s With option, "audit" having no handler                                      | returns nil at once               | nil                               | the consumer gives "audit" a StageAfterStart handler        | HealthUnknown | 0     |
+```
+
 <!-- cases: 1 default: no option -->
-<!-- cases: N/A 2 overrides: Refresh or Scope.Start is the way to make it checked -->
-<!-- cases: N/A 3 zero values: an idle container keeps today's semantics -->
+<!-- cases: 2 overrides: EnableRunnerAutoDetection binds a Runner implicitly (runnable_autodetected*); a handler given after Ready holds its kind's components back until the next Refresh (first_handler_after_ready) -->
+<!-- cases: 3 zero values: an idle container keeps today's semantics; a kind with no handler holds nothing back (kind_without_handler) -->
 <!-- cases: 4 boundaries: before and after Refresh; a Runnable before and after its abandoned Run returned -->
-<!-- cases: N/A 5 errors: the service's own error is not reported before its start is complete -->
+<!-- cases: 5 errors: a service bound to several kinds stays unknown while one of their handlers failed (several_kinds_one_failed); the service's own error is not reported before its start is complete -->
 <!-- cases: N/A 6 not found/duplicate: not applicable -->
 <!-- cases: 7 lifecycle: registration and Extend after Ready, incremental start, a kind handler call abandoned under StartTimeout -->
 <!-- cases: N/A 8 concurrency: not applicable -->

@@ -2362,6 +2362,186 @@ func TestHealthReport_UnstartedByCaller(t *testing.T) {
 	}
 }
 
+// healthReportTestJob is a Runner whose Run is its probe's call, and a
+// health checker counting its calls and returning nil.
+type healthReportTestJob struct {
+	probe *stepProbe
+	calls atomic.Int32
+}
+
+func (j *healthReportTestJob) Run(ctx context.Context) error { return j.probe.call(ctx) }
+
+func (j *healthReportTestJob) HealthCheck() error {
+	j.calls.Add(1)
+	return nil
+}
+
+// TestHealthReport_ComponentCheckedOnceHandled pins health-reports "A
+// component is checked only once its kind handlers handled it": a Runnable
+// whose Run has not returned, here abandoned by Refresh under StartTimeout,
+// is listed unknown and not checked until its late return is recorded.
+func TestHealthReport_ComponentCheckedOnceHandled(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		blocks  bool // Run blocks until the test releases it
+		late    bool // with blocks: the test releases Run before the read
+		refresh error
+		state   HealthState
+		calls   int32
+	}{
+		{name: "runnable_returned", state: HealthHealthy, calls: 1},
+		{name: "runnable_running", timeout: 5 * time.Second, blocks: true, refresh: ErrStartTimeout, state: HealthUnknown, calls: 0},
+		{name: "runnable_late_return", timeout: 5 * time.Second, blocks: true, late: true, refresh: ErrStartTimeout, state: HealthHealthy, calls: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				i := NewWithOpts(&InjectorOpts{StartTimeout: tt.timeout})
+				require.NoError(t, i.Start())
+
+				job := &healthReportTestJob{probe: newStepProbe(0)}
+				if !tt.blocks {
+					job.probe.unblock()
+				}
+				defer func() {
+					job.probe.unblock()
+					<-job.probe.ended
+					i.Shutdown()
+				}()
+				ProvideNamed(i, "job", func(Injector) (*healthReportTestJob, error) { return job, nil }, AsRunnable())
+
+				err := i.Refresh()
+				if tt.refresh == nil {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, tt.refresh)
+				}
+				if tt.late {
+					job.probe.unblock()
+					<-job.probe.ended
+					synctest.Wait() // the late outcome is recorded
+				}
+
+				calls := job.calls.Load()
+				entry := healthReportTestEntry(t, i.HealthReport(), "job")
+				is.Equal(tt.state, entry.State)
+				is.Equal(tt.calls, job.calls.Load()-calls, "calls by the read")
+			})
+		})
+	}
+}
+
+// TestHealthReport_OnlyHandledKindsHoldBack pins health-reports "Only the
+// kinds with a registered handler hold a component back": an implicit
+// Runnable binding counts like an explicit one, a kind without a handler
+// holds nothing back, a failed handler of one of several kinds keeps the
+// service unknown, and a handler given after Ready holds back its kind's
+// components until the next Refresh.
+func TestHealthReport_OnlyHandledKindsHoldBack(t *testing.T) {
+	t.Parallel()
+
+	ok := func(context.Context, Component[Runner, struct{}]) error { return nil }
+	lateAudit := NewKind[Runner, struct{}]("audit") // given its handler after Refresh
+
+	tests := []struct {
+		name    string
+		opts    InjectorOpts
+		blocks  bool                               // Run blocks until the test releases it
+		binding func(i *RootScope) []ProvideOption // the options of "job", with any handler they need
+		after   func(i *RootScope)                 // run after Refresh, before the read
+		refresh func(t *testing.T, err error)      // asserts Refresh's error
+		state   HealthState
+		calls   int32
+	}{
+		{
+			name:    "runnable_autodetected",
+			opts:    InjectorOpts{EnableRunnerAutoDetection: true},
+			binding: func(*RootScope) []ProvideOption { return nil },
+			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
+			state:   HealthHealthy, calls: 1,
+		},
+		{
+			name:    "runnable_autodetected_running",
+			opts:    InjectorOpts{EnableRunnerAutoDetection: true, StartTimeout: 5 * time.Second},
+			blocks:  true,
+			binding: func(*RootScope) []ProvideOption { return nil },
+			refresh: func(t *testing.T, err error) { require.ErrorIs(t, err, ErrStartTimeout) },
+			state:   HealthUnknown, calls: 0,
+		},
+		{
+			name: "kind_without_handler",
+			binding: func(*RootScope) []ProvideOption {
+				return []ProvideOption{NewKind[Runner, struct{}]("audit").With(struct{}{})}
+			},
+			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
+			state:   HealthHealthy, calls: 1,
+		},
+		{
+			name: "several_kinds_one_failed",
+			binding: func(i *RootScope) []ProvideOption {
+				a, b := NewKind[Runner, struct{}]("a"), NewKind[Runner, struct{}]("b")
+				a.Handle(i, StageAfterStart, ok)
+				b.Handle(i, StageAfterStart, func(context.Context, Component[Runner, struct{}]) error { return errors.New("b failed") })
+				return []ProvideOption{a.With(struct{}{}), b.With(struct{}{})}
+			},
+			refresh: func(t *testing.T, err error) { require.ErrorContains(t, err, "b failed") },
+			state:   HealthUnknown, calls: 0,
+		},
+		{
+			name:    "first_handler_after_ready",
+			binding: func(*RootScope) []ProvideOption { return []ProvideOption{lateAudit.With(struct{}{})} },
+			after:   func(i *RootScope) { lateAudit.Handle(i, StageAfterStart, ok) },
+			refresh: func(t *testing.T, err error) { require.NoError(t, err) },
+			state:   HealthUnknown, calls: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				is := assert.New(t)
+
+				opts := tt.opts
+				i := NewWithOpts(&opts)
+				require.NoError(t, i.Start())
+
+				job := &healthReportTestJob{probe: newStepProbe(0)}
+				if !tt.blocks {
+					job.probe.unblock()
+				}
+				defer func() {
+					job.probe.unblock()
+					if job.probe.calls.Load() > 0 {
+						<-job.probe.ended
+					}
+					i.Shutdown()
+				}()
+				ProvideNamed(i, "job", func(Injector) (*healthReportTestJob, error) { return job, nil }, tt.binding(i)...)
+
+				tt.refresh(t, i.Refresh())
+				if tt.after != nil {
+					tt.after(i)
+				}
+
+				calls := job.calls.Load()
+				entry := healthReportTestEntry(t, i.HealthReport(), "job")
+				is.Equal(tt.state, entry.State)
+				is.Equal(tt.calls, job.calls.Load()-calls, "calls by the read")
+			})
+		})
+	}
+}
+
 func BenchmarkHealthReport_Monitored(b *testing.B) {
 	scheduler := &manualScheduler{}
 	i := NewWithOpts(&InjectorOpts{HealthScheduler: scheduler})

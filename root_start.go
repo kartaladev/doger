@@ -754,19 +754,9 @@ func (s *RootScope) newStartCandidate(scope *Scope, name string, depth int, serv
 		return nil
 	}
 
-	opts := service.getOptions()
 	starter := s.declaresStarter(service) && !s.isStarted(service)
-	var kinds []kindBinding
-	if opts != nil {
-		kinds = opts.kinds
-	}
-	if s.opts.EnableRunnerAutoDetection && typeCanCastToType(service.getReflectType(), runnableKind.target()) &&
-		!slices.ContainsFunc(kinds, func(b kindBinding) bool { return b.id == runnableKind.id }) {
-		// implicit binding, so a runner opted in explicitly still runs once
-		kinds = append(slices.Clone(kinds), kindBinding{id: runnableKind.id, meta: struct{}{}, target: runnableKind.target()})
-	}
 	// a component is handled at most once per kind per container
-	kinds = slices.DeleteFunc(slices.Clone(kinds), func(b kindBinding) bool { return s.isHandled(service, b.id) })
+	kinds := slices.DeleteFunc(slices.Clone(s.kindBindings(service)), func(b kindBinding) bool { return s.isHandled(service, b.id) })
 	if !starter && len(kinds) == 0 {
 		return nil
 	}
@@ -791,6 +781,37 @@ func (s *RootScope) newStartCandidate(scope *Scope, name string, depth int, serv
 // service; see isStartCandidate.
 func (s *RootScope) declaresStarter(service serviceWrapperAny) bool {
 	return isStartCandidate(s.opts, service)
+}
+
+// kindBindings returns the kinds service is opted into: those given at
+// registration, plus the Runnable kind when EnableRunnerAutoDetection
+// detects a Runner. Transient services and aliases have none.
+func (s *RootScope) kindBindings(service serviceWrapperAny) []kindBinding {
+	if serviceType := service.getServiceType(); serviceType == ServiceTypeTransient || serviceType == ServiceTypeAlias {
+		return nil
+	}
+
+	var kinds []kindBinding
+	if opts := service.getOptions(); opts != nil {
+		kinds = opts.kinds
+	}
+	if s.opts.EnableRunnerAutoDetection && typeCanCastToType(service.getReflectType(), runnableKind.target()) &&
+		!slices.ContainsFunc(kinds, func(b kindBinding) bool { return b.id == runnableKind.id }) {
+		// implicit binding, so a runner opted in explicitly still runs once
+		kinds = append(slices.Clone(kinds), kindBinding{id: runnableKind.id, meta: struct{}{}, target: runnableKind.target()})
+	}
+
+	return kinds
+}
+
+// kindEntries returns the kind handler entries, in order of first Handle.
+// The list is never written in place, so it is read after kindsMu is
+// released.
+func (s *RootScope) kindEntries() []kindEntry {
+	s.kindsMu.Lock()
+	defer s.kindsMu.Unlock()
+
+	return s.kinds
 }
 
 // isStartCandidate reports whether a container with opts starts service: it
@@ -1081,9 +1102,7 @@ func withAbortCause(startCtx context.Context, err error) error {
 // runStage runs the handlers registered for stage, kind by kind in
 // order of first Handle, each over its components in dependency order.
 func (s *RootScope) runStage(startCtx context.Context, run *startRun, stage Stage, candidates []*startCandidate) error {
-	s.kindsMu.Lock()
-	entries := s.kinds // never written in place
-	s.kindsMu.Unlock()
+	entries := s.kindEntries()
 
 	var check *dependentsCheck
 	for _, entry := range entries {
