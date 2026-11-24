@@ -339,7 +339,10 @@ type InjectorOpts struct {
 	// or a panic vetoes Scope.Start, which returns an error wrapping it. It is
 	// not called when the scope, or one of its ancestors, is shutting down:
 	// Scope.Start then starts nothing and returns nil. The root's own scope
-	// never fires scope hooks.
+	// never fires scope hooks. It is called on every Scope.Start attempt
+	// that passes the phase check, including one that then starts nothing
+	// new or fails, such as an attempt that reaches a step whose call,
+	// abandoned at [InjectorOpts.StartTimeout], still runs.
 	//
 	// The container copies this list when it is created: set it at
 	// configuration time. [RootScope.AddScopeStartingHook] adds a hook later, safely
@@ -428,11 +431,13 @@ type InjectorOpts struct {
 	//     start step abandoned at StartTimeout that later returned ("abandoned
 	//     start step returned", with "step", "kind" for a handler call, and
 	//     "elapsed" since its call began; such a step that panics logs "panic
-	//     recovered" and "panic value" with "step" and "kind" instead);
+	//     recovered" (Error) and "panic value" (Debug) with "step" and
+	//     "kind" instead);
 	//   - Error: a failed service shutdown, a health scheduler failure or a
 	//     failure of its stop function, and a recovered panic that is not
 	//     passed to HookContainerPanic ("panic recovered", with its point and
-	//     type only): the first panic of an operation goes to
+	//     type, and for a start step its "step" and "kind"): the first panic
+	//     of an operation goes to
 	//     HookContainerPanic when it is set, and is logged only when it is
 	//     not; later panics of the operation are logged.
 	// A recovered panic's value, and the error text of a health check or of
@@ -553,13 +558,12 @@ type InjectorOpts struct {
 	StructTagKey string
 
 	// Clock is the time source of the container. It measures
-	// HealthCheckTimeout, HealthCheckSingleTimeout and HealthCheckGlobalTimeout,
-	// HealthReportCacheTTL and the report bound, the CheckedAt, Duration and
+	// HealthCheckTimeout, HealthCheckSingleTimeout and
+	// HealthCheckGlobalTimeout, HealthReportCacheTTL and the report bound, the CheckedAt, Duration and
 	// PendingSince of HealthReport entries, lazy service build times,
 	// shutdown durations, SlowStartThreshold, StartTimeout and the elapsed
 	// time of start hooks and start-step log records, and it is passed to
-	// HealthScheduler. Child scopes
-	// and Clone use the root scope's clock.
+	// HealthScheduler. Child scopes and Clone use the root scope's clock.
 	// Default: nil, which means RealClock().
 	// Set a controllable Clock to drive time in tests, such as
 	// dogerclockwork.Wrap(clockwork.NewFakeClock()) from the
@@ -567,8 +571,8 @@ type InjectorOpts struct {
 	// the Clock methods. While a start step runs, a positive StartTimeout
 	// arms one timer on the Clock for it, and with a Logger that keeps Warn
 	// records the SlowStartThreshold warning may arm one more; a fake
-	// clock's BlockUntil counts them. SlowStartThreshold: -1 removes the
-	// warning timer.
+	// clock's BlockUntil counts them. A negative SlowStartThreshold removes
+	// the warning timer.
 	Clock Clock
 
 	// EnableStarterAutoDetection makes Start also start every non-transient,
@@ -614,46 +618,66 @@ type InjectorOpts struct {
 	// Shutdown waits for the run within its own context: a Shutdown bounded
 	// below StartTimeout stops waiting at its deadline and skips the
 	// services it then reaches, so a stuck step keeps running until its call
-	// returns, as without this option. Go cannot stop the call: it keeps
-	// running in its own goroutine with a cancelled context. So a
-	// runtime.Goexit in a Start method or kind handler ends only that
-	// goroutine and, before the timeout, is reported as a [*StartError] for
-	// the step (after it, it is logged as the late outcome); without this
-	// option the call runs on the caller's goroutine, which Goexit ends. The step's context keeps the lifetime it has without this
-	// option: it ends when the run ends or when a shutdown of the step's
-	// child scope, or of an ancestor child scope, begins, and also when the
-	// step is abandoned. A step that such a scope shutdown cancelled is
-	// skipped, not a failure, even once abandoned, unless a service outside
-	// that scope depends on it (see [Scope.ShutdownWithContext]). It reports
+	// returns, as without this option.
+	//
+	// Go cannot stop the call: it keeps running in its own goroutine with a
+	// cancelled context. So a runtime.Goexit in a Start method or kind
+	// handler ends only that goroutine and, before the timeout, is reported
+	// as a [*StartError] for the step (after it, it is logged as the late
+	// outcome); without this option the call runs on the caller's
+	// goroutine, which Goexit ends. Meanwhile Invoke of the service returns
+	// its instance, which may be only half started. The step's context
+	// keeps the lifetime it has without this option: it ends when the run
+	// ends or when a shutdown of the step's child scope, or of an ancestor
+	// child scope, begins, and also when the step is abandoned. It reports
 	// no deadline, since a step that returns in time keeps it past the
-	// timeout. While it runs, the container never calls it
-	// again: a covering Refresh or Scope.Start skips it, with no hooks, and
-	// skips every candidate of the run that depends on its service, directly
-	// or through others; it starts everything else, then returns its first
-	// failure, or else a [*StartError] naming the still-running step that
-	// matches ErrStartTimeout. This also holds when the run does not cover
-	// the step: Scope.Start, or any run, skips a dependent of a
-	// still-running step in an ancestor scope, or whose own step runs in an
-	// earlier stage, and fails with that step's ErrStartTimeout error. Once
-	// it returns nil it is recorded as started (or handled) unless its scope
-	// is shutting down or no longer holds it, and once it fails a later
-	// Refresh or Scope.Start tries it again. After
-	// root Start abandoned a step, no such run follows: Start has failed, so
-	// Refresh and Scope.Start return [ErrNotStarted] and Start returns
-	// [ErrAlreadyStarted]; the late return is still recorded or logged, and
-	// Shutdown is the way on. Shutdown still calls the service's Shutdowner,
-	// its stop path. The guarantee holds per instance for non-nil pointers
-	// to non-empty values and non-nil channels: a run skips the same way,
-	// with its dependents in any scope, a step whose instance has an
-	// abandoned call of that step still running, also after an override
+	// timeout. A step that such a scope shutdown cancelled is skipped, not a
+	// failure, even once abandoned, unless a service outside that scope
+	// depends on it (see [Scope.ShutdownWithContext]).
+	//
+	// While it runs, the container never calls it again: a covering Refresh
+	// or Scope.Start skips it, with no hooks, and skips every candidate of
+	// the run that depends on its service, directly or through others; it
+	// starts everything else, then returns its first failure, or else a
+	// [*StartError] naming the still-running step that matches
+	// ErrStartTimeout. This also holds when the run does not cover the step:
+	// Scope.Start, or any run, skips a dependent of a still-running step in
+	// an ancestor scope, or whose own step runs in an earlier stage, and
+	// fails with that step's ErrStartTimeout error. Once it returns nil it is
+	// recorded as started (or handled) unless its scope is shutting down or
+	// no longer holds it, and once it fails a later Refresh or Scope.Start
+	// tries it again.
+	//
+	// After root Start abandoned a step, no such run follows: Start has
+	// failed, so Refresh and Scope.Start return [ErrNotStarted] and Start
+	// returns [ErrAlreadyStarted]; the late return is still recorded or
+	// logged, and Shutdown is the way on. Shutdown still calls the
+	// service's Shutdowner, its stop path. Nothing is in flight then, so
+	// Shutdown does not wait for the abandoned call: it can return a
+	// successful [ShutdownReport] while that call still runs.
+	//
+	// The guarantee holds per instance for non-nil pointers to non-zero-size
+	// values, non-nil channels and non-nil unsafe pointers: a run skips the
+	// same way, with its dependents in any scope, a step whose instance has
+	// an abandoned call of that step still running, also after an override
 	// registers the instance again, and in a clone, which shares eager
 	// instances and so shares with its source the record of the abandoned
-	// calls that still run. Any other instance (a struct or other value, a
-	// map, a nil pointer, a pointer to a zero-size type) is tracked per
-	// registration only: a clone or an override calls it again, and two
-	// registrations never block each other through it. A default
-	// registration that yielded holds no instance of its own: its
-	// dependents wait for the target's.
+	// calls that still run. That record is made at abandonment only: two
+	// containers that share an instance can still call it at the same time
+	// while neither call has been abandoned. Any other instance (a struct or
+	// other value, a map, a nil pointer, a pointer to a zero-size type) is
+	// tracked per registration only: a clone or an override calls it again,
+	// and two registrations never block each other through it. A default
+	// registration that yielded holds no instance of its own: its dependents
+	// wait for the target's.
+	//
+	// A Start method that calls Refresh or Scope.Start synchronously, from
+	// the run that covers it, waits for that run, which waits for it.
+	// Without this option that is a deadlock. With it, the run abandons the
+	// step and fails with ErrStartTimeout, and the nested call then fails
+	// with ErrStartTimeout too, since the step it reaches is its own
+	// still-running caller. Never do it either way.
+	//
 	// Default: 0, no bound: Start waits for every step, however long, and an
 	// ended context is noticed only between steps. A negative value is the
 	// same as 0. Measured on Clock.

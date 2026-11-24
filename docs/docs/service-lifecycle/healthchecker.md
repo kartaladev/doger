@@ -174,7 +174,7 @@ Once the container left `PhaseIdle`, `HealthReport()`, `HealthReportWithContext(
 - a component of a kind with a registered handler is unknown until that handler handled it successfully, for example a Runnable until its `Run` returned nil. A service opted into several such kinds waits for all of them;
 - a kind without a registered handler holds no component back: its components are checked as before.
 
-A `Refresh` or `Scope.Start` that abandons a step under `InjectorOpts.StartTimeout` leaves that service unknown until the abandoned call returns. When it returns nil, the step is recorded and the service is checked from the next read on; when it returns an error, the service stays unknown until a later `Refresh` or `Scope.Start` starts it.
+A `Refresh` or `Scope.Start` that abandons a step under `InjectorOpts.StartTimeout` leaves that service unknown until the abandoned call returns. When it returns nil, the step is recorded and the service is checked from the next read on; when it returns an error, the service stays unknown until a later `Refresh` or `Scope.Start` starts or handles it.
 
 `injector.HealthCheck()`, `HealthCheckWithContext()` and the single-service functions (`doger.HealthCheck[T]`, `doger.HealthCheckNamed`...) still check every service, started or not. An injector that was never started (`PhaseIdle`) checks every service too.
 

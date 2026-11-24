@@ -26,6 +26,18 @@ break is listed under **BREAKING** with its migration.
   abandoned step that ends, `abandoned start step returned` (Warn) and
   `abandoned start step error` (Debug), or the `panic recovered` records.
   See the logging table of `docs/docs/container/options.md`.
+- With `StartTimeout` set, a clone or a same-instance override never calls
+  an instance whose abandoned call still runs: `Clone`/`CloneWithOpts`
+  share with the source the record of abandoned calls by instance, so a
+  clone's `Start`, or a `Refresh` after `OverrideNamedValue` with the same
+  instance, skips that step, and every service that depends on it in any
+  scope, and fails with its `ErrStartTimeout` error instead of calling it
+  a second time. This holds per instance for non-nil pointers to non-zero-size
+  values, non-nil channels and non-nil unsafe pointers; any other instance
+  (a value, a map, a nil pointer, a pointer to a zero-size type) is tracked
+  per registration only. An instance is recorded only once a call on it is
+  abandoned, so two containers can still call a shared instance at the
+  same time while neither call has been abandoned.
 
 ### Changed
 
@@ -42,18 +54,8 @@ break is listed under **BREAKING** with its migration.
   start step now always receives its own child of the run's context. With
   a `Logger`, a cancelled step's error is logged at Debug as `cancelled
   start step error`, and its panic as `panic recovered` (Error) and `panic
-  value` (Debug) with `step` and `kind`. See the upgrading guide, "A child scope shutdown
-  cancels its subtree's running start steps".
-- With `StartTimeout` set, a clone or a same-instance override never calls
-  an instance whose abandoned call still runs: `Clone`/`CloneWithOpts`
-  share with the source the record of abandoned calls by instance, so a
-  clone's `Start`, or a `Refresh` after `OverrideNamedValue` with the same
-  instance, skips that step, and every service that depends on it in any
-  scope, and fails with its `ErrStartTimeout` error instead of calling it
-  a second time. This holds per instance for non-nil pointers to non-empty
-  values and non-nil channels; any other instance (a value, a map, a nil
-  pointer, a pointer to a zero-size type) is tracked per registration
-  only.
+  value` (Debug) with `step` and `kind`. See the upgrading guide, "A child
+  scope shutdown cancels its subtree's running start steps".
 - `HealthReport`/`HealthReportWithContext` reads and `HealthScheduler`
   rounds now skip a component that a kind with a registered handler has
   not handled yet, as they already skipped a Starter not started yet: it

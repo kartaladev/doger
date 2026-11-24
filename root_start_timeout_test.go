@@ -1069,6 +1069,9 @@ func TestStartTimeout_EqualValuesPerRegistration(t *testing.T) {
 		name string
 		// instances returns the instances of "a" and "b"
 		instances func(probe *stepProbe) (any, any)
+		// mayDiffer: the Go spec leaves it unspecified whether a and b are
+		// equal, so the row holds whatever their addresses are
+		mayDiffer bool
 	}{
 		{
 			name: "equal_values",
@@ -1081,6 +1084,7 @@ func TestStartTimeout_EqualValuesPerRegistration(t *testing.T) {
 			instances: func(*stepProbe) (any, any) {
 				return &zeroStarter{}, &zeroStarter{}
 			},
+			mayDiffer: true,
 		},
 		{
 			name: "nil_pointers",
@@ -1104,7 +1108,11 @@ func TestStartTimeout_EqualValuesPerRegistration(t *testing.T) {
 					root.Shutdown()
 				}()
 				a, b := tt.instances(probe)
-				require.True(t, a == b, "precondition: a and b hold equal instances, as map keys") //nolint:testifylint // identity, not deep equality
+				if tt.mayDiffer {
+					t.Logf("a == b: %t", a == b)
+				} else {
+					require.True(t, a == b, "precondition: a and b hold equal instances, as map keys") //nolint:testifylint // identity, not deep equality
+				}
 				require.NoError(t, root.Start())
 				ProvideNamedValue(root, "a", a, AsStarter())
 				require.ErrorIs(t, root.RefreshWithContext(ctx), ErrStartTimeout, "a first run abandons a")
@@ -1638,6 +1646,147 @@ func TestStartTimeout_RootStartAbandonsThenOnlyShutdown(t *testing.T) {
 
 		assert.True(t, report.Succeed, "report errors: %v", report.Errors)
 		assert.Equal(t, int32(1), srv.shutdowns.Load(), "Shutdown shuts srv down")
+	})
+}
+
+// TestStartTimeout_AbandonedCallStillRuns pins what the StartTimeout godoc
+// states about a call that root Start abandoned and that still runs:
+// Invoke returns its instance, and Shutdown, which has nothing in flight to
+// wait for, reports success before the call ends.
+func TestStartTimeout_AbandonedCallStillRuns(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second})
+		probe := newStepProbe(0)
+		t.Cleanup(probe.unblock) // a failed require still releases the call
+		ProvideNamed(root, "srv", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, AsStarter())
+
+		require.ErrorIs(t, root.Start(), ErrStartTimeout)
+
+		srv, err := InvokeNamed[startOnly](root, "srv")
+		require.NoError(t, err)
+		assert.Same(t, probe, srv.p, "Invoke returns the instance whose Start still runs")
+
+		report := root.Shutdown()
+
+		assert.True(t, report.Succeed, "report errors: %v", report.Errors)
+		select {
+		case <-probe.ended:
+			t.Fatal("the abandoned call ended before Shutdown returned")
+		default:
+		}
+
+		probe.unblock()
+		<-probe.ended
+		synctest.Wait()
+	})
+}
+
+// nestedRunStarter is a Starter whose Start calls run synchronously, as a
+// Starter that calls Refresh or Scope.Start does, and sends run's error to
+// errs before returning it.
+type nestedRunStarter struct {
+	run  func() error
+	errs chan error
+}
+
+func (s *nestedRunStarter) Start(context.Context) error {
+	err := s.run()
+	s.errs <- err
+	return err
+}
+
+// TestStartTimeout_NestedRunFromStarter pins the StartTimeout godoc: a
+// Starter that calls Refresh or Scope.Start synchronously from the run that
+// covers it waits for that run, which waits for it. With StartTimeout the
+// run abandons the step and fails with ErrStartTimeout; the nested run then
+// reaches the step, whose call (its own caller) still runs, and fails with
+// ErrStartTimeout too. It runs on a fake clock: the nested run blocks on a
+// mutex, which a synctest bubble does not count as durably blocked.
+func TestStartTimeout_NestedRunFromStarter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		child bool // "srv" lives in child scope "tenant" and the run is tenant.Start
+	}{
+		{name: "refresh"},
+		{name: "scope_start", child: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testWithTimeout(t, 10*time.Second)
+
+			clock := newFakeClock()
+			root := NewWithOpts(&InjectorOpts{StartTimeout: 5 * time.Second, Clock: clock})
+			require.NoError(t, root.Start())
+			scope, run := root.self, root.Refresh
+			if tt.child {
+				tenant := root.Scope("tenant")
+				scope, run = tenant, tenant.Start
+			}
+			starter := provideCounted(scope, "srv", &nestedRunStarter{run: run, errs: make(chan error, 1)}, AsStarter())
+
+			done := make(chan error, 1)
+			go func() { done <- run() }()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			require.NoError(t, clock.BlockUntilContext(ctx, 1), "the StartTimeout timer is armed")
+			clock.Advance(5 * time.Second)
+
+			err := <-done
+			require.ErrorIs(t, err, ErrStartTimeout)
+			require.ErrorIs(t, err, context.DeadlineExceeded, "the run abandoned the step")
+
+			nested := <-starter.errs
+			require.ErrorIs(t, nested, ErrStartTimeout)
+			assert.NotErrorIs(t, nested, context.DeadlineExceeded, "the nested run reports the still-running step")
+			assert.ErrorContains(t, nested, "a previous call is still running")
+			var startErr *StartError
+			require.ErrorAs(t, nested, &startErr)
+			assert.Equal(t, "srv", startErr.Service)
+
+			root.Shutdown()
+		})
+	}
+}
+
+// TestStartTimeout_ScopeStartingHookOnStillRunning pins the
+// HookScopeStarting godoc: the hooks run on every Scope.Start attempt that
+// passes its phase check, including one that then reports a still-running
+// step.
+func TestStartTimeout_ScopeStartingHookOnStillRunning(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		var starting atomic.Int32
+		root := NewWithOpts(&InjectorOpts{
+			StartTimeout:      5 * time.Second,
+			HookScopeStarting: []func(context.Context, *Scope) error{func(context.Context, *Scope) error { starting.Add(1); return nil }},
+		})
+		require.NoError(t, root.Start())
+		tenant := root.Scope("tenant")
+		probe := newStepProbe(0)
+		t.Cleanup(probe.unblock) // a failed require still releases the call
+		ProvideNamed(tenant, "srv", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, AsStarter())
+
+		err := tenant.Start()
+		require.ErrorIs(t, err, context.DeadlineExceeded, "the first attempt abandons srv")
+		assert.Equal(t, int32(1), starting.Load(), "Starting hook calls after the abandoning attempt")
+
+		err = tenant.Start()
+		require.ErrorIs(t, err, ErrStartTimeout)
+		assert.ErrorContains(t, err, "a previous call is still running")
+		assert.Equal(t, int32(2), starting.Load(), "Starting hook calls after the still-running attempt")
+		assert.Equal(t, int32(1), probe.calls.Load(), "calls of srv")
+
+		probe.unblock()
+		<-probe.ended
+		synctest.Wait()
+		root.Shutdown()
 	})
 }
 

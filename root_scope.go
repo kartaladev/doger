@@ -908,7 +908,9 @@ func (s *RootScope) Clone() *RootScope {
 // Start state is not copied, except one record the clone shares with the
 // source: the abandoned start calls that still run, by instance, so that
 // neither container calls an instance again while such a call runs (see
-// [InjectorOpts.StartTimeout]).
+// [InjectorOpts.StartTimeout]). A call enters that record only once it is
+// abandoned: the source and the clone can still call a shared instance at
+// the same time while neither call has been abandoned.
 //
 // Events: service listeners come with their registrations, and function
 // listeners are copied as the same functions; stopping or adding a listener

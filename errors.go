@@ -446,6 +446,10 @@ func (e *StartError) Unwrap() error {
 // "doger: shutdown errors:" description otherwise, ordered by scope name,
 // then service name. A report is never nil, so do not compare it with nil.
 // It marshals to JSON (see MarshalJSON).
+//
+// A successful report does not mean that no user code still runs: a Start
+// call abandoned at [InjectorOpts.StartTimeout] by a run that has returned
+// is not waited for, and can still be running when the report comes back.
 type ShutdownReport struct {
 	Succeed             bool
 	Services            []ServiceDescription
