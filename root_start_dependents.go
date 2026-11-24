@@ -142,12 +142,14 @@ func (c *dependentsCheck) skips(step startStep) bool {
 	if !reached.ok {
 		return false
 	}
+	c.run.root.seamAfterReached()
 
-	// a dependent of a scope whose shutdown completed reaches nothing (its
-	// services and edges are gone), so only a closing scope counts here
-	// read once: the decision and the cause come from the same scope, which
-	// may stop shutting down right after
-	closing := c.run.root.shuttingDownScope(step.candidate.scope)
+	// the closingScope rule, as for claim, registerStep and
+	// unscheduledError: a shutdown in progress, or one that completed
+	// while root Shutdown has not begun (it may complete between the walk
+	// and this read); read once, so the decision and the cause come from
+	// the same scope
+	closing := c.run.root.closingScope(step.candidate.scope)
 	closingItself := closing != nil
 	c.run.root.seamAfterClosingDecision()
 	reason := c.reasons[reached.desc]

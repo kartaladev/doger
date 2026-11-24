@@ -731,6 +731,22 @@ Examples:
   | 0           | lazy component of a StageAfterStart kind |
 ```
 
+#### Scenario: A dependent of a closing scope stays silent when the scope's shutdown completes during the run
+```gherkin
+Given a started root container, inside synctest.Test, and child scope "c" created after Start, with a HookScopeStarted hook counting its calls
+And lazy Starter "W" in "c", registered after Start, whose Start(ctx) waits for ctx.Done(), and lazy Starter "D" in "c" using DependsOnNamed("W")
+And c.Start() is running in another goroutine and "W" has entered Start
+When the consumer calls c.ShutdownWithContext with a 1s timeout in another goroutine
+And that shutdown gives up waiting for the run and completes <when>
+Then c.Start() returns nil
+And "D" was started 0 times and the HookScopeStarted hook ran 0 times
+
+Examples:
+  | when                                                                                     |
+  | once the run found that "D" reaches the skipped "W", before it decided whether c is closing |
+  | once the run returned                                                                    |
+```
+
 #### Scenario: A dependent of a closing scope that reaches a still-running step is skipped silently
 ```gherkin
 Given a started root container created with InjectorOpts{StartTimeout: 1s}, inside synctest.Test

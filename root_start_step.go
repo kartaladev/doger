@@ -44,6 +44,17 @@ type startSeam struct {
 	// decision whether the skipped dependent's scope is closing and the
 	// record of its skip.
 	afterClosingDecision func()
+	// afterReached runs in dependentsCheck.skips once the walk found that
+	// the dependent reaches a skipped service, before the decision whether
+	// the dependent's scope is closing.
+	afterReached func()
+}
+
+// seamAfterReached runs the afterReached seam, if set.
+func (s *RootScope) seamAfterReached() {
+	if s.startSeam.afterReached != nil {
+		s.startSeam.afterReached()
+	}
 }
 
 // seamAfterClosingDecision runs the afterClosingDecision seam, if set.

@@ -1675,6 +1675,78 @@ func TestChildShutdown_ClosingDecisionThenRootShutdown(t *testing.T) {
 	})
 }
 
+// TestChildShutdown_CompletedBetweenWalkAndClosingDecision pins the skip
+// of a dependent inside a closing scope when that scope's bounded shutdown
+// completes between the walk that found the dependent's skipped dependency
+// and the decision whether its scope is closing: "D" in "c" depends on
+// "W", which c's bounded shutdown cancels. In the "completed_in_window"
+// row, the shutdown gives up waiting for the run and completes right
+// after the walk reached "W" for "D" (seam afterReached); in the "control"
+// row it completes once the run returned. Either way "D" is skipped
+// silently, for its scope's shutdown, c.Start() returns nil and the
+// Started hooks do not run.
+func TestChildShutdown_CompletedBetweenWalkAndClosingDecision(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		inWindow bool
+	}{
+		{name: "completed_in_window", inWindow: true},
+		{name: "control"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				root := New()
+				require.NoError(t, root.Start())
+				c := root.Scope("c")
+				w := provideCounted(c, "W", newHonouringStarter(0), AsStarter())
+				starts := &countingStarters{}
+				provideCountedStarter(c, starts, "D", DependsOnNamed("W"))
+				var started atomic.Int32
+				root.AddScopeStartedHook(func(context.Context, *Scope) { started.Add(1) })
+				defer root.Shutdown()
+
+				reports := make(chan *ShutdownReport, 1)
+				var report *ShutdownReport
+				if tt.inWindow {
+					var once sync.Once
+					root.startSeam.afterReached = func() {
+						// c's bounded shutdown gives up waiting for the run
+						// and completes before the closing decision
+						once.Do(func() { report = <-reports })
+					}
+				}
+
+				runErr := make(chan error, 1)
+				go func() { runErr <- c.Start() }()
+				<-w.entered
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
+					reports <- c.ShutdownWithContext(ctx)
+				}()
+
+				err := <-runErr
+				if !tt.inWindow {
+					report = <-reports
+				}
+				require.NotNil(t, report)
+				assert.NoError(t, err, "a dependent of the closing scope is skipped silently")
+				assert.Equal(t, 0, starts.count("D"), "D was skipped")
+				assert.Zero(t, started.Load(), "HookScopeStarted did not run for the shut-down scope")
+				if tt.inWindow {
+					assert.False(t, report.Succeed, "the bounded shutdown gave up waiting for the run")
+				}
+			})
+		})
+	}
+}
+
 // TestStartTimeout_RefreshSkipsStillRunning pins container-start "Refresh
 // starts what does not depend on a still-running step": a covering run
 // skips the still-running step and its dependents, starts the rest and
