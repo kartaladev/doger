@@ -114,8 +114,7 @@ func (end stepEnd) skipped() bool {
 func logCancelledOutcome(step startStep, outcome stepOutcome) {
 	scope := step.candidate.scope
 	if outcome.panicked {
-		attrs := slices.Insert(step.attrs(), 1, slog.String("point", "start"))
-		scope.logPanicRecords(slices.Clip(attrs), outcome.panicType, outcome.value)
+		step.logPanic(outcome)
 		return
 	}
 	if outcome.err != nil && scope.logEnabled(slog.LevelDebug) {
@@ -358,7 +357,7 @@ func (s *RootScope) logLateOutcome(step startStep, outcome stepOutcome, elapsed 
 	scope := step.candidate.scope
 	logSafely(func() {
 		if outcome.panicked {
-			scope.logRecoveredPanicAs("start", step.candidate.name, outcome.panicType, outcome.value)
+			step.logPanic(outcome)
 			return
 		}
 
@@ -379,6 +378,14 @@ func (step startStep) attrs() []slog.Attr {
 	}
 
 	return attrs
+}
+
+// logPanic logs the panic outcome of a call of step on the step's scope, as
+// the recovered panic records of point "start" with the attributes of
+// step.
+func (step startStep) logPanic(outcome stepOutcome) {
+	attrs := slices.Insert(step.attrs(), 1, slog.String("point", "start"))
+	step.candidate.scope.logPanicRecords(slices.Clip(attrs), outcome.panicType, outcome.value)
 }
 
 // stillRunningError is the error of a run that reached step while an

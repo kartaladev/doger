@@ -328,11 +328,12 @@ func TestStartTimeout_LateOutcomeLogged(t *testing.T) {
 	inUse := func(int32) error { return errors.New("bind: in use") }
 	panics := func(int32) error { panic("boom") }
 	tests := []struct {
-		name    string
-		level   slog.Level
-		child   bool
-		outcome func(int32) error
-		records []string
+		name     string
+		level    slog.Level
+		child    bool
+		runnable bool // "srv" is opted in with AsRunnable, not AsStarter
+		outcome  func(int32) error
+		records  []string
 	}{
 		{
 			name: "nil", level: slog.LevelDebug,
@@ -352,15 +353,22 @@ func TestStartTimeout_LateOutcomeLogged(t *testing.T) {
 		{
 			name: "panic", level: slog.LevelDebug, outcome: panics,
 			records: []string{
-				"ERROR panic recovered scope=[root] service=srv point=start panic_type=string",
-				"DEBUG panic value scope=[root] service=srv point=start value=boom",
+				"ERROR panic recovered scope=[root] service=srv point=start step=start panic_type=string",
+				"DEBUG panic value scope=[root] service=srv point=start step=start value=boom",
 			},
 		},
 		{
 			name: "panic_child_scope", level: slog.LevelDebug, child: true, outcome: panics,
 			records: []string{
-				"ERROR panic recovered scope=tenant service=srv point=start panic_type=string",
-				"DEBUG panic value scope=tenant service=srv point=start value=boom",
+				"ERROR panic recovered scope=tenant service=srv point=start step=start panic_type=string",
+				"DEBUG panic value scope=tenant service=srv point=start step=start value=boom",
+			},
+		},
+		{
+			name: "panic_runnable", level: slog.LevelDebug, runnable: true, outcome: panics,
+			records: []string{
+				"ERROR panic recovered scope=[root] service=srv point=start step=handle kind=runnable panic_type=string",
+				"DEBUG panic value scope=[root] service=srv point=start step=handle kind=runnable value=boom",
 			},
 		},
 	}
@@ -380,7 +388,11 @@ func TestStartTimeout_LateOutcomeLogged(t *testing.T) {
 				}
 				probe := newStepProbe(0)
 				probe.outcome = tt.outcome
-				ProvideNamed(scope, "srv", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, AsStarter())
+				opt := AsStarter()
+				if tt.runnable {
+					opt = AsRunnable()
+				}
+				ProvideNamed(scope, "srv", func(Injector) (startOnly, error) { return startOnly{probe}, nil }, opt)
 
 				begin := time.Now()
 				require.ErrorIs(t, operation(), ErrStartTimeout)

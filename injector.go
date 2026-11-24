@@ -415,25 +415,43 @@ type InjectorOpts struct {
 	//     start step that a child scope shutdown cancelled ("cancelled start
 	//     step error", with "step", "kind" for a handler call, and "error";
 	//     such a step that panics logs "panic recovered" and "panic value"
-	//     with "step" and "kind" instead);
+	//     with "step" and "kind" instead), and the error that a start step
+	//     abandoned at StartTimeout returned later ("abandoned start step
+	//     error", with "step", "kind" for a handler call, "elapsed" and
+	//     "error");
 	//   - Info: container started, ready, closing and closed, an extension
 	//     disabled, and the container health back to healthy;
 	//   - Warn: an unavailable property source, properties read after
-	//     Extend, and the container health changing to another state;
+	//     Extend, the container health changing to another state, a start
+	//     step still running after SlowStartThreshold ("start step is slow",
+	//     with "step", "kind" for a handler call, and "threshold"), and a
+	//     start step abandoned at StartTimeout that later returned ("abandoned
+	//     start step returned", with "step", "kind" for a handler call, and
+	//     "elapsed" since its call began; such a step that panics logs "panic
+	//     recovered" and "panic value" with "step" and "kind" instead);
 	//   - Error: a failed service shutdown, a health scheduler failure or a
 	//     failure of its stop function, and a recovered panic that is not
 	//     passed to HookContainerPanic ("panic recovered", with its point and
 	//     type only): the first panic of an operation goes to
 	//     HookContainerPanic when it is set, and is logged only when it is
 	//     not; later panics of the operation are logged.
-	// A recovered panic's value, and a health check's error text, appear
-	// only in Debug records, since they could hold secrets.
+	// A recovered panic's value, and the error text of a health check or of
+	// a start step, appear only in Debug records, since they could hold
+	// secrets.
+	//
+	// The slow start warning and the records of an abandoned call's end are
+	// logged on the container's background goroutines (the warning timer,
+	// the abandoned call's own goroutine), so they can come after Start
+	// returned, after Shutdown, and even after the container closed: the
+	// call is still running user code then. They are logged to this Logger
+	// all the same.
 	//
 	// The Logger's handler must not panic. A panic it raises on the
-	// caller's goroutine propagates to the caller; one raised on a
-	// goroutine the container runs in the background, such as a service
-	// shutdown or a health check, cannot be recovered by the caller and
-	// crashes the process.
+	// caller's goroutine propagates to the caller. A panic it raises on the
+	// warning timer or on an abandoned call's late outcome is dropped, since
+	// no caller waits there. One raised on another goroutine the container
+	// runs in the background, such as a service shutdown or a health check,
+	// cannot be recovered by the caller and crashes the process.
 	// Default (nil): nothing is logged, and no record is built.
 	Logger *slog.Logger
 

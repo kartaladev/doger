@@ -224,10 +224,10 @@ Test files: `root_start_timeout_test.go`, `root_start_slow_test.go` (new). Decis
 
 ## 35. Late-outcome logging is consistent and the Logger godoc is correct (triage E)
 
-- [ ] 35.1 RED: add the AsRunnable panic row to `TestStartTimeout_LateOutcomeLogged` and `step=start` to its panic rows (container-logging scenario "Late outcome of an abandoned step"); verify `go test -race -run TestStartTimeout_LateOutcomeLogged .` fails (the panic records have no `step`/`kind`)
-- [ ] 35.2 GREEN: the late panic records carry `step` and `kind` (handle only) (design D8); verify the test passes, `TestLogging_Events` stays green, and `make test` is green
-- [ ] 35.3 REFACTOR: reuse `startStep.attrs()` for the panic records instead of a local attribute list; verify `make test` and `make lint` pass
-- [ ] 35.4 Docs: `InjectorOpts.Logger` godoc lists "start step is slow", "abandoned start step returned" and "abandoned start step error", states that a handler panic on the container's background goroutines (the warning timer, an abandoned call's late outcome) is dropped, and that these records can come after Start returned or the container closed; verify `go doc doger.InjectorOpts` renders and `make lint` passes
+- [x] 35.1 RED: add the AsRunnable panic row to `TestStartTimeout_LateOutcomeLogged` and `step=start` to its panic rows (container-logging scenario "Late outcome of an abandoned step"); verify `go test -race -run TestStartTimeout_LateOutcomeLogged .` fails (the panic records have no `step`/`kind`)
+- [x] 35.2 GREEN: the late panic records carry `step` and `kind` (handle only) (design D8); verify the test passes, `TestLogging_Events` stays green, and `make test` is green
+- [x] 35.3 REFACTOR: reuse `startStep.attrs()` for the panic records instead of a local attribute list; verify `make test` and `make lint` pass
+- [x] 35.4 Docs: `InjectorOpts.Logger` godoc lists "start step is slow", "abandoned start step returned" and "abandoned start step error", states that a handler panic on the container's background goroutines (the warning timer, an abandoned call's late outcome) is dropped, and that these records can come after Start returned or the container closed; verify `go doc doger.InjectorOpts` renders and `make lint` passes
 
 ## 36. Undocumented production behaviour is documented (triages D, E)
 
