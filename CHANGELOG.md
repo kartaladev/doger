@@ -6,6 +6,10 @@ All notable changes to the doger modules are recorded here. The root module
 version. doger is pre-1.0: a minor release may break the API, and every
 break is listed under **BREAKING** with its migration.
 
+## Unreleased
+
+Nothing yet.
+
 ## v0.4.0 - 2026-11-24
 
 Bounded and diagnosable starts (OpenSpec `bound-blocking-starters`): a
