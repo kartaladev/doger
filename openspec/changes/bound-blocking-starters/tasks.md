@@ -243,7 +243,7 @@ Every test seen failing intermittently while applying this change is fixed here,
 - [x] 37.1 `events/sql` `TestStop/timeout` on MySQL: reproduce under load, fix the root cause; verify 50 consecutive passes under the reproduction and `make test-sql` green
 - [x] 37.2 `TestScopeShutdown_PublishingDelivery/elsewhere` (real time): reproduce, fix the root cause; verify `-count=500` under the reproduction and `make test` green (a production race, see proposal "Defect"; fixed in `748b370` with `TestScopeShutdown_PublishingDeliveryBeforeSubmitReturns` and `TestScopeShutdown_WaitingWrapperExecutor`)
 - [x] 37.3 `TestShutdownContext_HandoverThenCtxEnds`: reproduce under load, fix the root cause; verify `-count=500` under the reproduction and `make test` green
-- [ ] 37.4 Any other test that fails intermittently during groups 31–38: add it here with its reproduction and fix. Found so far: `events/sql` `TestLease` (fixed, `bdbbbea`) and `TestRetention/keep_1s`; `TestScope_ShutdownWithContext_ReportTimings`, `TestServiceEager_shutdown`/`_healthcheck`, `TestServiceLazy_HealthCheckDuringBuild`, `TestShutdown_DrainHonoursDeadline` (fixed, `6693d69`); `TestScope_ContextExpiration_ShutdownAndHealthcheckSameTimeout`, `TestHealthCheck_NoQueueLimit`, `TestLogging_Events/{abandoned_returned,abandoned_error}`, and the hang guards of `TestServiceAlias_ShutdownTargetOnce_Stable`, `TestContainerShutdown_ChildDetachNoGrowth`, `TestInvokeAll_ConcurrentShadowingRegistration`, `TestContainerHooks_ShutdownCauseRace`
+- [x] 37.4 Any other test that fails intermittently during groups 31–38: add it here with its reproduction and fix. Found so far: `events/sql` `TestLease` (fixed, `bdbbbea`) and `TestRetention/keep_1s`; `TestScope_ShutdownWithContext_ReportTimings`, `TestServiceEager_shutdown`/`_healthcheck`, `TestServiceLazy_HealthCheckDuringBuild`, `TestShutdown_DrainHonoursDeadline` (fixed, `6693d69`); `TestScope_ContextExpiration_ShutdownAndHealthcheckSameTimeout`, `TestHealthCheck_NoQueueLimit`, `TestLogging_Events/{abandoned_returned,abandoned_error}`, and the hang guards of `TestServiceAlias_ShutdownTargetOnce_Stable`, `TestContainerShutdown_ChildDetachNoGrowth`, `TestInvokeAll_ConcurrentShadowingRegistration`, `TestContainerHooks_ShutdownCauseRace`. Also fixed: `TestLogging_Events/{abandoned_returned,abandoned_error}` and the hang guards (`88a45fc`), `TestRetention/keep_1s` and the events/sql sweep (`c6dbf7c`, `22c7dca`). Closed by 38.5: the root suite at -count=20 and -cpu=1,4 x3 under load 75-95 had no failure
 
 ## 38. Release checks after the code review and consistency fixes
 
@@ -257,11 +257,11 @@ The 38.4 matrix (triages A and E) found a root/child difference: a root `Shutdow
 
 ### Release checks
 
-- [ ] 38.1 Run `make test`, `make lint`, and `go test -race ./...` in every `go.work` module; verify all green
-- [ ] 38.2 Run `make test-sql` and `make test-watermill`; verify both green and that `go test -v` in `events/sql` and `events/watermill/wmsql` reports no test skipped for a missing database or DSN; then `make test-sql-down`
-- [ ] 38.3 Run `openspec validate bound-blocking-starters` (without `--strict`) and cross-check the Test Strategy table; verify valid and every scenario maps to a passing test
-- [ ] 38.4 Re-run the root/child and lifecycle-phase triage matrix (triages A–E, scratch tests kept under the session scratchpad) against the finished code; verify every row is CONSISTENT or documented, and report any remaining difference before archiving
-- [ ] 38.5 Run the whole root suite under load (`go test -race -count=20 ./...` with a CPU hog running, or `-cpu=1,4`); verify no test fails
+- [x] 38.1 Run `make test`, `make lint`, and `go test -race ./...` in every `go.work` module; verify all green
+- [x] 38.2 Run `make test-sql` and `make test-watermill`; verify both green and that `go test -v` in `events/sql` and `events/watermill/wmsql` reports no test skipped for a missing database or DSN; then `make test-sql-down`
+- [x] 38.3 Run `openspec validate bound-blocking-starters` (without `--strict`) and cross-check the Test Strategy table; verify valid and every scenario maps to a passing test
+- [x] 38.4 Re-run the root/child and lifecycle-phase triage matrix (triages A–E, scratch tests kept under the session scratchpad) against the finished code; verify every row is CONSISTENT or documented, and report any remaining difference before archiving
+- [x] 38.5 Run the whole root suite under load (`go test -race -count=20 ./...` with a CPU hog running, or `-cpu=1,4`); verify no test fails
 
 ## Workflow follow-up
 
