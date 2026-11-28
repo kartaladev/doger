@@ -18,7 +18,7 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/samber/go-type-to-string v1.8.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	github.com/valyala/fasthttp v1.79.0 // indirect
+	github.com/valyala/fasthttp v1.80.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 )
 
